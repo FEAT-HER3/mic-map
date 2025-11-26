@@ -1,0 +1,29 @@
+{
+    "bindings": {
+        "/actions/micmap": {
+            "sources": [
+                {
+                    "path": "/user/hand/left/input/a/click",
+                    "mode": "button",
+                    "inputs": {
+                        "click": {
+                            "output": "/actions/micmap/in/dashboard_select"
+                        }
+                    }
+                },
+                {
+                    "path": "/user/hand/right/input/a/click",
+                    "mode": "button",
+                    "inputs": {
+                        "click": {
+                            "output": "/actions/micmap/in/dashboard_select"
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "name": "MicMap Oculus Touch Bindings",
+    "description": "Default bindings for Oculus Touch controllers",
+    "controller_type": "oculus_touch"
+}

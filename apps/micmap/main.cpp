@@ -158,8 +158,8 @@ bool MicMapApp::initialize() {
         }
     }
     
-    // Initialize VR
-    vrInput = steamvr::createOpenXRInput();
+    // Initialize VR (using OpenVR for SteamVR integration)
+    vrInput = steamvr::createOpenVRInput();
     vrInput->setEventCallback([this](const steamvr::VREvent& event) {
         if (event.type == steamvr::VREventType::Quit) {
             MICMAP_LOG_INFO("SteamVR quit event received");
@@ -172,13 +172,17 @@ bool MicMapApp::initialize() {
         MICMAP_LOG_WARNING("VR not available, running in standalone mode");
     }
     
+    // Initialize dashboard manager with shared VR input
     dashboardManager = steamvr::createDashboardManager();
     auto sharedVR = std::shared_ptr<steamvr::IVRInput>(
-        steamvr::createOpenXRInput().release(),
-        [](steamvr::IVRInput* p) { delete p; }
+        steamvr::createOpenVRInput().release()
     );
     sharedVR->initialize();
-    dashboardManager->initialize(sharedVR);
+    
+    steamvr::DashboardManagerConfig dashConfig;
+    dashConfig.autoReconnect = true;
+    dashConfig.exitWithSteamVR = true;
+    dashboardManager->initialize(sharedVR, dashConfig);
     
     // Initialize state machine
     core::StateMachineConfig smConfig;
@@ -275,11 +279,11 @@ void MicMapApp::onTrigger() {
         MICMAP_LOG_DEBUG("Opening dashboard");
         dashboardManager->openDashboard();
     } else if (state == steamvr::DashboardState::Open) {
-        // Send click
+        // Send HMD button press to select item under head-locked pointer
         auto& config = configManager->getConfig();
         if (config.steamvr.dashboardClickEnabled) {
-            MICMAP_LOG_DEBUG("Sending dashboard click");
-            vrInput->sendDashboardClick();
+            MICMAP_LOG_DEBUG("Sending HMD button press for dashboard selection");
+            vrInput->sendDashboardSelect();
         }
     }
 }

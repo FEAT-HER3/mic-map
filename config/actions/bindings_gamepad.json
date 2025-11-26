@@ -1,0 +1,20 @@
+{
+    "bindings": {
+        "/actions/micmap": {
+            "sources": [
+                {
+                    "path": "/user/gamepad/input/a/click",
+                    "mode": "button",
+                    "inputs": {
+                        "click": {
+                            "output": "/actions/micmap/in/dashboard_select"
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "name": "MicMap Gamepad Bindings",
+    "description": "Default bindings for gamepad controllers",
+    "controller_type": "gamepad"
+}

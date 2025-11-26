@@ -1,0 +1,54 @@
+{
+    "default_bindings": [
+        {
+            "controller_type": "knuckles",
+            "binding_url": "bindings_knuckles.json"
+        },
+        {
+            "controller_type": "vive_controller",
+            "binding_url": "bindings_vive.json"
+        },
+        {
+            "controller_type": "oculus_touch",
+            "binding_url": "bindings_oculus.json"
+        },
+        {
+            "controller_type": "holographic_controller",
+            "binding_url": "bindings_wmr.json"
+        },
+        {
+            "controller_type": "gamepad",
+            "binding_url": "bindings_gamepad.json"
+        },
+        {
+            "controller_type": "hmd",
+            "binding_url": "bindings_hmd.json"
+        }
+    ],
+    "actions": [
+        {
+            "name": "/actions/micmap/in/dashboard_toggle",
+            "type": "boolean",
+            "requirement": "optional"
+        },
+        {
+            "name": "/actions/micmap/in/dashboard_select",
+            "type": "boolean",
+            "requirement": "optional"
+        }
+    ],
+    "action_sets": [
+        {
+            "name": "/actions/micmap",
+            "usage": "leftright"
+        }
+    ],
+    "localization": [
+        {
+            "language_tag": "en_US",
+            "/actions/micmap": "MicMap",
+            "/actions/micmap/in/dashboard_toggle": "Toggle Dashboard",
+            "/actions/micmap/in/dashboard_select": "Select Dashboard Item"
+        }
+    ]
+}

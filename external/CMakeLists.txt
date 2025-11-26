@@ -1,9 +1,9 @@
 # external/CMakeLists.txt
 # Third-party dependencies
 
-# nlohmann/json - Header-only JSON library
 include(FetchContent)
 
+# nlohmann/json - Header-only JSON library
 FetchContent_Declare(
     nlohmann_json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
@@ -21,15 +21,38 @@ add_library(nlohmann_json INTERFACE)
 target_include_directories(nlohmann_json INTERFACE ${nlohmann_json_SOURCE_DIR}/include)
 
 # KissFFT - Lightweight FFT library
-# For now, we use a stub implementation in spectral_analyzer.cpp
-# When ready to use real KissFFT:
-#
-# FetchContent_Declare(
-#     kissfft
-#     GIT_REPOSITORY https://github.com/mborgerding/kissfft.git
-#     GIT_TAG v131.1.0
-# )
-# FetchContent_MakeAvailable(kissfft)
+FetchContent_Declare(
+    kissfft
+    GIT_REPOSITORY https://github.com/mborgerding/kissfft.git
+    GIT_TAG 131.1.0
+)
+
+FetchContent_GetProperties(kissfft)
+if(NOT kissfft_POPULATED)
+    FetchContent_Populate(kissfft)
+endif()
+
+# Create a static library for KissFFT (single-precision float version)
+# Note: kiss_fftr.c is in the root directory in newer versions of KissFFT
+set(KISSFFT_SOURCES
+    ${kissfft_SOURCE_DIR}/kiss_fft.c
+    ${kissfft_SOURCE_DIR}/kiss_fftr.c
+)
+
+# Mark sources as C language explicitly
+set_source_files_properties(${KISSFFT_SOURCES} PROPERTIES LANGUAGE C)
+
+add_library(kissfft STATIC ${KISSFFT_SOURCES})
+
+# Set the linker language explicitly
+set_target_properties(kissfft PROPERTIES LINKER_LANGUAGE C)
+
+target_include_directories(kissfft PUBLIC
+    ${kissfft_SOURCE_DIR}
+)
+
+# Use single-precision floats
+target_compile_definitions(kissfft PUBLIC kiss_fft_scalar=float)
 
 # OpenXR SDK - Optional, for VR integration
 # The SDK should be installed separately or provided via environment variable

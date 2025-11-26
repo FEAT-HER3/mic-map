@@ -1,0 +1,29 @@
+{
+    "bindings": {
+        "/actions/micmap": {
+            "sources": [
+                {
+                    "path": "/user/hand/left/input/menu/click",
+                    "mode": "button",
+                    "inputs": {
+                        "click": {
+                            "output": "/actions/micmap/in/dashboard_select"
+                        }
+                    }
+                },
+                {
+                    "path": "/user/hand/right/input/menu/click",
+                    "mode": "button",
+                    "inputs": {
+                        "click": {
+                            "output": "/actions/micmap/in/dashboard_select"
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "name": "MicMap Vive Controller Bindings",
+    "description": "Default bindings for HTC Vive controllers",
+    "controller_type": "vive_controller"
+}

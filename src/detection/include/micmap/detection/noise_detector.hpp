@@ -116,6 +116,22 @@ public:
     virtual float getSensitivity() const = 0;
     
     /**
+     * @brief Set minimum detection duration
+     * @param durationMs Minimum duration in milliseconds for confirmed detection
+     *
+     * White noise must be detected continuously for at least this duration
+     * before isWhiteNoise returns true. This reduces false positives from
+     * transient sounds. Default is 500ms as specified in config.
+     */
+    virtual void setMinDetectionDuration(int durationMs) = 0;
+    
+    /**
+     * @brief Get minimum detection duration
+     * @return Minimum duration in milliseconds
+     */
+    virtual int getMinDetectionDuration() const = 0;
+    
+    /**
      * @brief Get the training data
      * @return Current training data
      */

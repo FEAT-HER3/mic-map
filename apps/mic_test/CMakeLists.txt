@@ -16,7 +16,7 @@ target_compile_features(mic_test PRIVATE cxx_std_17)
 
 # Windows-specific libraries
 if(WIN32)
-    target_link_libraries(mic_test PRIVATE comctl32)
+    target_link_libraries(mic_test PRIVATE comctl32 comdlg32)
 endif()
 
 # Set output directory

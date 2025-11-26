@@ -1,0 +1,10 @@
+{
+    "bindings": {
+        "/actions/micmap": {
+            "sources": []
+        }
+    },
+    "name": "MicMap HMD Bindings",
+    "description": "Default bindings for HMD-based input",
+    "controller_type": "hmd"
+}

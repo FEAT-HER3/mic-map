@@ -16,12 +16,11 @@ target_include_directories(micmap_detection
 target_link_libraries(micmap_detection
     PUBLIC
         micmap_common
+    PRIVATE
+        kissfft
 )
 
 target_compile_features(micmap_detection PUBLIC cxx_std_17)
-
-# When KissFFT is available, link it
-# target_link_libraries(micmap_detection PRIVATE kissfft)
 
 # Add alias for consistent naming
 add_library(micmap::detection ALIAS micmap_detection)
