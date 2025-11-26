@@ -1,0 +1,22 @@
+{
+    "version": 1,
+    "audio": {
+        "deviceNamePattern": "Beyond",
+        "deviceId": null,
+        "bufferSizeMs": 10
+    },
+    "detection": {
+        "sensitivity": 0.7,
+        "minDurationMs": 500,
+        "cooldownMs": 300,
+        "fftSize": 2048
+    },
+    "steamvr": {
+        "dashboardClickEnabled": true,
+        "customActionBinding": null
+    },
+    "training": {
+        "dataFile": "training_data.bin",
+        "lastTrainedTimestamp": null
+    }
+}
