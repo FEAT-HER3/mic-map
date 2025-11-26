@@ -255,7 +255,7 @@ public:
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - spikeTime_).count();
             // Spike arms detection for 3 seconds
-            spikeValid = elapsed < 3000;
+            spikeValid = elapsed < 500;
             if (!spikeValid && !isCurrentlyDetecting_) {
                 spikeTriggered_ = false;  // Spike expired and not detecting
                 MICMAP_LOG_DEBUG("Spike expired");
@@ -287,7 +287,7 @@ public:
                            0.30f * result.correlation;
         
         // Track high-confidence hits in sliding window
-        bool isHighConfidence = result.confidence >= 0.55f;  // 55% threshold for "high"
+        bool isHighConfidence = result.confidence >= 0.60f;  // 60% threshold for "high"
         updateConfidenceHistory(isHighConfidence);
         
         // Count high-confidence hits in recent history
