@@ -6,6 +6,16 @@ A SteamVR addon that listens to microphone input and detects white noise pattern
 
 MicMap provides a hands-free way to interact with the SteamVR dashboard by detecting when you cover your microphone. When the characteristic white noise pattern is detected for a configurable duration, MicMap simulates a controller input to open or interact with the SteamVR dashboard.
 
+## a note from FEAT~~HER3~~
+
+Thanks for checking out MicMap. It's an idea I've had for ages, and finally made time for it. Well... Kind of.
+
+While I generally take pride in my programming, C++ is not an environment I am terribly familiar with. Because my time is so limited these days, I vibecoded (used AI) to create most of this project. I can at least say that I followed each step closely and with scrutiny to make sure nothing too silly made its way in.
+
+The state of mic blockage detection is a bit rough today. It's my hope that this baseline will serve the community, and others with a little more experience can jump in to make MicMap a great tool. May it serve you well!
+
+-Reavo
+
 ### How It Works
 
 1. **Audio Capture**: MicMap continuously monitors your selected microphone input
@@ -20,33 +30,6 @@ MicMap provides a hands-free way to interact with the SteamVR dashboard by detec
 - **Build Tools** (for building from source):
   - Visual Studio 2022 with C++ desktop development workload
   - CMake 3.20 or higher
-
-## Building from Source
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/yourusername/mic-map.git
-cd mic-map
-```
-
-### 2. Configure with CMake
-
-```bash
-cmake -B build -G "Visual Studio 17 2022" -A x64
-```
-
-### 3. Build
-
-```bash
-cmake --build build --config Release
-```
-
-### Output Locations
-
-After building, you'll find:
-- **MicMap Application**: `build/apps/micmap/Release/micmap.exe`
-- **SteamVR Driver**: `build/driver/Release/driver_micmap.dll`
 
 ## Installation
 
@@ -177,6 +160,33 @@ MicMap logs are stored in:
 2. **Subpar microphone covered detection**: The current detection algorithm may have difficulty distinguishing between microphone covering and other loud sounds in some environments. Training in a quiet environment can help mitigate this.
 
 3. **MicMap app is not auto-starting alongside SteamVR**
+
+## Building from Source
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/yourusername/mic-map.git
+cd mic-map
+```
+
+### 2. Configure with CMake
+
+```bash
+cmake -B build -G "Visual Studio 17 2022" -A x64
+```
+
+### 3. Build
+
+```bash
+cmake --build build --config Release
+```
+
+### Output Locations
+
+After building, you'll find:
+- **MicMap Application**: `build/apps/micmap/Release/micmap.exe`
+- **SteamVR Driver**: `build/driver/Release/driver_micmap.dll`
 
 ## Project Structure
 
