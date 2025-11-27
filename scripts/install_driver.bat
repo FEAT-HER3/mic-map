@@ -80,7 +80,14 @@ echo Found SteamVR at: %STEAMVR_PATH%
 echo.
 
 REM Set driver paths
+REM Scripts can be run from either:
+REM   1. scripts/ folder (source): driver at ..\build\driver\micmap
+REM   2. build\bin\ folder: driver at .\driver\micmap (same directory as script)
 set "DRIVER_SOURCE=%~dp0..\build\driver\micmap"
+if not exist "%DRIVER_SOURCE%\driver.vrdrivermanifest" (
+    REM Try the build/bin location (driver folder next to script)
+    set "DRIVER_SOURCE=%~dp0driver\micmap"
+)
 set "DRIVER_DEST=%STEAMVR_PATH%\drivers\micmap"
 
 REM Check if source driver exists
@@ -150,12 +157,24 @@ echo.
 
 REM Now copy the MicMap application
 REM The driver expects the app at: <driver>/apps/micmap.exe
+REM Scripts can be run from either:
+REM   1. scripts/ folder (source): app at ..\build\bin\micmap.exe
+REM   2. build\bin\ folder: app at .\micmap.exe (same directory as script)
 set "APP_SOURCE=%~dp0..\build\bin"
+if not exist "%APP_SOURCE%\micmap.exe" (
+    REM Try same directory as script (when running from build\bin)
+    set "APP_SOURCE=%~dp0."
+)
 set "APP_DEST=%DRIVER_DEST%\apps"
+set "APP_INSTALLED=0"
 
 REM Check if the application exists
 if not exist "%APP_SOURCE%\micmap.exe" (
-    echo WARNING: MicMap application not found at: %APP_SOURCE%\micmap.exe
+    echo WARNING: MicMap application not found.
+    echo Searched in:
+    echo   - %~dp0..\build\bin\micmap.exe
+    echo   - %~dp0micmap.exe
+    echo.
     echo The driver will be installed, but the application will not auto-launch.
     echo You can manually run the application from the build directory.
     echo.
@@ -183,6 +202,7 @@ if exist "%APP_SOURCE%\config" (
     )
 )
 
+set "APP_INSTALLED=1"
 echo MicMap application installed successfully.
 echo.
 
@@ -196,16 +216,17 @@ echo.
 echo The MicMap driver has been installed to:
 echo   %DRIVER_DEST%
 echo.
-if exist "%APP_DEST%\micmap.exe" (
-echo The MicMap application has been installed to:
-echo   %APP_DEST%
-echo.
-echo The application will auto-launch when SteamVR starts.
-echo.
-) else (
-echo NOTE: The MicMap application was not installed.
-echo You will need to run it manually from the build directory.
-echo.
+if "%APP_INSTALLED%"=="1" (
+    echo The MicMap application has been installed to:
+    echo   %APP_DEST%
+    echo.
+    echo The application will auto-launch when SteamVR starts.
+    echo.
+)
+if "%APP_INSTALLED%"=="0" (
+    echo NOTE: The MicMap application was not installed.
+    echo You will need to run it manually from the build directory.
+    echo.
 )
 echo To verify the driver is loaded:
 echo   - Open SteamVR Settings

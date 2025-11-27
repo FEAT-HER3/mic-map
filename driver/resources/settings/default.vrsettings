@@ -4,7 +4,7 @@
         "http_port": 27015,
         "http_host": "127.0.0.1",
         "autoLaunchApp": true,
-        "appPath": "micmap.exe",
+        "appPath": "",
         "appArgs": ""
     }
 }

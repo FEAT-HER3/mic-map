@@ -95,6 +95,44 @@ if(MICMAP_BUILD_DRIVER)
     endif()
 endif()
 
+# Copy scripts to build output directory
+file(GLOB SCRIPT_FILES "${CMAKE_SOURCE_DIR}/scripts/*.bat")
+foreach(SCRIPT_FILE ${SCRIPT_FILES})
+    get_filename_component(SCRIPT_NAME ${SCRIPT_FILE} NAME)
+    configure_file(${SCRIPT_FILE} ${CMAKE_BINARY_DIR}/bin/${SCRIPT_NAME} COPYONLY)
+endforeach()
+
+# Custom target to copy all distributable files to build/bin
+# This includes scripts and the driver folder
+add_custom_target(copy_distributable_files ALL
+    # Create directories
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/bin"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/bin/driver"
+    
+    # Copy scripts
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/scripts/install_driver.bat"
+        "${CMAKE_BINARY_DIR}/bin/install_driver.bat"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/scripts/uninstall_driver.bat"
+        "${CMAKE_BINARY_DIR}/bin/uninstall_driver.bat"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/scripts/test_driver.bat"
+        "${CMAKE_BINARY_DIR}/bin/test_driver.bat"
+    
+    # Copy the entire driver folder to bin/driver/micmap
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_BINARY_DIR}/driver/micmap"
+        "${CMAKE_BINARY_DIR}/bin/driver/micmap"
+    
+    COMMENT "Copying distributable files (scripts and driver) to build/bin directory"
+)
+
+# Ensure the driver is built before copying
+if(MICMAP_BUILD_DRIVER AND OpenVR_FOUND)
+    add_dependencies(copy_distributable_files driver_micmap)
+endif()
+
 # Installation rules
 install(TARGETS micmap
     RUNTIME DESTINATION bin
