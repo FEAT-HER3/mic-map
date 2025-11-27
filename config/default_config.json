@@ -7,7 +7,7 @@
     },
     "detection": {
         "sensitivity": 0.7,
-        "minDurationMs": 500,
+        "minDurationMs": 300,
         "cooldownMs": 300,
         "fftSize": 2048
     },

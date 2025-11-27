@@ -105,20 +105,44 @@ if not exist "%DRIVER_SOURCE%\driver.vrdrivermanifest" (
 REM Remove existing driver if present
 if exist "%DRIVER_DEST%" (
     echo Removing existing MicMap driver...
-    rmdir /s /q "%DRIVER_DEST%"
-    if %errorLevel% neq 0 (
+    rmdir /s /q "%DRIVER_DEST%" 2>nul
+    
+    REM Wait a moment for filesystem to catch up
+    timeout /t 1 /nobreak >nul 2>&1
+    
+    REM Check if directory still exists
+    if exist "%DRIVER_DEST%" (
+        echo Warning: Directory still exists, attempting to remove again...
+        rmdir /s /q "%DRIVER_DEST%" 2>nul
+        timeout /t 1 /nobreak >nul 2>&1
+    )
+    
+    REM Final check
+    if exist "%DRIVER_DEST%" (
         echo ERROR: Failed to remove existing driver.
-        echo Please close SteamVR and try again.
+        echo Please close SteamVR and any applications using the driver, then try again.
         goto :error
     )
+    echo Existing driver removed successfully.
 )
+
+REM Create destination directory
+echo Creating driver directory...
+mkdir "%DRIVER_DEST%" 2>nul
 
 REM Copy driver files
 echo Installing MicMap driver to: %DRIVER_DEST%
-xcopy /e /i /y "%DRIVER_SOURCE%" "%DRIVER_DEST%"
+xcopy /e /i /y "%DRIVER_SOURCE%" "%DRIVER_DEST%" >nul
 if %errorLevel% neq 0 (
     echo ERROR: Failed to copy driver files.
-    goto :error
+    echo.
+    echo Retrying copy operation...
+    timeout /t 2 /nobreak >nul 2>&1
+    xcopy /e /i /y "%DRIVER_SOURCE%" "%DRIVER_DEST%" >nul
+    if !errorLevel! neq 0 (
+        echo ERROR: Copy failed after retry.
+        goto :error
+    )
 )
 
 echo.

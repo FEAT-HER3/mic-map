@@ -27,7 +27,7 @@ struct AudioConfig {
  */
 struct DetectionConfig {
     float sensitivity = 0.7f;           ///< Detection sensitivity (0.0 to 1.0)
-    int minDurationMs = 500;            ///< Minimum detection duration in ms
+    int minDurationMs = 300;            ///< Minimum detection duration in ms
     int cooldownMs = 300;               ///< Cooldown after trigger in ms
     int fftSize = 2048;                 ///< FFT window size
 };

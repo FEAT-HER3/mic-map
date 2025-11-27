@@ -1,25 +1,32 @@
 /**
  * @file main.cpp
- * @brief MicMap Main Application - Desktop Window with SteamVR Integration
- * 
- * Main application that combines all modules:
- * - Audio capture and monitoring
- * - White noise pattern detection
- * - SteamVR integration for HMD button events
- * - Configuration management
- * 
- * Runs as a desktop windowed application that registers as a SteamVR add-on,
- * starting and stopping alongside SteamVR.
+ * @brief MicMap Main Application - ImGui GUI with SteamVR Integration
  */
 
 #ifdef _WIN32
+
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
-#include <Windows.h>
-#include <CommCtrl.h>
-#pragma comment(lib, "comctl32.lib")
 #endif
 
+#include <Windows.h>
+#include <shellapi.h>
+#include <tlhelp32.h>
+#include <d3d11.h>
+#include <dwmapi.h>
+
+#pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "dwmapi.lib")
+
+#include "imgui.h"
+#include "imgui_impl_win32.h"
+#include "imgui_impl_dx11.h"
+
+#include "resource.h"
 #include "micmap/audio/audio_capture.hpp"
 #include "micmap/detection/noise_detector.hpp"
 #include "micmap/steamvr/vr_input.hpp"
@@ -30,642 +37,675 @@
 
 #include <memory>
 #include <atomic>
-#include <thread>
 #include <chrono>
 #include <string>
-#include <sstream>
-#include <iomanip>
+#include <mutex>
+#include <thread>
+#include <future>
 
 using namespace micmap;
 
-// Window dimensions
-constexpr int WINDOW_WIDTH = 500;
-constexpr int WINDOW_HEIGHT = 500;
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-// Control IDs
-constexpr int ID_DEVICE_COMBO = 101;
-constexpr int ID_TRAIN_BUTTON = 102;
-constexpr int ID_SENSITIVITY_SLIDER = 103;
-constexpr int ID_TIMER = 104;
+static ID3D11Device* g_pd3dDevice = nullptr;
+static ID3D11DeviceContext* g_pd3dDeviceContext = nullptr;
+static IDXGISwapChain* g_pSwapChain = nullptr;
+static ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
 
-// Application state
+// Detection timing constants (matching mic_test)
+constexpr int MIN_TRAINING_SAMPLES = 50;  // Valid samples needed (detector may reject some)
+
 struct MicMapApp {
-    // Modules
     std::unique_ptr<audio::IAudioCapture> audioCapture;
     std::unique_ptr<detection::INoiseDetector> detector;
     std::unique_ptr<steamvr::IVRInput> vrInput;
     std::unique_ptr<steamvr::IDashboardManager> dashboardManager;
     std::unique_ptr<core::IStateMachine> stateMachine;
     std::unique_ptr<core::IConfigManager> configManager;
+    std::unique_ptr<steamvr::IDriverClient> driverClient;
     
-    // Device list
     std::vector<audio::AudioDevice> devices;
+    int selectedDeviceIndex = 0;
     
-    // State
     std::atomic<bool> running{true};
     std::atomic<float> currentLevel{0.0f};
+    std::atomic<float> currentLevelDb{-60.0f};
     std::atomic<float> currentConfidence{0.0f};
+    std::atomic<float> currentSpectralFlatness{0.0f};
+    std::atomic<float> currentEnergy{0.0f};
+    std::atomic<float> currentEnergyDb{-60.0f};
     std::atomic<bool> isDetected{false};
     std::atomic<bool> isTraining{false};
+    std::atomic<int> trainingSampleCount{0};
+    std::atomic<bool> hasProfile{false};
+    
+    // Button fire tracking (matching mic_test)
+    std::chrono::steady_clock::time_point detectionStartTime;
+    std::atomic<bool> detectionActive{false};
+    std::atomic<bool> buttonWouldFire{false};
+    std::atomic<int> detectionDurationMs{0};
+    
+    // Cooldown tracking to prevent repeated triggers
+    std::chrono::steady_clock::time_point lastTriggerTime;
+    std::atomic<bool> inCooldown{false};
+    
     std::chrono::steady_clock::time_point lastUpdate;
     
-    // Window handles
+    int detectionTimeMs = 300;
+    
     HWND hwnd = nullptr;
-    HWND deviceCombo = nullptr;
-    HWND trainButton = nullptr;
-    HWND sensitivitySlider = nullptr;
-    HWND statusLabel = nullptr;
-    HWND vrStatusLabel = nullptr;
+    NOTIFYICONDATAW nid = {};
+    bool minimizedToTray = false;
+    std::mutex audioMutex;
     
     bool initialize();
     void shutdown();
     void onTrigger();
-    void updateVRStatus();
+    void renderUI();
 };
 
 static MicMapApp g_app;
 
-#ifdef _WIN32
+bool CreateDeviceD3D(HWND hWnd);
+void CleanupDeviceD3D();
+void CreateRenderTarget();
+void CleanupRenderTarget();
 
-// Forward declarations
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-void CreateControls(HWND hwnd);
-void UpdateDisplay(HWND hwnd);
-void OnDeviceSelected(int index);
-void OnTrainClicked();
-void OnSensitivityChanged(int value);
+bool CreateDeviceD3D(HWND hWnd) {
+    DXGI_SWAP_CHAIN_DESC sd = {};
+    sd.BufferCount = 2;
+    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sd.BufferDesc.RefreshRate.Numerator = 60;
+    sd.BufferDesc.RefreshRate.Denominator = 1;
+    sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    sd.OutputWindow = hWnd;
+    sd.SampleDesc.Count = 1;
+    sd.Windowed = TRUE;
+    sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
 
-std::wstring GetTimeString() {
-    auto now = std::chrono::system_clock::now();
-    auto time = std::chrono::system_clock::to_time_t(now);
-    std::tm tm_buf;
-    localtime_s(&tm_buf, &time);
-    
-    std::wostringstream oss;
-    oss << std::setfill(L'0') << std::setw(2) << tm_buf.tm_hour << L":"
-        << std::setfill(L'0') << std::setw(2) << tm_buf.tm_min << L":"
-        << std::setfill(L'0') << std::setw(2) << tm_buf.tm_sec;
-    return oss.str();
+    D3D_FEATURE_LEVEL featureLevel;
+    const D3D_FEATURE_LEVEL levels[2] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0 };
+    HRESULT res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, 
+        levels, 2, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pd3dDeviceContext);
+    if (res == DXGI_ERROR_UNSUPPORTED)
+        res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, 
+            levels, 2, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pd3dDeviceContext);
+    if (res != S_OK) return false;
+    CreateRenderTarget();
+    return true;
 }
 
+void CleanupDeviceD3D() {
+    CleanupRenderTarget();
+    if (g_pSwapChain) { g_pSwapChain->Release(); g_pSwapChain = nullptr; }
+    if (g_pd3dDeviceContext) { g_pd3dDeviceContext->Release(); g_pd3dDeviceContext = nullptr; }
+    if (g_pd3dDevice) { g_pd3dDevice->Release(); g_pd3dDevice = nullptr; }
+}
+
+void CreateRenderTarget() {
+    ID3D11Texture2D* pBackBuffer;
+    g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+    g_pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &g_mainRenderTargetView);
+    pBackBuffer->Release();
+}
+
+void CleanupRenderTarget() {
+    if (g_mainRenderTargetView) { g_mainRenderTargetView->Release(); g_mainRenderTargetView = nullptr; }
+}
+
+void SetupSystemTray(HWND hwnd) {
+    g_app.nid.cbSize = sizeof(NOTIFYICONDATAW);
+    g_app.nid.hWnd = hwnd;
+    g_app.nid.uID = 1;
+    g_app.nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    g_app.nid.uCallbackMessage = WM_TRAYICON;
+    g_app.nid.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+    wcscpy_s(g_app.nid.szTip, L"MicMap");
+    Shell_NotifyIconW(NIM_ADD, &g_app.nid);
+}
+
+void RemoveSystemTray() { Shell_NotifyIconW(NIM_DELETE, &g_app.nid); }
+
 bool MicMapApp::initialize() {
-    MICMAP_LOG_INFO("Initializing MicMap...");
-    
-    // Load configuration
     configManager = core::createConfigManager();
     configManager->loadDefault();
     auto& config = configManager->getConfig();
+    detectionTimeMs = config.detection.minDurationMs;
     
-    // Initialize audio capture
     audioCapture = audio::createWASAPICapture();
-    if (!audioCapture) {
-        MICMAP_LOG_ERROR("Failed to create audio capture");
-        return false;
-    }
+    if (!audioCapture) return false;
     
-    // Enumerate devices
     devices = audioCapture->enumerateDevices();
-    
-    // Select audio device
     bool deviceSelected = false;
-    if (!config.audio.deviceId.empty()) {
+    
+    // First try to find a device with "Beyond" in the name
+    for (size_t i = 0; i < devices.size(); ++i) {
+        if (devices[i].name.find(L"Beyond") != std::wstring::npos) {
+            deviceSelected = audioCapture->selectDeviceById(devices[i].id);
+            if (deviceSelected) {
+                selectedDeviceIndex = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+    
+    // If no Beyond device, try saved device ID
+    if (!deviceSelected && !config.audio.deviceId.empty()) {
         deviceSelected = audioCapture->selectDeviceById(config.audio.deviceId);
+        for (size_t i = 0; i < devices.size(); ++i) {
+            if (devices[i].id == config.audio.deviceId) {
+                selectedDeviceIndex = static_cast<int>(i);
+                break;
+            }
+        }
     }
-    if (!deviceSelected) {
-        deviceSelected = audioCapture->selectDevice(config.audio.deviceNamePattern);
-    }
+    
+    // Fall back to first device
     if (!deviceSelected && !devices.empty()) {
         deviceSelected = audioCapture->selectDeviceById(devices[0].id);
-    }
-    
-    if (!deviceSelected) {
-        MICMAP_LOG_WARNING("No audio device available");
+        selectedDeviceIndex = 0;
     }
     
     auto device = audioCapture->getCurrentDevice();
     if (device.sampleRate > 0) {
-        MICMAP_LOG_INFO("Using audio device: ", 
-            std::string(device.name.begin(), device.name.end()));
-        
-        // Initialize detector
         detector = detection::createFFTDetector(device.sampleRate, config.detection.fftSize);
-        detector->setSensitivity(config.detection.sensitivity);
-        
-        // Load training data if available
-        auto trainingPath = configManager->getTrainingDataPath();
-        if (detector->loadTrainingData(trainingPath)) {
-            MICMAP_LOG_INFO("Loaded training data");
-        }
+        detector->setMinDetectionDuration(config.detection.minDurationMs);
+        detector->loadTrainingData(configManager->getTrainingDataPath());
     }
     
-    // Initialize VR (using OpenVR for SteamVR integration)
+    // Initialize driver client (non-blocking - will connect in background)
+    driverClient = steamvr::createDriverClient();
+    
+    // Initialize VR input (don't initialize yet - will do async)
     vrInput = steamvr::createOpenVRInput();
     vrInput->setEventCallback([this](const steamvr::VREvent& event) {
         if (event.type == steamvr::VREventType::Quit) {
-            MICMAP_LOG_INFO("SteamVR quit event received");
             running = false;
-            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            PostMessage(hwnd, WM_STEAMVR_QUIT, 0, 0);
         }
     });
     
-    if (!vrInput->initialize()) {
-        MICMAP_LOG_WARNING("VR not available, running in standalone mode");
-    }
-    
-    // Initialize dashboard manager with shared VR input
+    // Initialize dashboard manager (without VR connection initially)
     dashboardManager = steamvr::createDashboardManager();
-    auto sharedVR = std::shared_ptr<steamvr::IVRInput>(
-        steamvr::createOpenVRInput().release()
-    );
-    sharedVR->initialize();
-    
     steamvr::DashboardManagerConfig dashConfig;
     dashConfig.autoReconnect = true;
-    dashConfig.exitWithSteamVR = true;
-    dashboardManager->initialize(sharedVR, dashConfig);
+    dashConfig.exitWithSteamVR = false; // Don't exit if SteamVR closes
+    // Don't initialize dashboard manager with VR yet - will be done when VR connects
     
-    // Initialize state machine
     core::StateMachineConfig smConfig;
     smConfig.minDetectionDuration = std::chrono::milliseconds(config.detection.minDurationMs);
     smConfig.cooldownDuration = std::chrono::milliseconds(config.detection.cooldownMs);
     smConfig.detectionThreshold = config.detection.sensitivity;
-    
     stateMachine = core::createStateMachine(smConfig);
-    stateMachine->setTriggerCallback([this]() {
-        onTrigger();
-    });
+    stateMachine->setTriggerCallback([this]() { onTrigger(); });
     
-    // Set up audio callback
+    // Check if we have a profile loaded
+    hasProfile = detector && detector->hasTrainingData();
+    
     if (audioCapture && detector) {
         audioCapture->setAudioCallback([this](const float* samples, size_t count) {
-            // Calculate RMS level
+            std::lock_guard<std::mutex> lock(audioMutex);
+            
+            // Calculate RMS level (matching mic_test)
             float rms = 0.0f;
-            for (size_t i = 0; i < count; ++i) {
-                rms += samples[i] * samples[i];
-            }
+            for (size_t i = 0; i < count; ++i) rms += samples[i] * samples[i];
             rms = std::sqrt(rms / count);
+            
+            // Scale for display (0-1 range)
             float scaledLevel = rms * 10.0f;
             currentLevel = (scaledLevel > 1.0f) ? 1.0f : scaledLevel;
+            currentLevelDb = (rms <= 0.0f) ? -60.0f : std::max(-60.0f, 20.0f * std::log10(rms));
             
-            // Training or detection
+            // Training or detection (only detect if we have a profile) - matching mic_test
             if (isTraining) {
                 detector->addTrainingSample(samples, count);
-            } else {
+                trainingSampleCount++;
+            } else if (detector->hasTrainingData()) {
+                // Only run detection if we have training data
                 auto result = detector->analyze(samples, count);
                 currentConfidence = result.confidence;
+                currentSpectralFlatness = result.spectralFlatness;
+                currentEnergy = result.energy;
+                currentEnergyDb = (result.energy <= 0.0f) ? -60.0f : std::max(-60.0f, 20.0f * std::log10(result.energy));
                 isDetected = result.isWhiteNoise;
                 
-                auto now = std::chrono::steady_clock::now();
-                auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    now - lastUpdate);
-                lastUpdate = now;
-                
-                if (stateMachine) {
-                    stateMachine->update(result.confidence, delta);
+                // Track detection duration for button fire (matching mic_test)
+                if (result.isWhiteNoise) {
+                    if (!detectionActive) {
+                        detectionStartTime = std::chrono::steady_clock::now();
+                        detectionActive = true;
+                    }
+                    
+                    auto now = std::chrono::steady_clock::now();
+                    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now - detectionStartTime).count();
+                    detectionDurationMs = static_cast<int>(duration);
+                    
+                    // Check cooldown
+                    auto cooldownElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now - lastTriggerTime).count();
+                    bool cooldownExpired = cooldownElapsed >= 300; // 300ms cooldown
+                    
+                    if (duration >= detectionTimeMs && !buttonWouldFire && cooldownExpired && !inCooldown) {
+                        buttonWouldFire = true;
+                        // Trigger the action!
+                        onTrigger();
+                        lastTriggerTime = now;
+                        inCooldown = true;
+                    }
+                } else {
+                    detectionActive = false;
+                    buttonWouldFire = false;
+                    detectionDurationMs = 0;
+                    inCooldown = false; // Reset cooldown when detection stops
                 }
+                
+                // Update state machine
+                auto now = std::chrono::steady_clock::now();
+                auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastUpdate);
+                lastUpdate = now;
+                if (stateMachine) stateMachine->update(result.confidence, delta);
+            } else {
+                // No profile - reset detection state
+                currentConfidence = 0.0f;
+                currentSpectralFlatness = 0.0f;
+                currentEnergy = 0.0f;
+                currentEnergyDb = -60.0f;
+                isDetected = false;
+                detectionActive = false;
+                buttonWouldFire = false;
+                detectionDurationMs = 0;
             }
+            
+            hasProfile = detector->hasTrainingData();
         });
-        
         audioCapture->startCapture();
     }
-    
     lastUpdate = std::chrono::steady_clock::now();
-    
-    MICMAP_LOG_INFO("MicMap initialized successfully");
     return true;
 }
 
 void MicMapApp::shutdown() {
-    MICMAP_LOG_INFO("Shutting down MicMap...");
-    
     running = false;
-    
-    if (audioCapture) {
-        audioCapture->stopCapture();
-    }
-    
-    // Save training data if available
-    if (detector && detector->hasTrainingData() && configManager) {
+    if (audioCapture) audioCapture->stopCapture();
+    if (detector && detector->hasTrainingData() && configManager)
         detector->saveTrainingData(configManager->getTrainingDataPath());
-    }
-    
-    if (dashboardManager) {
-        dashboardManager->shutdown();
-    }
-    
-    if (vrInput) {
-        vrInput->shutdown();
-    }
-    
-    // Save configuration
-    if (configManager) {
-        configManager->saveDefault();
-    }
-    
-    MICMAP_LOG_INFO("MicMap shutdown complete");
+    if (dashboardManager) dashboardManager->shutdown();
+    if (vrInput) vrInput->shutdown();
+    if (driverClient) driverClient->disconnect();
+    if (configManager) configManager->saveDefault();
+    RemoveSystemTray();
 }
 
 void MicMapApp::onTrigger() {
-    MICMAP_LOG_INFO("Pattern detected - triggering action");
+    // Use dashboardManager->performDashboardAction() like hmd_button_test's Auto button
+    // This handles both opening dashboard (when closed) and sending click (when open)
     
-    if (!dashboardManager || !vrInput) {
+    if (dashboardManager && dashboardManager->isConnected()) {
+        // Use the dashboard manager's performDashboardAction which handles both cases
+        dashboardManager->performDashboardAction();
         return;
     }
     
-    auto state = dashboardManager->getDashboardState();
+    // Fallback: try using driver client directly
+    if (driverClient && driverClient->isConnected()) {
+        auto state = steamvr::DashboardState::Unknown;
+        if (vrInput && vrInput->isInitialized()) {
+            state = vrInput->getDashboardState();
+        } else if (dashboardManager) {
+            state = dashboardManager->getDashboardState();
+        }
+        
+        if (state == steamvr::DashboardState::Closed || state == steamvr::DashboardState::Unknown) {
+            // Open dashboard - send system button to toggle dashboard
+            driverClient->click("system", 100);
+        } else if (state == steamvr::DashboardState::Open) {
+            // Send click to select item under pointer
+            driverClient->click("trigger", 100);
+        }
+        return;
+    }
     
-    if (state == steamvr::DashboardState::Closed) {
-        // Open dashboard
-        MICMAP_LOG_DEBUG("Opening dashboard");
-        dashboardManager->openDashboard();
-    } else if (state == steamvr::DashboardState::Open) {
-        // Send HMD button press to select item under head-locked pointer
-        auto& config = configManager->getConfig();
-        if (config.steamvr.dashboardClickEnabled) {
-            MICMAP_LOG_DEBUG("Sending HMD button press for dashboard selection");
+    // Last resort: try VR input directly
+    if (vrInput && vrInput->isInitialized()) {
+        auto state = vrInput->getDashboardState();
+        if (state == steamvr::DashboardState::Closed || state == steamvr::DashboardState::Unknown) {
+            vrInput->sendHMDButtonEvent();
+        } else if (state == steamvr::DashboardState::Open) {
             vrInput->sendDashboardSelect();
         }
     }
 }
 
-void MicMapApp::updateVRStatus() {
-    if (vrInput && vrStatusLabel) {
-        if (vrInput->isVRAvailable()) {
-            SetWindowTextW(vrStatusLabel, L"SteamVR: Connected");
-        } else {
-            SetWindowTextW(vrStatusLabel, L"SteamVR: Not Connected");
+void MicMapApp::renderUI() {
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
+    ImGui::Begin("MicMap", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+    
+    ImGui::Text("Status");
+    ImGui::Separator();
+    bool vrOk = vrInput && vrInput->isInitialized();
+    ImGui::TextColored(vrOk ? ImVec4(0,1,0,1) : ImVec4(1,0.5f,0,1), "SteamVR: %s", vrOk ? "Connected" : "Not Connected");
+    bool drvOk = driverClient && driverClient->isConnected();
+    ImGui::TextColored(drvOk ? ImVec4(0,1,0,1) : ImVec4(1,0.5f,0,1), "Driver: %s", drvOk ? "Connected" : "Not Connected");
+    if (dashboardManager) {
+        auto ds = dashboardManager->getDashboardState();
+        ImGui::Text("Dashboard: %s", ds == steamvr::DashboardState::Open ? "Open" : ds == steamvr::DashboardState::Closed ? "Closed" : "Unknown");
+    }
+    
+    ImGui::Spacing();
+    ImGui::Text("Audio Device");
+    ImGui::Separator();
+    if (!devices.empty()) {
+        std::vector<std::string> names;
+        for (auto& d : devices) {
+            // Convert wstring to string properly
+            std::string name(d.name.length(), '\0');
+            WideCharToMultiByte(CP_UTF8, 0, d.name.c_str(), -1, &name[0], (int)name.size() + 1, nullptr, nullptr);
+            name.resize(strlen(name.c_str()));
+            names.push_back(name);
+        }
+        std::vector<const char*> ptrs;
+        for (auto& n : names) ptrs.push_back(n.c_str());
+        int prev = selectedDeviceIndex;
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##Dev", &selectedDeviceIndex, ptrs.data(), (int)ptrs.size()) && prev != selectedDeviceIndex && audioCapture) {
+            audioCapture->stopCapture();
+            audioCapture->selectDeviceById(devices[selectedDeviceIndex].id);
+            auto dev = audioCapture->getCurrentDevice();
+            if (dev.sampleRate > 0) {
+                detector = detection::createFFTDetector(dev.sampleRate);
+                detector->setMinDetectionDuration(detectionTimeMs);
+                if (configManager) detector->loadTrainingData(configManager->getTrainingDataPath());
+            }
+            audioCapture->startCapture();
+            if (configManager) configManager->getConfig().audio.deviceId = devices[selectedDeviceIndex].id;
         }
     }
+    
+    ImGui::Spacing();
+    ImGui::Text("Settings");
+    ImGui::Separator();
+    ImGui::Text("Detection Time: %d ms", detectionTimeMs);
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::SliderInt("##Time", &detectionTimeMs, 100, 1000, "")) {
+        if (detector) detector->setMinDetectionDuration(detectionTimeMs);
+        if (configManager) configManager->getConfig().detection.minDurationMs = detectionTimeMs;
+    }
+    
+    ImGui::Spacing();
+    ImGui::Text("Training");
+    ImGui::Separator();
+    
+    // Check for auto-stop training (matching mic_test)
+    if (isTraining && trainingSampleCount >= MIN_TRAINING_SAMPLES * 3) {
+        if (detector) {
+            bool success = detector->finishTraining();
+            isTraining = false;
+            if (success) {
+                hasProfile = true;
+                if (configManager) detector->saveTrainingData(configManager->getTrainingDataPath());
+            }
+        }
+    }
+    
+    if (isTraining) {
+        if (ImGui::Button("Stop Training", ImVec2(120, 30))) {
+            if (detector) {
+                bool success = detector->finishTraining();
+                if (success && configManager) {
+                    detector->saveTrainingData(configManager->getTrainingDataPath());
+                    hasProfile = true;
+                }
+            }
+            isTraining = false;
+        }
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1,0.5f,0,1), "Cover mic now! (%d samples)", trainingSampleCount.load());
+    } else {
+        if (ImGui::Button("Train Pattern", ImVec2(120, 30)) && detector) {
+            detector->startTraining();
+            isTraining = true;
+            trainingSampleCount = 0;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Clear", ImVec2(60, 30)) && detector) {
+            auto dev = audioCapture->getCurrentDevice();
+            if (dev.sampleRate > 0) {
+                detector = detection::createFFTDetector(dev.sampleRate);
+                detector->setMinDetectionDuration(detectionTimeMs);
+            }
+            hasProfile = false;
+            trainingSampleCount = 0;
+        }
+    }
+    
+    // Training status (matching mic_test)
+    if (hasProfile) {
+        ImGui::TextColored(ImVec4(0,1,0,1), "Status: Profile trained and ready");
+    } else {
+        ImGui::TextColored(ImVec4(1,0.5f,0,1), "Status: No profile loaded");
+    }
+    
+    ImGui::Spacing();
+    ImGui::Text("Audio Levels");
+    ImGui::Separator();
+    
+    // Input level with dB display (matching mic_test)
+    ImGui::Text("Input Level: %.1f dB", currentLevelDb.load());
+    ImGui::ProgressBar(currentLevel.load(), ImVec2(-1, 18));
+    
+    // Confidence meter (matching mic_test)
+    ImGui::Text("Confidence: %.0f%%", currentConfidence.load() * 100.0f);
+    float conf = currentConfidence.load();
+    if (isDetected.load()) ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(1,0.55f,0,1));
+    ImGui::ProgressBar(conf, ImVec2(-1, 18));
+    if (isDetected.load()) ImGui::PopStyleColor();
+    
+    // Spectral flatness and energy (matching mic_test)
+    ImGui::Text("Spectral Flatness: %.3f", currentSpectralFlatness.load());
+    ImGui::Text("Energy: %.1f dB", currentEnergyDb.load());
+    
+    ImGui::Spacing();
+    
+    // Detection indicator (matching mic_test style)
+    bool buttonFire = buttonWouldFire.load();
+    bool detected = isDetected.load();
+    
+    ImVec4 boxColor;
+    const char* detectionText;
+    char detectionBuf[128];
+    
+    if (buttonFire) {
+        boxColor = ImVec4(0, 0.78f, 0, 1);  // Green - triggered
+        detectionText = "TRIGGERED";
+    } else if (detected) {
+        boxColor = ImVec4(1, 0.78f, 0, 1);  // Yellow - detected but not long enough
+        snprintf(detectionBuf, sizeof(detectionBuf), "DETECTING... (%d ms / %d ms)",
+                 detectionDurationMs.load(), detectionTimeMs);
+        detectionText = detectionBuf;
+    } else {
+        boxColor = ImVec4(0.24f, 0.24f, 0.24f, 1);  // Dark gray - not detected
+        detectionText = "NOT DETECTED";
+    }
+    
+    // Draw detection box
+    ImGui::PushStyleColor(ImGuiCol_Button, boxColor);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, boxColor);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, boxColor);
+    ImGui::Button(detectionText, ImVec2(-1, 50));
+    ImGui::PopStyleColor(3);
+    ImGui::End();
 }
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
-    // Check for existing instance
+LRESULT CALLBACK WindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam)) return true;
+    switch (msg) {
+        case WM_SIZE:
+            if (g_pd3dDevice && wParam != SIZE_MINIMIZED) {
+                CleanupRenderTarget();
+                g_pSwapChain->ResizeBuffers(0, LOWORD(lParam), HIWORD(lParam), DXGI_FORMAT_UNKNOWN, 0);
+                CreateRenderTarget();
+            }
+            if (wParam == SIZE_MINIMIZED) { ShowWindow(hWnd, SW_HIDE); g_app.minimizedToTray = true; }
+            return 0;
+        case WM_SYSCOMMAND:
+            if ((wParam & 0xfff0) == SC_MINIMIZE) { ShowWindow(hWnd, SW_HIDE); g_app.minimizedToTray = true; return 0; }
+            break;
+        case WM_TRAYICON:
+            if (lParam == WM_LBUTTONDBLCLK) { ShowWindow(hWnd, SW_SHOW); SetForegroundWindow(hWnd); g_app.minimizedToTray = false; }
+            else if (lParam == WM_RBUTTONUP) {
+                POINT pt; GetCursorPos(&pt);
+                HMENU m = CreatePopupMenu();
+                AppendMenuW(m, MF_STRING, IDM_SHOW, L"Show");
+                AppendMenuW(m, MF_STRING, IDM_EXIT, L"Exit");
+                SetForegroundWindow(hWnd);
+                TrackPopupMenu(m, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hWnd, nullptr);
+                DestroyMenu(m);
+            }
+            return 0;
+        case WM_COMMAND:
+            if (LOWORD(wParam) == IDM_SHOW) { ShowWindow(hWnd, SW_SHOW); SetForegroundWindow(hWnd); g_app.minimizedToTray = false; }
+            else if (LOWORD(wParam) == IDM_EXIT) g_app.running = false;
+            return 0;
+        case WM_STEAMVR_QUIT: g_app.running = false; return 0;
+        case WM_CLOSE: ShowWindow(hWnd, SW_HIDE); g_app.minimizedToTray = true; return 0;
+        case WM_DESTROY: PostQuitMessage(0); return 0;
+    }
+    return DefWindowProc(hWnd, msg, wParam, lParam);
+}
+
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow) {
     HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"MicMapSingleInstance");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        MessageBoxW(nullptr, L"MicMap is already running.", L"MicMap", MB_OK | MB_ICONINFORMATION);
+        HWND w = FindWindowW(L"MicMapMain", nullptr);
+        if (w) { ShowWindow(w, SW_SHOW); SetForegroundWindow(w); }
         return 0;
     }
     
-    // Initialize common controls
-    INITCOMMONCONTROLSEX icex;
-    icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
-    icex.dwICC = ICC_STANDARD_CLASSES | ICC_BAR_CLASSES;
-    InitCommonControlsEx(&icex);
+    WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WindowProc, 0, 0, hInstance, LoadIcon(nullptr, IDI_APPLICATION), LoadCursor(nullptr, IDC_ARROW), nullptr, nullptr, L"MicMapMain", nullptr };
+    RegisterClassExW(&wc);
+    g_app.hwnd = CreateWindowW(L"MicMapMain", L"MicMap", WS_OVERLAPPEDWINDOW, 100, 100, 500, 620, nullptr, nullptr, hInstance, nullptr);
     
-    // Register window class
-    const wchar_t CLASS_NAME[] = L"MicMapMain";
+    if (!CreateDeviceD3D(g_app.hwnd)) { CleanupDeviceD3D(); UnregisterClassW(wc.lpszClassName, wc.hInstance); return 1; }
     
-    WNDCLASSW wc = {};
-    wc.lpfnWndProc = WindowProc;
-    wc.hInstance = hInstance;
-    wc.lpszClassName = CLASS_NAME;
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
-    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::StyleColorsDark();
+    ImGui_ImplWin32_Init(g_app.hwnd);
+    ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
     
-    RegisterClassW(&wc);
+    g_app.initialize();
+    SetupSystemTray(g_app.hwnd);
     
-    // Create window
-    g_app.hwnd = CreateWindowExW(
-        0,
-        CLASS_NAME,
-        L"MicMap - Microphone Pattern Detection",
-        WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT,
-        WINDOW_WIDTH, WINDOW_HEIGHT,
-        nullptr,
-        nullptr,
-        hInstance,
-        nullptr
-    );
+    // Start async initialization of VR and driver
+    std::thread initThread([]() {
+        if (g_app.driverClient) {
+            g_app.driverClient->connect();
+        }
+        if (g_app.vrInput) {
+            g_app.vrInput->initialize();
+            // Initialize dashboard manager once VR is connected
+            if (g_app.vrInput->isInitialized() && g_app.dashboardManager) {
+                auto sharedVR = std::shared_ptr<steamvr::IVRInput>(steamvr::createOpenVRInput().release());
+                sharedVR->initialize();
+                steamvr::DashboardManagerConfig dashConfig;
+                dashConfig.autoReconnect = true;
+                dashConfig.exitWithSteamVR = false;
+                g_app.dashboardManager->initialize(sharedVR, dashConfig);
+            }
+        }
+    });
+    initThread.detach();
     
-    if (!g_app.hwnd) {
-        CloseHandle(hMutex);
-        return 1;
+    bool startMin = lpCmdLine && strstr(lpCmdLine, "--minimized");
+    if (startMin) { g_app.minimizedToTray = true; } else { ShowWindow(g_app.hwnd, nCmdShow); UpdateWindow(g_app.hwnd); }
+    
+    ImVec4 clear_color(0.1f, 0.1f, 0.1f, 1.0f);
+    while (g_app.running) {
+        MSG msg;
+        while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+            if (msg.message == WM_QUIT) g_app.running = false;
+        }
+        if (!g_app.running) break;
+        
+        // Non-blocking updates - only poll if initialized
+        if (g_app.vrInput && g_app.vrInput->isInitialized()) {
+            g_app.vrInput->pollEvents();
+        }
+        if (g_app.dashboardManager && g_app.dashboardManager->isConnected()) {
+            g_app.dashboardManager->update();
+        }
+        
+        // Async reconnection attempts using futures to avoid blocking
+        static std::future<void> driverConnectFuture;
+        static std::future<void> vrInitFuture;
+        static int reconnectCounter = 0;
+        int reconnectInterval = g_app.minimizedToTray ? 100 : 40;
+        
+        if (++reconnectCounter >= reconnectInterval) {
+            reconnectCounter = 0;
+            
+            // Check if driver needs reconnection (async)
+            if (g_app.driverClient && !g_app.driverClient->isConnected()) {
+                if (!driverConnectFuture.valid() ||
+                    driverConnectFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                    driverConnectFuture = std::async(std::launch::async, []() {
+                        g_app.driverClient->connect();
+                    });
+                }
+            }
+            
+            // Check if VR needs initialization (async)
+            if (g_app.vrInput && !g_app.vrInput->isInitialized()) {
+                if (!vrInitFuture.valid() ||
+                    vrInitFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                    vrInitFuture = std::async(std::launch::async, []() {
+                        g_app.vrInput->initialize();
+                        // Initialize dashboard manager once VR is connected
+                        if (g_app.vrInput->isInitialized() && g_app.dashboardManager && !g_app.dashboardManager->isConnected()) {
+                            auto sharedVR = std::shared_ptr<steamvr::IVRInput>(steamvr::createOpenVRInput().release());
+                            sharedVR->initialize();
+                            steamvr::DashboardManagerConfig dashConfig;
+                            dashConfig.autoReconnect = true;
+                            dashConfig.exitWithSteamVR = false;
+                            g_app.dashboardManager->initialize(sharedVR, dashConfig);
+                        }
+                    });
+                }
+            }
+        }
+        
+        if (!g_app.minimizedToTray) {
+            ImGui_ImplDX11_NewFrame();
+            ImGui_ImplWin32_NewFrame();
+            ImGui::NewFrame();
+            g_app.renderUI();
+            ImGui::Render();
+            g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
+            g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, (float*)&clear_color);
+            ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+            g_pSwapChain->Present(1, 0);
+        } else {
+            Sleep(50);
+        }
     }
     
-    // Initialize application
-    if (!g_app.initialize()) {
-        MessageBoxW(nullptr, L"Failed to initialize MicMap.\nCheck that audio devices are available.",
-            L"MicMap Error", MB_OK | MB_ICONWARNING);
-        // Continue anyway - user can select device
-    }
-    
-    ShowWindow(g_app.hwnd, nCmdShow);
-    
-    // Set up timer for display updates
-    SetTimer(g_app.hwnd, ID_TIMER, 50, nullptr);
-    
-    // Message loop
-    MSG msg = {};
-    while (GetMessage(&msg, nullptr, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
-    }
-    
-    // Shutdown
     g_app.shutdown();
-    
+    ImGui_ImplDX11_Shutdown();
+    ImGui_ImplWin32_Shutdown();
+    ImGui::DestroyContext();
+    CleanupDeviceD3D();
+    DestroyWindow(g_app.hwnd);
+    UnregisterClassW(wc.lpszClassName, wc.hInstance);
     CloseHandle(hMutex);
-    
     return 0;
 }
 
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    switch (uMsg) {
-        case WM_CREATE:
-            CreateControls(hwnd);
-            return 0;
-            
-        case WM_TIMER:
-            if (wParam == ID_TIMER) {
-                // Update VR status
-                if (g_app.dashboardManager) {
-                    g_app.dashboardManager->update();
-                }
-                if (g_app.vrInput) {
-                    g_app.vrInput->pollEvents();
-                }
-                g_app.updateVRStatus();
-                
-                // Redraw
-                InvalidateRect(hwnd, nullptr, FALSE);
-            }
-            return 0;
-            
-        case WM_PAINT: {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hwnd, &ps);
-            UpdateDisplay(hwnd);
-            EndPaint(hwnd, &ps);
-            return 0;
-        }
-        
-        case WM_HSCROLL:
-            if ((HWND)lParam == g_app.sensitivitySlider) {
-                int pos = (int)SendMessage(g_app.sensitivitySlider, TBM_GETPOS, 0, 0);
-                OnSensitivityChanged(pos);
-            }
-            return 0;
-        
-        case WM_COMMAND:
-            switch (LOWORD(wParam)) {
-                case ID_DEVICE_COMBO:
-                    if (HIWORD(wParam) == CBN_SELCHANGE) {
-                        int index = (int)SendMessage(g_app.deviceCombo, CB_GETCURSEL, 0, 0);
-                        OnDeviceSelected(index);
-                    }
-                    break;
-                case ID_TRAIN_BUTTON:
-                    OnTrainClicked();
-                    break;
-            }
-            return 0;
-            
-        case WM_DESTROY:
-            KillTimer(hwnd, ID_TIMER);
-            PostQuitMessage(0);
-            return 0;
-    }
-    
-    return DefWindowProc(hwnd, uMsg, wParam, lParam);
-}
-
-void CreateControls(HWND hwnd) {
-    int y = 10;
-    
-    // VR Status
-    g_app.vrStatusLabel = CreateWindowW(L"STATIC", L"SteamVR: Checking...",
-        WS_VISIBLE | WS_CHILD,
-        10, y, 460, 20,
-        hwnd, nullptr, nullptr, nullptr);
-    
-    y += 30;
-    
-    // Device label
-    CreateWindowW(L"STATIC", L"Audio Device:",
-        WS_VISIBLE | WS_CHILD,
-        10, y, 100, 20,
-        hwnd, nullptr, nullptr, nullptr);
-    
-    // Device combo box
-    g_app.deviceCombo = CreateWindowW(L"COMBOBOX", L"",
-        WS_VISIBLE | WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL,
-        110, y, 360, 200,
-        hwnd, (HMENU)ID_DEVICE_COMBO, nullptr, nullptr);
-    
-    // Populate device combo
-    for (size_t i = 0; i < g_app.devices.size(); ++i) {
-        SendMessageW(g_app.deviceCombo, CB_ADDSTRING, 0, 
-            (LPARAM)g_app.devices[i].name.c_str());
-    }
-    if (!g_app.devices.empty()) {
-        SendMessage(g_app.deviceCombo, CB_SETCURSEL, 0, 0);
-    }
-    
-    y += 35;
-    
-    // Sensitivity label
-    CreateWindowW(L"STATIC", L"Sensitivity:",
-        WS_VISIBLE | WS_CHILD,
-        10, y, 100, 20,
-        hwnd, nullptr, nullptr, nullptr);
-    
-    // Sensitivity slider
-    g_app.sensitivitySlider = CreateWindowW(TRACKBAR_CLASSW, L"",
-        WS_VISIBLE | WS_CHILD | TBS_HORZ | TBS_AUTOTICKS,
-        110, y, 300, 30,
-        hwnd, (HMENU)ID_SENSITIVITY_SLIDER, nullptr, nullptr);
-    
-    SendMessage(g_app.sensitivitySlider, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
-    SendMessage(g_app.sensitivitySlider, TBM_SETPOS, TRUE, 70);  // Default 70%
-    
-    y += 40;
-    
-    // Train button
-    g_app.trainButton = CreateWindowW(L"BUTTON", L"Train Pattern",
-        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        10, y, 120, 35,
-        hwnd, (HMENU)ID_TRAIN_BUTTON, nullptr, nullptr);
-    
-    y += 45;
-    
-    // Status label
-    g_app.statusLabel = CreateWindowW(L"STATIC", L"Status: Ready",
-        WS_VISIBLE | WS_CHILD,
-        10, y, 460, 20,
-        hwnd, nullptr, nullptr, nullptr);
-}
-
-void UpdateDisplay(HWND hwnd) {
-    HDC hdc = GetDC(hwnd);
-    
-    // Get client rect
-    RECT clientRect;
-    GetClientRect(hwnd, &clientRect);
-    
-    // Create double buffer
-    HDC memDC = CreateCompatibleDC(hdc);
-    HBITMAP memBitmap = CreateCompatibleBitmap(hdc, clientRect.right, clientRect.bottom);
-    HBITMAP oldBitmap = (HBITMAP)SelectObject(memDC, memBitmap);
-    
-    // Fill background
-    HBRUSH bgBrush = CreateSolidBrush(GetSysColor(COLOR_WINDOW));
-    FillRect(memDC, &clientRect, bgBrush);
-    DeleteObject(bgBrush);
-    
-    int y = 180;
-    
-    // Draw level meter
-    SetBkMode(memDC, TRANSPARENT);
-    TextOutW(memDC, 10, y, L"Audio Level:", 12);
-    y += 20;
-    
-    RECT levelRect = {10, y, 470, y + 25};
-    DrawEdge(memDC, &levelRect, EDGE_SUNKEN, BF_RECT);
-    
-    int levelWidth = (int)(g_app.currentLevel * 456);
-    RECT levelFill = {12, y + 2, 12 + levelWidth, y + 23};
-    HBRUSH levelBrush = CreateSolidBrush(RGB(0, 180, 0));
-    FillRect(memDC, &levelFill, levelBrush);
-    DeleteObject(levelBrush);
-    
-    y += 40;
-    
-    // Draw detection meter
-    TextOutW(memDC, 10, y, L"Detection Confidence:", 21);
-    y += 20;
-    
-    RECT confRect = {10, y, 470, y + 25};
-    DrawEdge(memDC, &confRect, EDGE_SUNKEN, BF_RECT);
-    
-    int confWidth = (int)(g_app.currentConfidence * 456);
-    RECT confFill = {12, y + 2, 12 + confWidth, y + 23};
-    COLORREF confColor = g_app.isDetected ? RGB(255, 100, 0) : RGB(100, 100, 200);
-    HBRUSH confBrush = CreateSolidBrush(confColor);
-    FillRect(memDC, &confFill, confBrush);
-    DeleteObject(confBrush);
-    
-    y += 35;
-    
-    // Detection status
-    if (g_app.isDetected) {
-        HFONT boldFont = CreateFontW(20, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-        HFONT oldFont = (HFONT)SelectObject(memDC, boldFont);
-        SetTextColor(memDC, RGB(255, 100, 0));
-        TextOutW(memDC, 10, y, L"PATTERN DETECTED!", 17);
-        SelectObject(memDC, oldFont);
-        DeleteObject(boldFont);
-    }
-    
-    y += 30;
-    
-    // State machine status
-    if (g_app.stateMachine) {
-        auto state = g_app.stateMachine->getCurrentState();
-        std::wstring stateStr = L"State: ";
-        switch (state) {
-            case core::State::Idle: stateStr += L"Idle"; break;
-            case core::State::Training: stateStr += L"Training"; break;
-            case core::State::Detecting: stateStr += L"Detecting..."; break;
-            case core::State::Triggered: stateStr += L"Triggered!"; break;
-            case core::State::Cooldown: stateStr += L"Cooldown"; break;
-        }
-        TextOutW(memDC, 10, y, stateStr.c_str(), (int)stateStr.length());
-    }
-    
-    y += 25;
-    
-    // Dashboard state
-    if (g_app.dashboardManager) {
-        auto dashState = g_app.dashboardManager->getDashboardState();
-        std::wstring dashStr = L"Dashboard: ";
-        switch (dashState) {
-            case steamvr::DashboardState::Open: dashStr += L"Open"; break;
-            case steamvr::DashboardState::Closed: dashStr += L"Closed"; break;
-            default: dashStr += L"Unknown"; break;
-        }
-        TextOutW(memDC, 10, y, dashStr.c_str(), (int)dashStr.length());
-    }
-    
-    // Copy to screen
-    BitBlt(hdc, 0, 0, clientRect.right, clientRect.bottom, memDC, 0, 0, SRCCOPY);
-    
-    // Cleanup
-    SelectObject(memDC, oldBitmap);
-    DeleteObject(memBitmap);
-    DeleteDC(memDC);
-    ReleaseDC(hwnd, hdc);
-}
-
-void OnDeviceSelected(int index) {
-    if (index >= 0 && index < (int)g_app.devices.size()) {
-        if (g_app.audioCapture) {
-            g_app.audioCapture->stopCapture();
-            g_app.audioCapture->selectDeviceById(g_app.devices[index].id);
-            
-            auto device = g_app.audioCapture->getCurrentDevice();
-            if (device.sampleRate > 0) {
-                g_app.detector = detection::createFFTDetector(device.sampleRate);
-                if (g_app.configManager) {
-                    auto trainingPath = g_app.configManager->getTrainingDataPath();
-                    g_app.detector->loadTrainingData(trainingPath);
-                }
-            }
-            
-            g_app.audioCapture->startCapture();
-            SetWindowTextW(g_app.statusLabel, L"Status: Device changed");
-        }
-    }
-}
-
-void OnTrainClicked() {
-    if (!g_app.detector) return;
-    
-    if (!g_app.isTraining) {
-        g_app.detector->startTraining();
-        g_app.isTraining = true;
-        SetWindowTextW(g_app.trainButton, L"Stop Training");
-        SetWindowTextW(g_app.statusLabel, L"Status: Training... Cover your microphone now!");
-    } else {
-        if (g_app.detector->finishTraining()) {
-            SetWindowTextW(g_app.statusLabel, L"Status: Training complete!");
-            // Save training data
-            if (g_app.configManager) {
-                g_app.detector->saveTrainingData(g_app.configManager->getTrainingDataPath());
-            }
-        } else {
-            SetWindowTextW(g_app.statusLabel, L"Status: Training failed - not enough samples");
-        }
-        g_app.isTraining = false;
-        SetWindowTextW(g_app.trainButton, L"Train Pattern");
-    }
-}
-
-void OnSensitivityChanged(int value) {
-    float sensitivity = value / 100.0f;
-    
-    if (g_app.detector) {
-        g_app.detector->setSensitivity(sensitivity);
-    }
-    
-    if (g_app.stateMachine) {
-        auto config = g_app.stateMachine->getConfig();
-        config.detectionThreshold = sensitivity;
-        g_app.stateMachine->configure(config);
-    }
-    
-    if (g_app.configManager) {
-        g_app.configManager->getConfig().detection.sensitivity = sensitivity;
-    }
-}
-
 #else
-// Non-Windows entry point
 #include <iostream>
-int main(int argc, char* argv[]) {
-    std::cerr << "This application requires Windows.\n";
-    return 1;
-}
+int main() { std::cerr << "Windows only\n"; return 1; }
 #endif

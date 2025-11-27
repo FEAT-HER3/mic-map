@@ -74,6 +74,38 @@ target_include_directories(httplib INTERFACE ${cpp_httplib_SOURCE_DIR})
 # but if OpenSSL is found on the system, it will be used. This is fine.
 add_library(httplib::httplib ALIAS httplib)
 
+# Dear ImGui - Immediate mode GUI library
+FetchContent_Declare(
+    imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG v1.90.1
+)
+
+FetchContent_GetProperties(imgui)
+if(NOT imgui_POPULATED)
+    FetchContent_Populate(imgui)
+endif()
+
+# Create ImGui library with Win32 + DirectX11 backend
+if(WIN32)
+    set(IMGUI_SOURCES
+        ${imgui_SOURCE_DIR}/imgui.cpp
+        ${imgui_SOURCE_DIR}/imgui_demo.cpp
+        ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp
+    )
+    
+    add_library(imgui STATIC ${IMGUI_SOURCES})
+    target_include_directories(imgui PUBLIC
+        ${imgui_SOURCE_DIR}
+        ${imgui_SOURCE_DIR}/backends
+    )
+    target_link_libraries(imgui PUBLIC d3d11 d3dcompiler dxgi)
+endif()
+
 # OpenXR SDK - Optional, for VR integration
 # The SDK should be installed separately or provided via environment variable
 # See cmake/FindOpenXR.cmake

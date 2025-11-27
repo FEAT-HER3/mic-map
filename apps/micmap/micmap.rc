@@ -1,0 +1,41 @@
+/**
+ * @file micmap.rc
+ * @brief Resource file for MicMap application
+ */
+
+#include <windows.h>
+#include "resource.h"
+
+// Note: Icon is loaded from system resources at runtime
+// If you want a custom icon, create micmap.ico and uncomment:
+// IDI_MICMAP_ICON ICON "micmap.ico"
+
+// Version information
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     1,0,0,0
+PRODUCTVERSION  1,0,0,0
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+FILEFLAGS       0
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_APP
+FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "MicMap"
+            VALUE "FileDescription",  "MicMap - Microphone pattern-based click input for SteamVR"
+            VALUE "FileVersion",      "1.0.0.0"
+            VALUE "InternalName",     "micmap"
+            VALUE "LegalCopyright",   "Copyright (C) 2025 FEATHER3 SOFTWORKS"
+            VALUE "OriginalFilename", "micmap.exe"
+            VALUE "ProductName",      "MicMap"
+            VALUE "ProductVersion",   "1.0.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
