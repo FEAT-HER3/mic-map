@@ -8,7 +8,7 @@ MicMap provides a hands-free way to interact with the SteamVR dashboard by detec
 
 ## a note from FEAT~~HER3~~
 
-Thanks for checking out MicMap. It's an idea I've had for ages, and finally made time for it. Well... Kind of.
+Thanks for checking out MicMap. It's an idea I've had for a couple years now, and so finally made time for it. Well... Kind of.
 
 While I generally take pride in my programming, C++ is not an environment I am terribly familiar with. Because my time is so limited these days, I vibecoded (used AI) to create most of this project. I can at least say that I followed each step closely and with scrutiny to make sure nothing too silly made its way in.
 
