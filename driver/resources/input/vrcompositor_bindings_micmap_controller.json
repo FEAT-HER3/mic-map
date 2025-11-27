@@ -7,7 +7,7 @@
             "poses": [
                 {
                     "output": "/actions/lasermouse/in/Pointer",
-                    "path": "/user/head/pose/raw"
+                    "path": "/user/hand/right/pose/raw"
                 }
             ],
             "sources": [
@@ -18,7 +18,7 @@
                         }
                     },
                     "mode": "button",
-                    "path": "/user/gamepad/input/a"
+                    "path": "/user/hand/right/input/a/click"
                 },
                 {
                     "inputs": {
@@ -31,7 +31,7 @@
                         "click_activate_threshold": "0.5",
                         "click_deactivate_threshold": "0.45"
                     },
-                    "path": "/user/gamepad/input/trigger_right"
+                    "path": "/user/hand/right/input/trigger/value"
                 }
             ]
         },
@@ -44,7 +44,7 @@
                         }
                     },
                     "mode": "complex_button",
-                    "path": "/user/gamepad/input/start"
+                    "path": "/user/hand/right/input/system/click"
                 }
             ]
         }

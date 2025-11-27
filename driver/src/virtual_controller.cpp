@@ -6,6 +6,7 @@
 #include "virtual_controller.hpp"
 #include "driver_log.hpp"
 #include <cstring>
+#include <cmath>
 #include <algorithm>
 
 using namespace vr;
@@ -36,9 +37,10 @@ EVRInitError VirtualController::Activate(uint32_t unObjectId) {
     VRProperties()->SetStringProperty(propertyContainer_, Prop_SerialNumber_String, serialNumber_.c_str());
     
     // Controller-specific properties
-    // Use OptOut role - this controller is not meant to be a hand controller
-    // It's a virtual input device that uses the head pose for pointing
-    VRProperties()->SetInt32Property(propertyContainer_, Prop_ControllerRoleHint_Int32, TrackedControllerRole_OptOut);
+    // Use RightHand role so the controller is mapped to /user/hand/right
+    // This allows the laser mouse bindings to work correctly
+    // The controller will use head pose for pointing via the bindings
+    VRProperties()->SetInt32Property(propertyContainer_, Prop_ControllerRoleHint_Int32, TrackedControllerRole_RightHand);
     VRProperties()->SetStringProperty(propertyContainer_, Prop_ControllerType_String, "micmap_controller");
     VRProperties()->SetStringProperty(propertyContainer_, Prop_InputProfilePath_String, "{micmap}/input/micmap_controller_profile.json");
     
@@ -100,25 +102,87 @@ void VirtualController::DebugRequest(const char* pchRequest, char* pchResponseBu
 DriverPose_t VirtualController::GetPose() {
     DriverPose_t pose = {};
     
-    // Provide a valid pose at the origin
-    // This allows the input system to work even though we don't have real tracking
-    pose.poseIsValid = true;
+    // Get the HMD pose so we can track it
+    TrackedDevicePose_t hmdPose;
+    VRServerDriverHost()->GetRawTrackedDevicePoses(0.0f, &hmdPose, 1);
+    
     pose.deviceIsConnected = true;
-    pose.result = TrackingResult_Running_OK;
     
-    // Position at origin (will be relative to head)
-    pose.vecPosition[0] = 0.0;
-    pose.vecPosition[1] = 0.0;
-    pose.vecPosition[2] = 0.0;
-    
-    // No velocity
-    pose.vecVelocity[0] = 0.0;
-    pose.vecVelocity[1] = 0.0;
-    pose.vecVelocity[2] = 0.0;
-    
-    pose.vecAngularVelocity[0] = 0.0;
-    pose.vecAngularVelocity[1] = 0.0;
-    pose.vecAngularVelocity[2] = 0.0;
+    if (hmdPose.bPoseIsValid) {
+        // Extract position and rotation from HMD pose matrix
+        // The matrix is a 3x4 row-major matrix where:
+        // - First 3 columns are the rotation matrix
+        // - Last column is the position
+        const HmdMatrix34_t& m = hmdPose.mDeviceToAbsoluteTracking;
+        
+        // Position at the head
+        pose.vecPosition[0] = m.m[0][3];
+        pose.vecPosition[1] = m.m[1][3];
+        pose.vecPosition[2] = m.m[2][3];
+        
+        // Convert rotation matrix to quaternion
+        // Using the standard algorithm for 3x3 rotation matrix to quaternion
+        float trace = m.m[0][0] + m.m[1][1] + m.m[2][2];
+        
+        if (trace > 0) {
+            float s = 0.5f / sqrtf(trace + 1.0f);
+            pose.qRotation.w = 0.25f / s;
+            pose.qRotation.x = (m.m[2][1] - m.m[1][2]) * s;
+            pose.qRotation.y = (m.m[0][2] - m.m[2][0]) * s;
+            pose.qRotation.z = (m.m[1][0] - m.m[0][1]) * s;
+        } else if (m.m[0][0] > m.m[1][1] && m.m[0][0] > m.m[2][2]) {
+            float s = 2.0f * sqrtf(1.0f + m.m[0][0] - m.m[1][1] - m.m[2][2]);
+            pose.qRotation.w = (m.m[2][1] - m.m[1][2]) / s;
+            pose.qRotation.x = 0.25f * s;
+            pose.qRotation.y = (m.m[0][1] + m.m[1][0]) / s;
+            pose.qRotation.z = (m.m[0][2] + m.m[2][0]) / s;
+        } else if (m.m[1][1] > m.m[2][2]) {
+            float s = 2.0f * sqrtf(1.0f + m.m[1][1] - m.m[0][0] - m.m[2][2]);
+            pose.qRotation.w = (m.m[0][2] - m.m[2][0]) / s;
+            pose.qRotation.x = (m.m[0][1] + m.m[1][0]) / s;
+            pose.qRotation.y = 0.25f * s;
+            pose.qRotation.z = (m.m[1][2] + m.m[2][1]) / s;
+        } else {
+            float s = 2.0f * sqrtf(1.0f + m.m[2][2] - m.m[0][0] - m.m[1][1]);
+            pose.qRotation.w = (m.m[1][0] - m.m[0][1]) / s;
+            pose.qRotation.x = (m.m[0][2] + m.m[2][0]) / s;
+            pose.qRotation.y = (m.m[1][2] + m.m[2][1]) / s;
+            pose.qRotation.z = 0.25f * s;
+        }
+        
+        // Copy velocity from HMD
+        pose.vecVelocity[0] = hmdPose.vVelocity.v[0];
+        pose.vecVelocity[1] = hmdPose.vVelocity.v[1];
+        pose.vecVelocity[2] = hmdPose.vVelocity.v[2];
+        
+        pose.vecAngularVelocity[0] = hmdPose.vAngularVelocity.v[0];
+        pose.vecAngularVelocity[1] = hmdPose.vAngularVelocity.v[1];
+        pose.vecAngularVelocity[2] = hmdPose.vAngularVelocity.v[2];
+        
+        pose.poseIsValid = true;
+        pose.result = TrackingResult_Running_OK;
+    } else {
+        // HMD pose not available, use identity pose
+        pose.vecPosition[0] = 0.0;
+        pose.vecPosition[1] = 0.0;
+        pose.vecPosition[2] = 0.0;
+        
+        pose.vecVelocity[0] = 0.0;
+        pose.vecVelocity[1] = 0.0;
+        pose.vecVelocity[2] = 0.0;
+        
+        pose.vecAngularVelocity[0] = 0.0;
+        pose.vecAngularVelocity[1] = 0.0;
+        pose.vecAngularVelocity[2] = 0.0;
+        
+        pose.qRotation.w = 1;
+        pose.qRotation.x = 0;
+        pose.qRotation.y = 0;
+        pose.qRotation.z = 0;
+        
+        pose.poseIsValid = true;
+        pose.result = TrackingResult_Running_OK;
+    }
     
     // Identity quaternion for world from driver rotation
     pose.qWorldFromDriverRotation.w = 1;
@@ -127,17 +191,10 @@ DriverPose_t VirtualController::GetPose() {
     pose.qWorldFromDriverRotation.z = 0;
     
     // Identity quaternion for driver from head rotation
-    // This means the controller is at the same orientation as the head
     pose.qDriverFromHeadRotation.w = 1;
     pose.qDriverFromHeadRotation.x = 0;
     pose.qDriverFromHeadRotation.y = 0;
     pose.qDriverFromHeadRotation.z = 0;
-    
-    // Identity rotation for the device itself
-    pose.qRotation.w = 1;
-    pose.qRotation.x = 0;
-    pose.qRotation.y = 0;
-    pose.qRotation.z = 0;
     
     return pose;
 }
