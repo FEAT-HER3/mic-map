@@ -1,0 +1,26 @@
+{
+    "jsonid": "input_profile",
+    "controller_type": "micmap_controller",
+    "device_class": "Controller",
+    "resource_root": "micmap",
+    "driver_name": "micmap",
+    "input_bindingui_mode": "controller_handed",
+    "input_bindingui_left": {
+        "image": ""
+    },
+    "input_bindingui_right": {
+        "image": ""
+    },
+    "input_source": {
+        "/input/system/click": {
+            "type": "button",
+            "binding_image_point": [0, 0],
+            "order": 1
+        },
+        "/input/a/click": {
+            "type": "button",
+            "binding_image_point": [0, 0],
+            "order": 2
+        }
+    }
+}

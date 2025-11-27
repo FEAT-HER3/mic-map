@@ -1,0 +1,10 @@
+{
+    "jsonid": "vrresources",
+    "statusicons": {
+    },
+    "input_profiles": {
+        "micmap": {
+            "micmap_controller": "micmap_controller_profile.json"
+        }
+    }
+}

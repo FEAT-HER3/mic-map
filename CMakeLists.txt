@@ -21,6 +21,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Build options
 option(MICMAP_BUILD_TESTS "Build unit tests" ON)
 option(MICMAP_BUILD_TEST_APPS "Build test applications" ON)
+option(MICMAP_BUILD_DRIVER "Build OpenVR driver" ON)
 
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -85,6 +86,15 @@ if(MICMAP_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
+# Build the OpenVR driver (requires OpenVR SDK)
+if(MICMAP_BUILD_DRIVER)
+    if(OpenVR_FOUND)
+        add_subdirectory(driver)
+    else()
+        message(STATUS "Skipping driver build - OpenVR SDK not found")
+    endif()
+endif()
+
 # Installation rules
 install(TARGETS micmap
     RUNTIME DESTINATION bin
@@ -107,6 +117,7 @@ message(STATUS "Build type:       ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ Standard:     ${CMAKE_CXX_STANDARD}")
 message(STATUS "Build tests:      ${MICMAP_BUILD_TESTS}")
 message(STATUS "Build test apps:  ${MICMAP_BUILD_TEST_APPS}")
+message(STATUS "Build driver:     ${MICMAP_BUILD_DRIVER}")
 message(STATUS "OpenXR found:     ${OpenXR_FOUND}")
 message(STATUS "OpenVR found:     ${OpenVR_FOUND}")
 message(STATUS "")

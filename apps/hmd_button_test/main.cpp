@@ -3,16 +3,17 @@
  * @brief MicMap HMD Button Test Application - Win32 GUI
  *
  * Test Program 2: SteamVR HMD button event testing
- * - SteamVR connection status
- * - Dashboard state indicator
+ * - SteamVR connection status with visual indicator
+ * - Dashboard state indicator (Open/Closed)
  * - Manual trigger buttons for dashboard actions
- * - Event log display
+ * - Event log display with timestamps
+ * - Last result status bar
  *
  * This test app demonstrates the SteamVR integration:
  * - Dashboard closed: "Open Dashboard" button opens the SteamVR dashboard
- * - Dashboard open: "Select Item" button sends HMD button press to activate
+ * - Dashboard open: "Send Click" button sends HMD button press to activate
  *   whatever is under the head-locked virtual pointer
- * - "Auto Action" button performs the appropriate action based on dashboard state
+ * - "Auto" button performs the appropriate action based on dashboard state
  */
 
 #ifdef _WIN32
@@ -37,12 +38,12 @@
 using namespace micmap;
 
 // Window dimensions
-constexpr int WINDOW_WIDTH = 500;
-constexpr int WINDOW_HEIGHT = 500;
+constexpr int WINDOW_WIDTH = 450;
+constexpr int WINDOW_HEIGHT = 520;
 
 // Control IDs
 constexpr int ID_OPEN_DASHBOARD_BUTTON = 101;
-constexpr int ID_SELECT_BUTTON = 102;
+constexpr int ID_SEND_CLICK_BUTTON = 102;
 constexpr int ID_AUTO_ACTION_BUTTON = 103;
 constexpr int ID_RECONNECT_BUTTON = 104;
 constexpr int ID_LOG_LIST = 105;
@@ -56,15 +57,18 @@ struct AppState {
     steamvr::ConnectionState connectionState = steamvr::ConnectionState::Disconnected;
     steamvr::DashboardState dashboardState = steamvr::DashboardState::Unknown;
     
+    std::wstring lastResult = L"Ready";
+    bool lastResultSuccess = true;
+    
     HWND hwnd = nullptr;
-    HWND statusLabel = nullptr;
-    HWND connectionLabel = nullptr;
+    HWND steamvrStatusLabel = nullptr;
     HWND dashboardLabel = nullptr;
     HWND openDashboardButton = nullptr;
-    HWND selectButton = nullptr;
+    HWND sendClickButton = nullptr;
     HWND autoActionButton = nullptr;
     HWND reconnectButton = nullptr;
     HWND logList = nullptr;
+    HWND lastResultLabel = nullptr;
 };
 
 static AppState g_state;
@@ -76,8 +80,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 void CreateControls(HWND hwnd);
 void UpdateStatus();
 void AddLogEntry(const std::wstring& message);
+void SetLastResult(const std::wstring& result, bool success);
 void OnOpenDashboardClicked();
-void OnSelectClicked();
+void OnSendClickClicked();
 void OnAutoActionClicked();
 void OnReconnectClicked();
 
@@ -102,24 +107,30 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     InitCommonControlsEx(&icex);
     
     // Register window class
-    const wchar_t CLASS_NAME[] = L"MicMapSteamVRTest";
+    const wchar_t CLASS_NAME[] = L"MicMapHMDButtonTest";
     
     WNDCLASSW wc = {};
     wc.lpfnWndProc = WindowProc;
     wc.hInstance = hInstance;
     wc.lpszClassName = CLASS_NAME;
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wc.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
     
     RegisterClassW(&wc);
     
-    // Create window
+    // Create window - centered on screen
+    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    int windowX = (screenWidth - WINDOW_WIDTH) / 2;
+    int windowY = (screenHeight - WINDOW_HEIGHT) / 2;
+    
     g_state.hwnd = CreateWindowExW(
         0,
         CLASS_NAME,
-        L"MicMap SteamVR Test",
-        WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT,
+        L"MicMap - HMD Button Test",
+        WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX & ~WS_THICKFRAME,
+        windowX, windowY,
         WINDOW_WIDTH, WINDOW_HEIGHT,
         nullptr,
         nullptr,
@@ -142,25 +153,27 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         g_state.vrInput->setEventCallback([](const steamvr::VREvent& event) {
             switch (event.type) {
                 case steamvr::VREventType::DashboardOpened:
-                    AddLogEntry(L"Dashboard opened");
+                    AddLogEntry(L"Event: Dashboard opened");
                     break;
                 case steamvr::VREventType::DashboardClosed:
-                    AddLogEntry(L"Dashboard closed");
+                    AddLogEntry(L"Event: Dashboard closed");
                     break;
                 case steamvr::VREventType::ButtonPressed:
-                    AddLogEntry(L"HMD button pressed");
+                    AddLogEntry(L"Event: HMD button pressed");
                     break;
                 case steamvr::VREventType::ButtonReleased:
-                    AddLogEntry(L"HMD button released");
+                    AddLogEntry(L"Event: HMD button released");
                     break;
                 case steamvr::VREventType::SteamVRConnected:
-                    AddLogEntry(L"SteamVR connected");
+                    AddLogEntry(L"Event: Connected to SteamVR");
+                    SetLastResult(L"Connected to SteamVR", true);
                     break;
                 case steamvr::VREventType::SteamVRDisconnected:
-                    AddLogEntry(L"SteamVR disconnected");
+                    AddLogEntry(L"Event: Disconnected from SteamVR");
+                    SetLastResult(L"Disconnected from SteamVR", false);
                     break;
                 case steamvr::VREventType::Quit:
-                    AddLogEntry(L"SteamVR quit event - application should exit");
+                    AddLogEntry(L"Event: SteamVR quit - exiting");
                     PostQuitMessage(0);
                     break;
                 default:
@@ -178,12 +191,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         
         // Set up dashboard callback
         g_state.dashboardManager->setDashboardCallback([](steamvr::DashboardState state) {
+            g_state.dashboardState = state;
             switch (state) {
                 case steamvr::DashboardState::Open:
-                    AddLogEntry(L"Dashboard state: Open");
+                    AddLogEntry(L"Dashboard state: OPEN");
                     break;
                 case steamvr::DashboardState::Closed:
-                    AddLogEntry(L"Dashboard state: Closed");
+                    AddLogEntry(L"Dashboard state: CLOSED");
                     break;
                 default:
                     break;
@@ -192,18 +206,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         
         // Set up connection callback
         g_state.dashboardManager->setConnectionCallback([](steamvr::ConnectionState state) {
+            g_state.connectionState = state;
             switch (state) {
                 case steamvr::ConnectionState::Connected:
-                    AddLogEntry(L"Connection state: Connected");
+                    AddLogEntry(L"Connected to SteamVR");
+                    SetLastResult(L"Connected to SteamVR", true);
                     break;
                 case steamvr::ConnectionState::Disconnected:
-                    AddLogEntry(L"Connection state: Disconnected");
+                    AddLogEntry(L"Disconnected from SteamVR");
                     break;
                 case steamvr::ConnectionState::Connecting:
-                    AddLogEntry(L"Connection state: Connecting...");
+                    AddLogEntry(L"Connecting to SteamVR...");
                     break;
                 case steamvr::ConnectionState::Reconnecting:
-                    AddLogEntry(L"Connection state: Reconnecting...");
+                    AddLogEntry(L"Reconnecting to SteamVR...");
                     break;
             }
         });
@@ -211,29 +227,35 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         // Set up quit callback
         g_state.dashboardManager->setQuitCallback([]() {
             AddLogEntry(L"SteamVR is closing - exiting application");
+            SetLastResult(L"SteamVR closed", false);
             PostQuitMessage(0);
         });
         
-        AddLogEntry(L"Initializing dashboard manager...");
+        AddLogEntry(L"Initializing SteamVR connection...");
         if (g_state.dashboardManager->initialize(g_state.vrInput, config)) {
             if (g_state.dashboardManager->isConnected()) {
+                g_state.connectionState = steamvr::ConnectionState::Connected;
                 std::wstring runtime(g_state.vrInput->getRuntimeName().begin(),
                                     g_state.vrInput->getRuntimeName().end());
                 AddLogEntry(L"Connected to " + runtime);
+                SetLastResult(L"Connected to " + runtime, true);
             } else {
-                AddLogEntry(L"VR not available (stub mode)");
+                AddLogEntry(L"SteamVR not running (stub mode)");
+                SetLastResult(L"SteamVR not running - stub mode", false);
             }
         } else {
             AddLogEntry(L"Failed to initialize dashboard manager");
+            SetLastResult(L"Initialization failed", false);
         }
     }
     
     AddLogEntry(L"Ready - Use buttons to test dashboard interaction");
     
     ShowWindow(g_state.hwnd, nCmdShow);
+    UpdateWindow(g_state.hwnd);
     
-    // Set up timer for status updates
-    SetTimer(g_state.hwnd, ID_TIMER, 500, nullptr);
+    // Set up timer for status updates (100ms for responsive UI)
+    SetTimer(g_state.hwnd, ID_TIMER, 100, nullptr);
     
     // Message loop
     MSG msg = {};
@@ -273,8 +295,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 case ID_OPEN_DASHBOARD_BUTTON:
                     OnOpenDashboardClicked();
                     break;
-                case ID_SELECT_BUTTON:
-                    OnSelectClicked();
+                case ID_SEND_CLICK_BUTTON:
+                    OnSendClickClicked();
                     break;
                 case ID_AUTO_ACTION_BUTTON:
                     OnAutoActionClicked();
@@ -295,135 +317,171 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 }
 
 void CreateControls(HWND hwnd) {
-    int y = 10;
+    int y = 15;
+    int leftMargin = 15;
+    int contentWidth = WINDOW_WIDTH - 50;
     
-    // SteamVR status section
+    // ========== Status Section ==========
+    CreateWindowW(L"STATIC", L"",
+        WS_VISIBLE | WS_CHILD | SS_ETCHEDHORZ,
+        leftMargin, y, contentWidth, 2,
+        hwnd, nullptr, nullptr, nullptr);
+    
+    y += 10;
+    
+    // SteamVR Status row
     CreateWindowW(L"STATIC", L"SteamVR Status:",
         WS_VISIBLE | WS_CHILD | SS_LEFT,
-        10, y, 120, 20,
+        leftMargin, y, 110, 20,
         hwnd, nullptr, nullptr, nullptr);
     
-    g_state.statusLabel = CreateWindowW(L"STATIC", L"Initializing...",
+    g_state.steamvrStatusLabel = CreateWindowW(L"STATIC", L"Initializing...",
         WS_VISIBLE | WS_CHILD | SS_LEFT,
-        130, y, 340, 20,
+        leftMargin + 115, y, 280, 20,
         hwnd, nullptr, nullptr, nullptr);
     
     y += 25;
     
-    // Connection status
-    CreateWindowW(L"STATIC", L"Connection:",
-        WS_VISIBLE | WS_CHILD | SS_LEFT,
-        10, y, 120, 20,
-        hwnd, nullptr, nullptr, nullptr);
-    
-    g_state.connectionLabel = CreateWindowW(L"STATIC", L"Disconnected",
-        WS_VISIBLE | WS_CHILD | SS_LEFT,
-        130, y, 340, 20,
-        hwnd, nullptr, nullptr, nullptr);
-    
-    y += 25;
-    
-    // Dashboard status
+    // Dashboard Status row
     CreateWindowW(L"STATIC", L"Dashboard:",
         WS_VISIBLE | WS_CHILD | SS_LEFT,
-        10, y, 120, 20,
+        leftMargin, y, 110, 20,
         hwnd, nullptr, nullptr, nullptr);
     
-    g_state.dashboardLabel = CreateWindowW(L"STATIC", L"Unknown",
+    g_state.dashboardLabel = CreateWindowW(L"STATIC", L"UNKNOWN",
         WS_VISIBLE | WS_CHILD | SS_LEFT,
-        130, y, 340, 20,
+        leftMargin + 115, y, 280, 20,
         hwnd, nullptr, nullptr, nullptr);
+    
+    y += 30;
+    
+    // ========== Actions Section ==========
+    CreateWindowW(L"STATIC", L"",
+        WS_VISIBLE | WS_CHILD | SS_ETCHEDHORZ,
+        leftMargin, y, contentWidth, 2,
+        hwnd, nullptr, nullptr, nullptr);
+    
+    y += 10;
+    
+    CreateWindowW(L"STATIC", L"Actions:",
+        WS_VISIBLE | WS_CHILD | SS_LEFT,
+        leftMargin, y, 100, 20,
+        hwnd, nullptr, nullptr, nullptr);
+    
+    y += 25;
+    
+    // Action buttons - three in a row
+    int buttonWidth = 125;
+    int buttonHeight = 35;
+    int buttonSpacing = 8;
+    
+    g_state.openDashboardButton = CreateWindowW(L"BUTTON", L"Open Dashboard",
+        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        leftMargin, y, buttonWidth, buttonHeight,
+        hwnd, (HMENU)ID_OPEN_DASHBOARD_BUTTON, nullptr, nullptr);
+    
+    g_state.sendClickButton = CreateWindowW(L"BUTTON", L"Send Click",
+        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        leftMargin + buttonWidth + buttonSpacing, y, buttonWidth, buttonHeight,
+        hwnd, (HMENU)ID_SEND_CLICK_BUTTON, nullptr, nullptr);
+    
+    g_state.autoActionButton = CreateWindowW(L"BUTTON", L"Auto",
+        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        leftMargin + (buttonWidth + buttonSpacing) * 2, y, buttonWidth, buttonHeight,
+        hwnd, (HMENU)ID_AUTO_ACTION_BUTTON, nullptr, nullptr);
+    
+    y += buttonHeight + 10;
+    
+    // Reconnect button
+    g_state.reconnectButton = CreateWindowW(L"BUTTON", L"Reconnect to SteamVR",
+        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        leftMargin, y, 180, 30,
+        hwnd, (HMENU)ID_RECONNECT_BUTTON, nullptr, nullptr);
     
     y += 40;
     
-    // Separator
-    CreateWindowW(L"STATIC", L"Dashboard Actions:",
-        WS_VISIBLE | WS_CHILD | SS_LEFT,
-        10, y, 200, 20,
+    // ========== Event Log Section ==========
+    CreateWindowW(L"STATIC", L"",
+        WS_VISIBLE | WS_CHILD | SS_ETCHEDHORZ,
+        leftMargin, y, contentWidth, 2,
         hwnd, nullptr, nullptr, nullptr);
     
-    y += 25;
+    y += 10;
     
-    // Action buttons
-    g_state.openDashboardButton = CreateWindowW(L"BUTTON", L"Open Dashboard",
-        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        10, y, 150, 35,
-        hwnd, (HMENU)ID_OPEN_DASHBOARD_BUTTON, nullptr, nullptr);
-    
-    g_state.selectButton = CreateWindowW(L"BUTTON", L"Select Item (HMD Btn)",
-        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        170, y, 150, 35,
-        hwnd, (HMENU)ID_SELECT_BUTTON, nullptr, nullptr);
-    
-    g_state.autoActionButton = CreateWindowW(L"BUTTON", L"Auto Action",
-        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        330, y, 140, 35,
-        hwnd, (HMENU)ID_AUTO_ACTION_BUTTON, nullptr, nullptr);
-    
-    y += 45;
-    
-    g_state.reconnectButton = CreateWindowW(L"BUTTON", L"Reconnect to SteamVR",
-        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        10, y, 180, 35,
-        hwnd, (HMENU)ID_RECONNECT_BUTTON, nullptr, nullptr);
-    
-    y += 50;
-    
-    // Event log label
     CreateWindowW(L"STATIC", L"Event Log:",
         WS_VISIBLE | WS_CHILD | SS_LEFT,
-        10, y, 100, 20,
+        leftMargin, y, 100, 20,
         hwnd, nullptr, nullptr, nullptr);
     
-    y += 25;
+    y += 22;
     
     // Event log listbox
+    int logHeight = 180;
     g_state.logList = CreateWindowW(L"LISTBOX", L"",
-        WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
-        10, y, 460, 200,
+        WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOINTEGRALHEIGHT | LBS_NOSEL,
+        leftMargin, y, contentWidth, logHeight,
         hwnd, (HMENU)ID_LOG_LIST, nullptr, nullptr);
+    
+    y += logHeight + 10;
+    
+    // ========== Last Result Section ==========
+    CreateWindowW(L"STATIC", L"",
+        WS_VISIBLE | WS_CHILD | SS_ETCHEDHORZ,
+        leftMargin, y, contentWidth, 2,
+        hwnd, nullptr, nullptr, nullptr);
+    
+    y += 8;
+    
+    CreateWindowW(L"STATIC", L"Last Result:",
+        WS_VISIBLE | WS_CHILD | SS_LEFT,
+        leftMargin, y, 85, 20,
+        hwnd, nullptr, nullptr, nullptr);
+    
+    g_state.lastResultLabel = CreateWindowW(L"STATIC", L"Ready",
+        WS_VISIBLE | WS_CHILD | SS_LEFT,
+        leftMargin + 90, y, 300, 20,
+        hwnd, nullptr, nullptr, nullptr);
 }
 
 void UpdateStatus() {
     // Update SteamVR status
-    if (g_state.vrInput) {
-        if (g_state.vrInput->isVRAvailable()) {
-            SetWindowTextW(g_state.statusLabel, L"● SteamVR Running");
-        } else {
-            SetWindowTextW(g_state.statusLabel, L"○ SteamVR Not Running (Stub Mode)");
-        }
-    }
-    
-    // Update connection status
     if (g_state.dashboardManager) {
         auto connState = g_state.dashboardManager->getConnectionState();
+        g_state.connectionState = connState;
+        
         switch (connState) {
             case steamvr::ConnectionState::Connected:
-                SetWindowTextW(g_state.connectionLabel, L"● Connected");
+                SetWindowTextW(g_state.steamvrStatusLabel, L"[●] Connected");
                 break;
             case steamvr::ConnectionState::Connecting:
-                SetWindowTextW(g_state.connectionLabel, L"◐ Connecting...");
+                SetWindowTextW(g_state.steamvrStatusLabel, L"[◐] Connecting...");
                 break;
             case steamvr::ConnectionState::Reconnecting:
-                SetWindowTextW(g_state.connectionLabel, L"◐ Reconnecting...");
+                SetWindowTextW(g_state.steamvrStatusLabel, L"[◐] Reconnecting...");
                 break;
             case steamvr::ConnectionState::Disconnected:
             default:
-                SetWindowTextW(g_state.connectionLabel, L"○ Disconnected");
+                if (g_state.vrInput && g_state.vrInput->isVRAvailable()) {
+                    SetWindowTextW(g_state.steamvrStatusLabel, L"[○] Available (not connected)");
+                } else {
+                    SetWindowTextW(g_state.steamvrStatusLabel, L"[○] Not Running");
+                }
                 break;
         }
         
         // Update dashboard status
         auto dashState = g_state.dashboardManager->getDashboardState();
+        g_state.dashboardState = dashState;
+        
         switch (dashState) {
             case steamvr::DashboardState::Open:
-                SetWindowTextW(g_state.dashboardLabel, L"Open (use Select Item to click)");
+                SetWindowTextW(g_state.dashboardLabel, L"OPEN");
                 break;
             case steamvr::DashboardState::Closed:
-                SetWindowTextW(g_state.dashboardLabel, L"Closed (use Open Dashboard)");
+                SetWindowTextW(g_state.dashboardLabel, L"CLOSED");
                 break;
             default:
-                SetWindowTextW(g_state.dashboardLabel, L"Unknown");
+                SetWindowTextW(g_state.dashboardLabel, L"UNKNOWN");
                 break;
         }
         
@@ -445,11 +503,19 @@ void AddLogEntry(const std::wstring& message) {
     int count = (int)SendMessage(g_state.logList, LB_GETCOUNT, 0, 0);
     SendMessage(g_state.logList, LB_SETTOPINDEX, count - 1, 0);
     
-    // Limit entries
+    // Limit entries to prevent memory issues
     while (count > 100) {
         SendMessage(g_state.logList, LB_DELETESTRING, 0, 0);
         count--;
     }
+}
+
+void SetLastResult(const std::wstring& result, bool success) {
+    g_state.lastResult = result;
+    g_state.lastResultSuccess = success;
+    
+    std::wstring prefix = success ? L"Success - " : L"Failed - ";
+    SetWindowTextW(g_state.lastResultLabel, (prefix + result).c_str());
 }
 
 void OnOpenDashboardClicked() {
@@ -458,6 +524,7 @@ void OnOpenDashboardClicked() {
     if (g_state.dashboardManager) {
         if (g_state.dashboardManager->openDashboard()) {
             AddLogEntry(L"Dashboard open command sent");
+            SetLastResult(L"Dashboard opened", true);
         } else {
             AddLogEntry(L"Failed to open dashboard");
             if (g_state.vrInput) {
@@ -465,26 +532,39 @@ void OnOpenDashboardClicked() {
                                   g_state.vrInput->getLastError().end());
                 if (!error.empty()) {
                     AddLogEntry(L"Error: " + error);
+                    SetLastResult(error, false);
+                } else {
+                    SetLastResult(L"Could not open dashboard", false);
                 }
+            } else {
+                SetLastResult(L"VR input not available", false);
             }
         }
+    } else {
+        SetLastResult(L"Dashboard manager not available", false);
     }
 }
 
-void OnSelectClicked() {
-    AddLogEntry(L"Sending HMD button press (select item under pointer)...");
+void OnSendClickClicked() {
+    AddLogEntry(L"Sending HMD button press (click)...");
     
     if (g_state.vrInput) {
         if (g_state.vrInput->sendDashboardSelect()) {
             AddLogEntry(L"HMD button press sent - item should be selected");
+            SetLastResult(L"Click sent", true);
         } else {
             AddLogEntry(L"Failed to send HMD button press");
             std::wstring error(g_state.vrInput->getLastError().begin(),
                               g_state.vrInput->getLastError().end());
             if (!error.empty()) {
                 AddLogEntry(L"Error: " + error);
+                SetLastResult(error, false);
+            } else {
+                SetLastResult(L"Could not send click", false);
             }
         }
+    } else {
+        SetLastResult(L"VR input not available", false);
     }
 }
 
@@ -493,17 +573,25 @@ void OnAutoActionClicked() {
     
     if (g_state.dashboardManager) {
         auto state = g_state.dashboardManager->getDashboardState();
-        if (state == steamvr::DashboardState::Closed) {
+        if (state == steamvr::DashboardState::Closed || state == steamvr::DashboardState::Unknown) {
             AddLogEntry(L"Dashboard is closed - opening...");
         } else if (state == steamvr::DashboardState::Open) {
-            AddLogEntry(L"Dashboard is open - sending HMD button press...");
+            AddLogEntry(L"Dashboard is open - sending click...");
         }
         
         if (g_state.dashboardManager->performDashboardAction()) {
+            if (state == steamvr::DashboardState::Closed || state == steamvr::DashboardState::Unknown) {
+                SetLastResult(L"Dashboard opened", true);
+            } else {
+                SetLastResult(L"Click sent", true);
+            }
             AddLogEntry(L"Action performed successfully");
         } else {
             AddLogEntry(L"Failed to perform action");
+            SetLastResult(L"Action failed", false);
         }
+    } else {
+        SetLastResult(L"Dashboard manager not available", false);
     }
 }
 
@@ -515,9 +603,13 @@ void OnReconnectClicked() {
         
         if (g_state.dashboardManager->connect()) {
             AddLogEntry(L"Reconnected successfully");
+            SetLastResult(L"Reconnected to SteamVR", true);
         } else {
             AddLogEntry(L"Reconnection failed - SteamVR may not be running");
+            SetLastResult(L"Reconnection failed", false);
         }
+    } else {
+        SetLastResult(L"Dashboard manager not available", false);
     }
 }
 

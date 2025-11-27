@@ -1,0 +1,7 @@
+{
+    "alwaysActivate": true,
+    "name": "micmap",
+    "directory": "",
+    "resourceOnly": false,
+    "hmd_presence": []
+}

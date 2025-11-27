@@ -23,6 +23,8 @@ target_include_directories(micmap_steamvr
 target_link_libraries(micmap_steamvr
     PUBLIC
         micmap_common
+    PRIVATE
+        httplib::httplib
 )
 
 target_compile_features(micmap_steamvr PUBLIC cxx_std_17)

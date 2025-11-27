@@ -54,6 +54,24 @@ target_include_directories(kissfft PUBLIC
 # Use single-precision floats
 target_compile_definitions(kissfft PUBLIC kiss_fft_scalar=float)
 
+# cpp-httplib - Header-only HTTP library
+# Used by both the driver (server) and the main application (client)
+FetchContent_Declare(
+    cpp_httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG v0.14.3
+)
+
+FetchContent_GetProperties(cpp_httplib)
+if(NOT cpp_httplib_POPULATED)
+    FetchContent_Populate(cpp_httplib)
+endif()
+
+# Create interface library for httplib
+add_library(httplib INTERFACE)
+target_include_directories(httplib INTERFACE ${cpp_httplib_SOURCE_DIR})
+add_library(httplib::httplib ALIAS httplib)
+
 # OpenXR SDK - Optional, for VR integration
 # The SDK should be installed separately or provided via environment variable
 # See cmake/FindOpenXR.cmake

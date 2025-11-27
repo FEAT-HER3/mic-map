@@ -12,11 +12,15 @@
  * - If dashboard is open: Sends HMD button press to activate whatever is under
  *   the head-locked virtual pointer (like pressing the HMD button on Valve Index
  *   or A button on a gamepad)
+ *
+ * For dashboard selection (clicking), the implementation communicates with the
+ * MicMap OpenVR driver via HTTP to inject button events.
  */
 
 #include <memory>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace micmap::steamvr {
 
@@ -187,5 +191,88 @@ std::unique_ptr<IVRInput> createOpenVRInput();
  * Useful for testing without SteamVR.
  */
 std::unique_ptr<IVRInput> createStubVRInput();
+
+/**
+ * @brief Interface for communicating with the MicMap driver
+ *
+ * This client connects to the MicMap OpenVR driver's HTTP server
+ * to send button injection commands.
+ */
+class IDriverClient {
+public:
+    virtual ~IDriverClient() = default;
+
+    /**
+     * @brief Connect to the driver
+     * @return True if connection was successful
+     */
+    virtual bool connect() = 0;
+
+    /**
+     * @brief Disconnect from the driver
+     */
+    virtual void disconnect() = 0;
+
+    /**
+     * @brief Check if connected to the driver
+     * @return True if connected
+     */
+    virtual bool isConnected() const = 0;
+
+    /**
+     * @brief Send a button click command
+     * @param button Button name ("system" or "a")
+     * @param durationMs Duration to hold the button in milliseconds
+     * @return True if command was sent successfully
+     */
+    virtual bool click(const std::string& button = "system", int durationMs = 100) = 0;
+
+    /**
+     * @brief Send a button press command
+     * @param button Button name ("system" or "a")
+     * @return True if command was sent successfully
+     */
+    virtual bool press(const std::string& button = "system") = 0;
+
+    /**
+     * @brief Send a button release command
+     * @param button Button name ("system" or "a")
+     * @return True if command was sent successfully
+     */
+    virtual bool release(const std::string& button = "system") = 0;
+
+    /**
+     * @brief Get driver status
+     * @return True if driver is healthy
+     */
+    virtual bool getStatus() = 0;
+
+    /**
+     * @brief Get the port the driver is running on
+     * @return Port number, or 0 if not connected
+     */
+    virtual int getPort() const = 0;
+
+    /**
+     * @brief Get the last error message
+     * @return Error message string
+     */
+    virtual std::string getLastError() const = 0;
+};
+
+/**
+ * @brief Create a driver client
+ * @param host Host to connect to (default: 127.0.0.1)
+ * @param startPort Starting port to try (default: 27015)
+ * @param endPort Ending port to try (default: 27025)
+ * @return Unique pointer to driver client interface
+ *
+ * The client will try ports in the range [startPort, endPort] to find
+ * the driver's HTTP server.
+ */
+std::unique_ptr<IDriverClient> createDriverClient(
+    const std::string& host = "127.0.0.1",
+    int startPort = 27015,
+    int endPort = 27025);
 
 } // namespace micmap::steamvr
