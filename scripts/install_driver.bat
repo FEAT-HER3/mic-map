@@ -145,6 +145,49 @@ if %errorLevel% neq 0 (
     )
 )
 
+echo Driver files copied successfully.
+echo.
+
+REM Now copy the MicMap application
+REM The driver expects the app at: <driver>/apps/micmap.exe
+set "APP_SOURCE=%~dp0..\build\bin"
+set "APP_DEST=%DRIVER_DEST%\apps"
+
+REM Check if the application exists
+if not exist "%APP_SOURCE%\micmap.exe" (
+    echo WARNING: MicMap application not found at: %APP_SOURCE%\micmap.exe
+    echo The driver will be installed, but the application will not auto-launch.
+    echo You can manually run the application from the build directory.
+    echo.
+    goto :skip_app_install
+)
+
+echo Installing MicMap application...
+
+REM Create apps directory
+mkdir "%APP_DEST%" 2>nul
+
+REM Copy the application executable
+copy /y "%APP_SOURCE%\micmap.exe" "%APP_DEST%\" >nul
+if %errorLevel% neq 0 (
+    echo WARNING: Failed to copy micmap.exe
+    goto :skip_app_install
+)
+
+REM Copy config directory if it exists
+if exist "%APP_SOURCE%\config" (
+    echo Copying configuration files...
+    xcopy /e /i /y "%APP_SOURCE%\config" "%APP_DEST%\config" >nul
+    if !errorLevel! neq 0 (
+        echo WARNING: Failed to copy config files
+    )
+)
+
+echo MicMap application installed successfully.
+echo.
+
+:skip_app_install
+
 echo.
 echo ============================================
 echo Installation Complete!
@@ -153,11 +196,17 @@ echo.
 echo The MicMap driver has been installed to:
 echo   %DRIVER_DEST%
 echo.
-echo Next steps:
-echo   1. Start SteamVR
-echo   2. The driver will be loaded automatically
-echo   3. Run the MicMap application
+if exist "%APP_DEST%\micmap.exe" (
+echo The MicMap application has been installed to:
+echo   %APP_DEST%
 echo.
+echo The application will auto-launch when SteamVR starts.
+echo.
+) else (
+echo NOTE: The MicMap application was not installed.
+echo You will need to run it manually from the build directory.
+echo.
+)
 echo To verify the driver is loaded:
 echo   - Open SteamVR Settings
 echo   - Go to Developer ^> Enable Developer Settings
