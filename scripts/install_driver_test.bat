@@ -1,12 +1,17 @@
 @echo off
-REM MicMap OpenVR Driver Installation Script
-REM This script installs the MicMap driver to SteamVR's drivers directory
+REM MicMap OpenVR Driver Test Installation Script
+REM This script installs the MicMap driver with auto-launch DISABLED for testing
 
 setlocal enabledelayedexpansion
 
 echo ============================================
-echo MicMap OpenVR Driver Installer
+echo MicMap OpenVR Driver Test Installer
 echo ============================================
+echo.
+echo This installer configures the driver for TESTING:
+echo   - Auto-launch is DISABLED
+echo   - Only driver files are installed (not the main app)
+echo   - Use hmd_button_test.exe to test the driver
 echo.
 
 REM Check for admin privileges
@@ -20,7 +25,9 @@ if %errorLevel% neq 0 (
 REM Find SteamVR installation
 set "STEAMVR_PATH="
 
-REM Try common Steam installation paths (check each individually to handle spaces)
+REM Try common Steam installation paths
+REM Check each path individually to handle spaces properly
+
 if exist "C:\Program Files (x86)\Steam\steamapps\common\SteamVR" (
     set "STEAMVR_PATH=C:\Program Files (x86)\Steam\steamapps\common\SteamVR"
     goto :found_steamvr
@@ -70,9 +77,6 @@ for /f "tokens=2*" %%a in ('reg query "HKEY_LOCAL_MACHINE\SOFTWARE\Valve\Steam" 
 
 echo ERROR: Could not find SteamVR installation.
 echo Please ensure SteamVR is installed.
-echo.
-echo You can manually specify the path by editing this script
-echo or by setting the STEAMVR_PATH environment variable.
 goto :error
 
 :found_steamvr
@@ -121,23 +125,58 @@ if %errorLevel% neq 0 (
     goto :error
 )
 
+REM Ensure auto-launch is disabled in the installed settings
+set "SETTINGS_FILE=%DRIVER_DEST%\resources\settings\default.vrsettings"
+if exist "%SETTINGS_FILE%" (
+    echo.
+    echo Verifying auto-launch is disabled...
+    
+    REM Check current setting
+    findstr /C:"autoLaunchApp" "%SETTINGS_FILE%" | findstr /C:"false" >NUL
+    if %errorLevel% equ 0 (
+        echo Auto-launch is already disabled.
+    ) else (
+        echo Updating settings to disable auto-launch...
+        REM Create a new settings file with auto-launch disabled
+        echo { > "%SETTINGS_FILE%.tmp"
+        echo     "driver_micmap": { >> "%SETTINGS_FILE%.tmp"
+        echo         "enable": true, >> "%SETTINGS_FILE%.tmp"
+        echo         "http_port": 27015, >> "%SETTINGS_FILE%.tmp"
+        echo         "http_host": "127.0.0.1", >> "%SETTINGS_FILE%.tmp"
+        echo         "autoLaunchApp": false, >> "%SETTINGS_FILE%.tmp"
+        echo         "appPath": "", >> "%SETTINGS_FILE%.tmp"
+        echo         "appArgs": "" >> "%SETTINGS_FILE%.tmp"
+        echo     } >> "%SETTINGS_FILE%.tmp"
+        echo } >> "%SETTINGS_FILE%.tmp"
+        move /y "%SETTINGS_FILE%.tmp" "%SETTINGS_FILE%" >NUL
+        echo Auto-launch disabled.
+    )
+)
+
 echo.
 echo ============================================
-echo Installation Complete!
+echo Test Installation Complete!
 echo ============================================
 echo.
 echo The MicMap driver has been installed to:
 echo   %DRIVER_DEST%
 echo.
-echo Next steps:
-echo   1. Start SteamVR
-echo   2. The driver will be loaded automatically
-echo   3. Run the MicMap application
+echo Configuration:
+echo   - Auto-launch: DISABLED
+echo   - HTTP port: 27015
+echo   - HTTP host: 127.0.0.1
 echo.
-echo To verify the driver is loaded:
-echo   - Open SteamVR Settings
-echo   - Go to Developer ^> Enable Developer Settings
-echo   - Check the Startup/Shutdown section for "micmap"
+echo Testing Instructions:
+echo   1. Start SteamVR
+echo   2. Run: scripts\test_driver.bat
+echo      Or manually run: build\apps\hmd_button_test\Release\hmd_button_test.exe
+echo   3. Click "Test Driver" to verify connection
+echo   4. Click "Open Dashboard" to open SteamVR dashboard
+echo   5. Click "Send Click" to test button injection
+echo.
+echo To enable auto-launch for production:
+echo   Edit: %SETTINGS_FILE%
+echo   Set "autoLaunchApp" to true and configure "appPath"
 echo.
 echo To uninstall, run: uninstall_driver.bat
 echo.

@@ -11,6 +11,9 @@
 #include <openvr_driver.h>
 #include <memory>
 #include <atomic>
+#include <string>
+
+#include "process_launcher.hpp"
 
 namespace micmap::driver {
 
@@ -78,9 +81,30 @@ public:
     VirtualController* GetController() const { return controller_.get(); }
 
 private:
+    /**
+     * @brief Launch the MicMap application if auto-launch is enabled
+     * @return True if launch was successful or auto-launch is disabled
+     */
+    bool launchMicMapApp();
+
+    /**
+     * @brief Terminate the MicMap application if it was launched by us
+     */
+    void terminateMicMapApp();
+
+    /**
+     * @brief Get the path to the MicMap application
+     * @return Path to the executable, or empty string if not found
+     */
+    std::string getMicMapAppPath();
+
     std::unique_ptr<VirtualController> controller_;
     std::unique_ptr<HttpServer> httpServer_;
     std::atomic<bool> initialized_{false};
+    
+    // Process management for auto-launched MicMap application
+    ProcessHandle micmapProcess_;
+    bool micmapLaunchedByUs_{false};
 };
 
 } // namespace micmap::driver

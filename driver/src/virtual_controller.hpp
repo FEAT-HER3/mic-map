@@ -25,7 +25,7 @@ namespace micmap::driver {
 class VirtualController : public vr::ITrackedDeviceServerDriver {
 public:
     VirtualController();
-    ~VirtualController() override;
+    ~VirtualController();  // Note: ITrackedDeviceServerDriver doesn't have virtual destructor
 
     // ITrackedDeviceServerDriver interface
 
@@ -108,6 +108,22 @@ public:
     void ClickAButton(int durationMs = 100);
 
     /**
+     * @brief Press the trigger (primary selection button for laser mouse)
+     */
+    void PressTrigger();
+
+    /**
+     * @brief Release the trigger
+     */
+    void ReleaseTrigger();
+
+    /**
+     * @brief Press and release the trigger (click)
+     * @param durationMs Duration to hold the trigger in milliseconds
+     */
+    void ClickTrigger(int durationMs = 100);
+
+    /**
      * @brief Called each frame to process pending operations
      */
     void RunFrame();
@@ -120,6 +136,7 @@ public:
 
 private:
     void UpdateButtonState(vr::VRInputComponentHandle_t button, bool pressed);
+    void UpdateScalarState(vr::VRInputComponentHandle_t scalar, float value);
 
     std::string serialNumber_{"MICMAP_CONTROLLER_001"};
     uint32_t deviceIndex_{vr::k_unTrackedDeviceIndexInvalid};
@@ -128,10 +145,13 @@ private:
     // Input component handles
     vr::VRInputComponentHandle_t systemButtonHandle_{vr::k_ulInvalidInputComponentHandle};
     vr::VRInputComponentHandle_t aButtonHandle_{vr::k_ulInvalidInputComponentHandle};
+    vr::VRInputComponentHandle_t triggerValueHandle_{vr::k_ulInvalidInputComponentHandle};
+    vr::VRInputComponentHandle_t triggerClickHandle_{vr::k_ulInvalidInputComponentHandle};
 
     // Button states
     std::atomic<bool> systemButtonPressed_{false};
     std::atomic<bool> aButtonPressed_{false};
+    std::atomic<bool> triggerPressed_{false};
 
     // Pending button releases (for click operations)
     struct PendingRelease {

@@ -24,6 +24,7 @@ add_library(driver_micmap SHARED
     src/device_provider.cpp
     src/virtual_controller.cpp
     src/http_server.cpp
+    src/process_launcher.cpp
 )
 
 # Include directories
@@ -44,6 +45,11 @@ endif()
 # cpp-httplib for HTTP server (header-only)
 if(TARGET httplib::httplib)
     target_link_libraries(driver_micmap PRIVATE httplib::httplib)
+    # Ensure OpenSSL is disabled for httplib in the driver
+    # We only need HTTP for localhost communication
+    target_compile_definitions(driver_micmap PRIVATE
+        CPPHTTPLIB_NO_EXCEPTIONS
+    )
 else()
     message(FATAL_ERROR "driver_micmap: cpp-httplib is required for the driver.")
 endif()
@@ -75,9 +81,19 @@ else()
 endif()
 
 # Set the output directory for the driver
+# Note: We set both the general and per-configuration directories to avoid
+# Visual Studio adding Release/Debug subdirectories
 set_target_properties(driver_micmap PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/driver/micmap/bin/win64"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/driver/micmap/bin/win64"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/driver/micmap/bin/win64"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/driver/micmap/bin/win64"
+    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/driver/micmap/bin/win64"
+    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/driver/micmap/bin/win64"
+    LIBRARY_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/driver/micmap/bin/win64"
+    LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/driver/micmap/bin/win64"
+    LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/driver/micmap/bin/win64"
+    LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/driver/micmap/bin/win64"
 )
 
 # Copy driver resources to output directory
@@ -98,6 +114,9 @@ add_custom_command(TARGET driver_micmap POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/resources/input/micmap_controller_profile.json"
         "${CMAKE_BINARY_DIR}/driver/micmap/resources/input/micmap_controller_profile.json"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/input/vrcompositor_bindings_micmap_controller.json"
+        "${CMAKE_BINARY_DIR}/driver/micmap/resources/input/vrcompositor_bindings_micmap_controller.json"
     COMMENT "Copying driver resources to output directory"
 )
 
@@ -120,5 +139,9 @@ install(FILES resources/settings/default.vrsettings
 )
 
 install(FILES resources/input/micmap_controller_profile.json
+    DESTINATION driver/micmap/resources/input
+)
+
+install(FILES resources/input/vrcompositor_bindings_micmap_controller.json
     DESTINATION driver/micmap/resources/input
 )

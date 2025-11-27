@@ -2,6 +2,9 @@
     "driver_micmap": {
         "enable": true,
         "http_port": 27015,
-        "http_host": "127.0.0.1"
+        "http_host": "127.0.0.1",
+        "autoLaunchApp": false,
+        "appPath": "",
+        "appArgs": ""
     }
 }

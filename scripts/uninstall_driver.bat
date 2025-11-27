@@ -20,14 +20,35 @@ if %errorLevel% neq 0 (
 REM Find SteamVR installation
 set "STEAMVR_PATH="
 
-REM Try common Steam installation paths
-set "STEAM_PATHS=C:\Program Files (x86)\Steam;C:\Program Files\Steam;D:\Steam;D:\SteamLibrary"
+REM Try common Steam installation paths (check each individually to handle spaces)
+if exist "C:\Program Files (x86)\Steam\steamapps\common\SteamVR" (
+    set "STEAMVR_PATH=C:\Program Files (x86)\Steam\steamapps\common\SteamVR"
+    goto :found_steamvr
+)
 
-for %%p in (%STEAM_PATHS%) do (
-    if exist "%%p\steamapps\common\SteamVR" (
-        set "STEAMVR_PATH=%%p\steamapps\common\SteamVR"
-        goto :found_steamvr
-    )
+if exist "C:\Program Files\Steam\steamapps\common\SteamVR" (
+    set "STEAMVR_PATH=C:\Program Files\Steam\steamapps\common\SteamVR"
+    goto :found_steamvr
+)
+
+if exist "D:\Steam\steamapps\common\SteamVR" (
+    set "STEAMVR_PATH=D:\Steam\steamapps\common\SteamVR"
+    goto :found_steamvr
+)
+
+if exist "D:\SteamLibrary\steamapps\common\SteamVR" (
+    set "STEAMVR_PATH=D:\SteamLibrary\steamapps\common\SteamVR"
+    goto :found_steamvr
+)
+
+if exist "E:\Steam\steamapps\common\SteamVR" (
+    set "STEAMVR_PATH=E:\Steam\steamapps\common\SteamVR"
+    goto :found_steamvr
+)
+
+if exist "E:\SteamLibrary\steamapps\common\SteamVR" (
+    set "STEAMVR_PATH=E:\SteamLibrary\steamapps\common\SteamVR"
+    goto :found_steamvr
 )
 
 REM Try to find Steam from registry

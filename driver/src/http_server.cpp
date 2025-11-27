@@ -5,9 +5,11 @@
 
 #include "http_server.hpp"
 #include "virtual_controller.hpp"
+#include "driver_log.hpp"
 
 // Include httplib - header-only library
-#define CPPHTTPLIB_OPENSSL_SUPPORT 0
+// Note: CPPHTTPLIB_OPENSSL_SUPPORT must NOT be defined to disable OpenSSL
+// This is handled in CMakeLists.txt
 #include <httplib.h>
 
 #include <openvr_driver.h>
@@ -168,9 +170,11 @@ void HttpServer::SetupRoutes() {
             controller_->ClickSystemButton(duration);
         } else if (button == "a") {
             controller_->ClickAButton(duration);
+        } else if (button == "trigger") {
+            controller_->ClickTrigger(duration);
         } else {
             res.status = 400;
-            res.set_content("{\"error\":\"Unknown button: " + button + "\"}", "application/json");
+            res.set_content("{\"error\":\"Unknown button: " + button + "\". Valid buttons: system, a, trigger\"}", "application/json");
             return;
         }
 
@@ -198,9 +202,11 @@ void HttpServer::SetupRoutes() {
             controller_->PressSystemButton();
         } else if (button == "a") {
             controller_->PressAButton();
+        } else if (button == "trigger") {
+            controller_->PressTrigger();
         } else {
             res.status = 400;
-            res.set_content("{\"error\":\"Unknown button: " + button + "\"}", "application/json");
+            res.set_content("{\"error\":\"Unknown button: " + button + "\". Valid buttons: system, a, trigger\"}", "application/json");
             return;
         }
 
@@ -228,9 +234,11 @@ void HttpServer::SetupRoutes() {
             controller_->ReleaseSystemButton();
         } else if (button == "a") {
             controller_->ReleaseAButton();
+        } else if (button == "trigger") {
+            controller_->ReleaseTrigger();
         } else {
             res.status = 400;
-            res.set_content("{\"error\":\"Unknown button: " + button + "\"}", "application/json");
+            res.set_content("{\"error\":\"Unknown button: " + button + "\". Valid buttons: system, a, trigger\"}", "application/json");
             return;
         }
 

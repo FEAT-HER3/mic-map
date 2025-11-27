@@ -22,6 +22,26 @@ The MicMap driver registers a virtual controller with SteamVR that can inject bu
                                      └─────────────────────┘
 ```
 
+## Quick Start Testing
+
+The fastest way to test the driver:
+
+```bash
+# 1. Build the project
+mkdir build && cd build
+cmake ..
+cmake --build . --config Release
+
+# 2. Install driver (with auto-launch disabled for testing)
+cd ..
+scripts\install_driver_test.bat
+
+# 3. Start SteamVR
+
+# 4. Run the test application
+scripts\test_driver.bat
+```
+
 ## Components
 
 ### Driver Entry Point (`driver_main.cpp`)
@@ -98,13 +118,25 @@ The driver will be output to `build/driver/micmap/`.
 
 ## Installation
 
-### Automatic Installation
+### For Testing (Recommended First)
 
-Run the installation script:
+Use the test installation script which disables auto-launch:
+
+```bash
+scripts\install_driver_test.bat
+```
+
+This installs the driver with `autoLaunchApp` set to `false`, allowing you to test the driver manually with `hmd_button_test.exe`.
+
+### For Production
+
+Run the standard installation script:
 
 ```bash
 scripts\install_driver.bat
 ```
+
+Then configure auto-launch by editing the settings file (see Settings section below).
 
 ### Manual Installation
 
@@ -123,6 +155,98 @@ scripts\uninstall_driver.bat
 
 Or manually delete the `micmap` folder from SteamVR's drivers directory.
 
+## Settings
+
+The driver settings are stored in `resources/settings/default.vrsettings`:
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `enable` | bool | `true` | Enable/disable the driver |
+| `http_port` | int | `27015` | HTTP server port |
+| `http_host` | string | `"127.0.0.1"` | HTTP server host (localhost only for security) |
+| `autoLaunchApp` | bool | `false` | Auto-launch MicMap app when SteamVR starts |
+| `appPath` | string | `""` | Path to application to launch |
+| `appArgs` | string | `""` | Command line arguments for the application |
+
+### Configuring Auto-Launch
+
+To enable auto-launch for production use:
+
+1. Edit the settings file in the installed driver location:
+   ```
+   <SteamVR>/drivers/micmap/resources/settings/default.vrsettings
+   ```
+
+2. Set the following values:
+   ```json
+   {
+       "driver_micmap": {
+           "enable": true,
+           "http_port": 27015,
+           "http_host": "127.0.0.1",
+           "autoLaunchApp": true,
+           "appPath": "C:/Path/To/micmap.exe",
+           "appArgs": ""
+       }
+   }
+   ```
+
+3. Restart SteamVR for changes to take effect.
+
+## Testing with hmd_button_test.exe
+
+The `hmd_button_test.exe` application provides a GUI for testing the driver:
+
+### Features
+
+- **SteamVR Status**: Shows connection to SteamVR runtime
+- **Driver Status**: Shows HTTP connection to the MicMap driver
+- **Dashboard State**: Shows if SteamVR dashboard is open/closed
+- **Test Driver**: Tests the HTTP connection to the driver
+- **Open Dashboard**: Opens the SteamVR dashboard
+- **Send Click**: Sends a button click via the driver HTTP API
+- **Auto**: Performs the appropriate action based on dashboard state
+
+### Testing Workflow
+
+1. **Build the project**:
+   ```bash
+   mkdir build && cd build
+   cmake ..
+   cmake --build . --config Release
+   ```
+
+2. **Install driver for testing**:
+   ```bash
+   scripts\install_driver_test.bat
+   ```
+
+3. **Start SteamVR**
+
+4. **Run the test application**:
+   ```bash
+   scripts\test_driver.bat
+   ```
+   Or directly:
+   ```bash
+   build\apps\hmd_button_test\Release\hmd_button_test.exe
+   ```
+
+5. **Verify driver connection**:
+   - Click "Test Driver" button
+   - Should show "Connected (port 27015)" in Driver Status
+
+6. **Test dashboard interaction**:
+   - Click "Open Dashboard" to open SteamVR dashboard
+   - Click "Send Click" to send a button press via the driver
+   - Check the event log for HTTP responses
+
+### Expected Results
+
+- **Test Driver**: Should show "Driver connected on port 27015"
+- **Open Dashboard**: Should open the SteamVR dashboard overlay
+- **Send Click**: Should trigger a click in the dashboard (activates whatever is under the head-locked pointer)
+
 ## Troubleshooting
 
 ### Driver not loading
@@ -130,18 +254,36 @@ Or manually delete the `micmap` folder from SteamVR's drivers directory.
 1. Check SteamVR logs: `%LOCALAPPDATA%\openvr\logs\`
 2. Verify the driver is in the correct location
 3. Ensure `driver.vrdrivermanifest` exists in the driver folder
+4. Look for "micmap" in the SteamVR startup log
 
 ### HTTP connection failed
 
-1. Check if the driver is running (look for `driver_micmap.dll` in SteamVR logs)
-2. Try different ports (27015-27025)
-3. Check firewall settings for localhost connections
+1. Check if SteamVR is running
+2. Check if the driver is loaded (SteamVR Settings > Startup/Shutdown)
+3. Try the test application: `scripts\test_driver.bat`
+4. Check if port 27015 is available (driver will try 27015-27025)
+5. Check firewall settings for localhost connections
 
 ### Button events not working
 
 1. Verify the virtual controller is registered in SteamVR
 2. Check SteamVR's device list for "MicMap Virtual Controller"
 3. Review driver logs for error messages
+4. Make sure the dashboard is open when sending clicks
+
+### Driver Status shows "Not Connected"
+
+1. Ensure SteamVR is running
+2. Check that the driver is installed: `<SteamVR>/drivers/micmap/`
+3. Restart SteamVR after installing the driver
+4. Check SteamVR logs for driver loading errors
+
+### Auto-launch not working
+
+1. Verify `autoLaunchApp` is set to `true` in settings
+2. Verify `appPath` points to a valid executable
+3. Check that the path uses forward slashes or escaped backslashes
+4. Check SteamVR logs for launch errors
 
 ## Files
 

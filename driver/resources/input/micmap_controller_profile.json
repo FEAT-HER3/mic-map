@@ -21,6 +21,22 @@
             "type": "button",
             "binding_image_point": [0, 0],
             "order": 2
+        },
+        "/input/trigger/value": {
+            "type": "trigger",
+            "binding_image_point": [0, 0],
+            "order": 3
+        },
+        "/input/trigger/click": {
+            "type": "button",
+            "binding_image_point": [0, 0],
+            "order": 4
         }
-    }
+    },
+    "default_bindings": [
+        {
+            "app_key": "openvr.component.vrcompositor",
+            "binding_url": "vrcompositor_bindings_micmap_controller.json"
+        }
+    ]
 }

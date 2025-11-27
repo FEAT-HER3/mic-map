@@ -25,8 +25,8 @@
 #include <openvr.h>
 #endif
 
-// Include httplib for HTTP client
-#define CPPHTTPLIB_OPENSSL_SUPPORT 0
+// Include httplib for HTTP client (without OpenSSL support)
+// Note: We don't need HTTPS for localhost communication
 #include <httplib.h>
 
 namespace micmap::steamvr {
@@ -503,8 +503,8 @@ public:
             }
         }
         
-        // Send click command to the driver
-        if (!driverClient_->click("system", 100)) {
+        // Send click command to the driver - use trigger for laser mouse selection
+        if (!driverClient_->click("trigger", 100)) {
             lastError_ = "Failed to send click command: " + driverClient_->getLastError();
             MICMAP_LOG_ERROR(lastError_);
             return false;

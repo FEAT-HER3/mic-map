@@ -70,6 +70,8 @@ endif()
 # Create interface library for httplib
 add_library(httplib INTERFACE)
 target_include_directories(httplib INTERFACE ${cpp_httplib_SOURCE_DIR})
+# Note: httplib auto-detects OpenSSL. We don't need HTTPS for localhost communication,
+# but if OpenSSL is found on the system, it will be used. This is fine.
 add_library(httplib::httplib ALIAS httplib)
 
 # OpenXR SDK - Optional, for VR integration

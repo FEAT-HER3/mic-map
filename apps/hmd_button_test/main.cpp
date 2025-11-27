@@ -4,6 +4,7 @@
  *
  * Test Program 2: SteamVR HMD button event testing
  * - SteamVR connection status with visual indicator
+ * - Driver connection status (HTTP server reachability)
  * - Dashboard state indicator (Open/Closed)
  * - Manual trigger buttons for dashboard actions
  * - Event log display with timestamps
@@ -11,9 +12,10 @@
  *
  * This test app demonstrates the SteamVR integration:
  * - Dashboard closed: "Open Dashboard" button opens the SteamVR dashboard
- * - Dashboard open: "Send Click" button sends HMD button press to activate
- *   whatever is under the head-locked virtual pointer
+ * - Dashboard open: "Send Click" button sends HMD button press via driver HTTP API
+ *   to activate whatever is under the head-locked virtual pointer
  * - "Auto" button performs the appropriate action based on dashboard state
+ * - "Test Driver" button tests the HTTP connection to the driver
  */
 
 #ifdef _WIN32
@@ -39,7 +41,7 @@ using namespace micmap;
 
 // Window dimensions
 constexpr int WINDOW_WIDTH = 450;
-constexpr int WINDOW_HEIGHT = 520;
+constexpr int WINDOW_HEIGHT = 620;
 
 // Control IDs
 constexpr int ID_OPEN_DASHBOARD_BUTTON = 101;
@@ -48,25 +50,35 @@ constexpr int ID_AUTO_ACTION_BUTTON = 103;
 constexpr int ID_RECONNECT_BUTTON = 104;
 constexpr int ID_LOG_LIST = 105;
 constexpr int ID_TIMER = 106;
+constexpr int ID_TEST_DRIVER_BUTTON = 107;
+constexpr int ID_SEND_A_BUTTON = 108;
+constexpr int ID_SEND_SYSTEM_BUTTON = 109;
 
 // Global state
 struct AppState {
     std::shared_ptr<steamvr::IVRInput> vrInput;
     std::unique_ptr<steamvr::IDashboardManager> dashboardManager;
+    std::unique_ptr<steamvr::IDriverClient> driverClient;
     
     steamvr::ConnectionState connectionState = steamvr::ConnectionState::Disconnected;
     steamvr::DashboardState dashboardState = steamvr::DashboardState::Unknown;
+    bool driverConnected = false;
+    int driverPort = 0;
     
     std::wstring lastResult = L"Ready";
     bool lastResultSuccess = true;
     
     HWND hwnd = nullptr;
     HWND steamvrStatusLabel = nullptr;
+    HWND driverStatusLabel = nullptr;
     HWND dashboardLabel = nullptr;
     HWND openDashboardButton = nullptr;
     HWND sendClickButton = nullptr;
     HWND autoActionButton = nullptr;
     HWND reconnectButton = nullptr;
+    HWND testDriverButton = nullptr;
+    HWND sendAButton = nullptr;
+    HWND sendSystemButton = nullptr;
     HWND logList = nullptr;
     HWND lastResultLabel = nullptr;
 };
@@ -85,6 +97,10 @@ void OnOpenDashboardClicked();
 void OnSendClickClicked();
 void OnAutoActionClicked();
 void OnReconnectClicked();
+void OnTestDriverClicked();
+void OnSendAButtonClicked();
+void OnSendSystemButtonClicked();
+void UpdateDriverStatus();
 
 std::wstring GetTimeString() {
     auto now = std::chrono::system_clock::now();
@@ -147,6 +163,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         steamvr::createOpenVRInput().release()
     );
     g_state.dashboardManager = steamvr::createDashboardManager();
+    
+    // Initialize driver client for HTTP communication
+    // Note: Driver client creation is deferred to avoid potential crashes during startup
+    // g_state.driverClient = steamvr::createDriverClient("127.0.0.1", 27015, 27025);
+    AddLogEntry(L"Driver client will be initialized on first use...");
     
     if (g_state.vrInput) {
         // Set up event callback
@@ -249,6 +270,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
     }
     
+    // Driver client will be created on first use (Test Driver button or Send Click)
+    // This avoids potential startup issues
+    AddLogEntry(L"Click 'Test Driver' to check driver connection");
+    
     AddLogEntry(L"Ready - Use buttons to test dashboard interaction");
     
     ShowWindow(g_state.hwnd, nCmdShow);
@@ -304,6 +329,15 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 case ID_RECONNECT_BUTTON:
                     OnReconnectClicked();
                     break;
+                case ID_TEST_DRIVER_BUTTON:
+                    OnTestDriverClicked();
+                    break;
+                case ID_SEND_A_BUTTON:
+                    OnSendAButtonClicked();
+                    break;
+                case ID_SEND_SYSTEM_BUTTON:
+                    OnSendSystemButtonClicked();
+                    break;
             }
             return 0;
             
@@ -336,6 +370,19 @@ void CreateControls(HWND hwnd) {
         hwnd, nullptr, nullptr, nullptr);
     
     g_state.steamvrStatusLabel = CreateWindowW(L"STATIC", L"Initializing...",
+        WS_VISIBLE | WS_CHILD | SS_LEFT,
+        leftMargin + 115, y, 280, 20,
+        hwnd, nullptr, nullptr, nullptr);
+    
+    y += 25;
+    
+    // Driver Status row
+    CreateWindowW(L"STATIC", L"Driver Status:",
+        WS_VISIBLE | WS_CHILD | SS_LEFT,
+        leftMargin, y, 110, 20,
+        hwnd, nullptr, nullptr, nullptr);
+    
+    g_state.driverStatusLabel = CreateWindowW(L"STATIC", L"Checking...",
         WS_VISIBLE | WS_CHILD | SS_LEFT,
         leftMargin + 115, y, 280, 20,
         hwnd, nullptr, nullptr, nullptr);
@@ -392,11 +439,29 @@ void CreateControls(HWND hwnd) {
     
     y += buttonHeight + 10;
     
-    // Reconnect button
-    g_state.reconnectButton = CreateWindowW(L"BUTTON", L"Reconnect to SteamVR",
+    // Second row of buttons
+    g_state.reconnectButton = CreateWindowW(L"BUTTON", L"Reconnect SteamVR",
         WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        leftMargin, y, 180, 30,
+        leftMargin, y, 140, 30,
         hwnd, (HMENU)ID_RECONNECT_BUTTON, nullptr, nullptr);
+    
+    g_state.testDriverButton = CreateWindowW(L"BUTTON", L"Test Driver",
+        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        leftMargin + 148, y, 120, 30,
+        hwnd, (HMENU)ID_TEST_DRIVER_BUTTON, nullptr, nullptr);
+    
+    y += 38;
+    
+    // Third row of buttons - different button types
+    g_state.sendAButton = CreateWindowW(L"BUTTON", L"Send A Button",
+        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        leftMargin, y, 130, 30,
+        hwnd, (HMENU)ID_SEND_A_BUTTON, nullptr, nullptr);
+    
+    g_state.sendSystemButton = CreateWindowW(L"BUTTON", L"Send System",
+        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        leftMargin + 138, y, 130, 30,
+        hwnd, (HMENU)ID_SEND_SYSTEM_BUTTON, nullptr, nullptr);
     
     y += 40;
     
@@ -491,6 +556,25 @@ void UpdateStatus() {
             PostQuitMessage(0);
         }
     }
+    
+    // Update driver status
+    UpdateDriverStatus();
+}
+
+void UpdateDriverStatus() {
+    if (g_state.driverClient) {
+        if (g_state.driverClient->isConnected()) {
+            g_state.driverConnected = true;
+            g_state.driverPort = g_state.driverClient->getPort();
+            std::wstring status = L"[●] Connected (port " + std::to_wstring(g_state.driverPort) + L")";
+            SetWindowTextW(g_state.driverStatusLabel, status.c_str());
+        } else {
+            g_state.driverConnected = false;
+            SetWindowTextW(g_state.driverStatusLabel, L"[○] Not Connected");
+        }
+    } else {
+        SetWindowTextW(g_state.driverStatusLabel, L"[○] Not Available");
+    }
 }
 
 void AddLogEntry(const std::wstring& message) {
@@ -546,9 +630,36 @@ void OnOpenDashboardClicked() {
 }
 
 void OnSendClickClicked() {
-    AddLogEntry(L"Sending HMD button press (click)...");
+    AddLogEntry(L"Sending HMD button press (click) via driver HTTP API...");
     
-    if (g_state.vrInput) {
+    // First try using the driver client directly for more control
+    if (g_state.driverClient) {
+        if (!g_state.driverClient->isConnected()) {
+            AddLogEntry(L"Driver not connected, attempting to connect...");
+            if (!g_state.driverClient->connect()) {
+                std::string error = g_state.driverClient->getLastError();
+                std::wstring werror(error.begin(), error.end());
+                AddLogEntry(L"Failed to connect to driver: " + werror);
+                SetLastResult(L"Driver connection failed", false);
+                return;
+            }
+            g_state.driverPort = g_state.driverClient->getPort();
+            AddLogEntry(L"Connected to driver on port " + std::to_wstring(g_state.driverPort));
+        }
+        
+        // Send click command via HTTP - use trigger for laser mouse selection
+        AddLogEntry(L"Sending POST /click?button=trigger to driver...");
+        if (g_state.driverClient->click("trigger", 100)) {
+            AddLogEntry(L"Driver responded: Click sent successfully");
+            SetLastResult(L"Click sent via driver", true);
+        } else {
+            std::string error = g_state.driverClient->getLastError();
+            std::wstring werror(error.begin(), error.end());
+            AddLogEntry(L"Driver error: " + werror);
+            SetLastResult(werror, false);
+        }
+    } else if (g_state.vrInput) {
+        // Fallback to VR input (which also uses driver internally)
         if (g_state.vrInput->sendDashboardSelect()) {
             AddLogEntry(L"HMD button press sent - item should be selected");
             SetLastResult(L"Click sent", true);
@@ -564,7 +675,7 @@ void OnSendClickClicked() {
             }
         }
     } else {
-        SetLastResult(L"VR input not available", false);
+        SetLastResult(L"No driver or VR input available", false);
     }
 }
 
@@ -610,6 +721,119 @@ void OnReconnectClicked() {
         }
     } else {
         SetLastResult(L"Dashboard manager not available", false);
+    }
+}
+
+void OnTestDriverClicked() {
+    AddLogEntry(L"Testing driver connection...");
+    
+    if (!g_state.driverClient) {
+        g_state.driverClient = steamvr::createDriverClient("127.0.0.1", 27015, 27025);
+    }
+    
+    // Disconnect first to force a fresh connection test
+    g_state.driverClient->disconnect();
+    
+    AddLogEntry(L"Attempting to connect to driver HTTP server...");
+    if (g_state.driverClient->connect()) {
+        g_state.driverConnected = true;
+        g_state.driverPort = g_state.driverClient->getPort();
+        AddLogEntry(L"Connected to driver on port " + std::to_wstring(g_state.driverPort));
+        
+        // Test status endpoint
+        AddLogEntry(L"Sending GET /status to driver...");
+        if (g_state.driverClient->getStatus()) {
+            AddLogEntry(L"Driver status: OK");
+            SetLastResult(L"Driver connected on port " + std::to_wstring(g_state.driverPort), true);
+        } else {
+            std::string error = g_state.driverClient->getLastError();
+            std::wstring werror(error.begin(), error.end());
+            AddLogEntry(L"Driver status check failed: " + werror);
+            SetLastResult(L"Driver status check failed", false);
+        }
+    } else {
+        g_state.driverConnected = false;
+        std::string error = g_state.driverClient->getLastError();
+        std::wstring werror(error.begin(), error.end());
+        AddLogEntry(L"Failed to connect to driver: " + werror);
+        AddLogEntry(L"Make sure SteamVR is running with MicMap driver installed");
+        SetLastResult(L"Driver not available", false);
+    }
+    
+    UpdateDriverStatus();
+}
+
+void OnSendAButtonClicked() {
+    AddLogEntry(L"Sending A button press via driver HTTP API...");
+    
+    if (!g_state.driverClient) {
+        g_state.driverClient = steamvr::createDriverClient("127.0.0.1", 27015, 27025);
+    }
+    
+    if (g_state.driverClient) {
+        if (!g_state.driverClient->isConnected()) {
+            AddLogEntry(L"Driver not connected, attempting to connect...");
+            if (!g_state.driverClient->connect()) {
+                std::string error = g_state.driverClient->getLastError();
+                std::wstring werror(error.begin(), error.end());
+                AddLogEntry(L"Failed to connect to driver: " + werror);
+                SetLastResult(L"Driver connection failed", false);
+                return;
+            }
+            g_state.driverPort = g_state.driverClient->getPort();
+            AddLogEntry(L"Connected to driver on port " + std::to_wstring(g_state.driverPort));
+        }
+        
+        // Send A button click command via HTTP
+        AddLogEntry(L"Sending POST /click?button=a to driver...");
+        if (g_state.driverClient->click("a", 100)) {
+            AddLogEntry(L"Driver responded: A button click sent successfully");
+            SetLastResult(L"A button click sent via driver", true);
+        } else {
+            std::string error = g_state.driverClient->getLastError();
+            std::wstring werror(error.begin(), error.end());
+            AddLogEntry(L"Driver error: " + werror);
+            SetLastResult(werror, false);
+        }
+    } else {
+        SetLastResult(L"Driver client not available", false);
+    }
+}
+
+void OnSendSystemButtonClicked() {
+    AddLogEntry(L"Sending System button press via driver HTTP API...");
+    
+    if (!g_state.driverClient) {
+        g_state.driverClient = steamvr::createDriverClient("127.0.0.1", 27015, 27025);
+    }
+    
+    if (g_state.driverClient) {
+        if (!g_state.driverClient->isConnected()) {
+            AddLogEntry(L"Driver not connected, attempting to connect...");
+            if (!g_state.driverClient->connect()) {
+                std::string error = g_state.driverClient->getLastError();
+                std::wstring werror(error.begin(), error.end());
+                AddLogEntry(L"Failed to connect to driver: " + werror);
+                SetLastResult(L"Driver connection failed", false);
+                return;
+            }
+            g_state.driverPort = g_state.driverClient->getPort();
+            AddLogEntry(L"Connected to driver on port " + std::to_wstring(g_state.driverPort));
+        }
+        
+        // Send system button click command via HTTP
+        AddLogEntry(L"Sending POST /click?button=system to driver...");
+        if (g_state.driverClient->click("system", 100)) {
+            AddLogEntry(L"Driver responded: System button click sent successfully");
+            SetLastResult(L"System button click sent via driver", true);
+        } else {
+            std::string error = g_state.driverClient->getLastError();
+            std::wstring werror(error.begin(), error.end());
+            AddLogEntry(L"Driver error: " + werror);
+            SetLastResult(werror, false);
+        }
+    } else {
+        SetLastResult(L"Driver client not available", false);
     }
 }
 
