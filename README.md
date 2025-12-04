@@ -1,6 +1,6 @@
 # MicMap
 
-A SteamVR addon that listens to microphone input and detects white noise patterns (like covering your microphone) to trigger SteamVR dashboard interactions.
+A SteamVR addon that listens to microphone input and detects a unique noise pattern (like covering your microphone) to trigger SteamVR dashboard interactions.
 
 ## Overview
 
