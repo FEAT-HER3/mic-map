@@ -44,7 +44,7 @@ scripts\install_driver.bat
 This script:
 1. Copies the driver files to the SteamVR drivers directory
 2. Registers the driver with SteamVR
-3. Sets up the MicMap application to launch automatically with SteamVR
+3. ~~Sets up the MicMap application to launch automatically with SteamVR~~
 
 **Driver Installation Location**: `<SteamVR>/drivers/micmap/`
 
@@ -60,7 +60,7 @@ scripts\uninstall_driver.bat
 
 ### Starting MicMap
 
-MicMap automatically launches when SteamVR starts (after driver installation). You can also run it manually:
+~~MicMap automatically launches when SteamVR starts (after driver installation).~~ You can ~~also~~ run it manually:
 
 ```bash
 build\apps\micmap\Release\micmap.exe
@@ -83,7 +83,7 @@ Once trained:
 2. Keep holding for a bit longer than the configured detection time (default: 0.3 seconds).
   - You may need to try 2-3 times per attempt (it's the current state of the detection algorithm)
   - Strugglin'? Try retraining with a gentler mic hold and/or lowering the detection time
-3. When it fires, it functions like the Valve Index HMD button. So either the SteamVR dashboard will open, or items in the dashboard will be clicked.
+3. When it fires, it functions like the Valve Index HMD button. So either the SteamVR dashboard will open, or items in the dashboard will be clicked. If you click outside any dashboard elements, the dashboard closes.
 
 ## Configuration
 
@@ -155,9 +155,9 @@ MicMap logs are stored in:
 
 ## Known Issues
 
-1. **Visual beam from head to laser pointer**: When the virtual controller activates, SteamVR may display a visible beam/ray from the headset to the laser pointer position. This is a cosmetic issue and does not affect functionality.
+1. **Visual beam from head to laser pointer**: When the virtual controller activates, SteamVR displays a visible beam/ray from the headset to the laser pointer position. This is a cosmetic issue and does not affect functionality.
 
-2. **Subpar microphone covered detection**: The current detection algorithm may have difficulty distinguishing between microphone covering and other loud sounds in some environments. Training in a quiet environment can help mitigate this.
+2. **Subpar microphone covered detection**: The current detection algorithm may have difficulty distinguishing between microphone covering and other loud sounds (like music) in some environments. Training in a quiet environment can help mitigate this.
 
 3. **MicMap app is not auto-starting alongside SteamVR**
 
