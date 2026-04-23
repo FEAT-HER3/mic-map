@@ -125,20 +125,12 @@ add_custom_command(TARGET driver_micmap POST_BUILD
         "${CMAKE_BINARY_DIR}/driver/micmap/driver.vrdrivermanifest"
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "${CMAKE_BINARY_DIR}/driver/micmap/resources/settings"
-    COMMAND ${CMAKE_COMMAND} -E make_directory
-        "${CMAKE_BINARY_DIR}/driver/micmap/resources/input"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/resources/driver.vrresources"
         "${CMAKE_BINARY_DIR}/driver/micmap/resources/driver.vrresources"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/resources/settings/default.vrsettings"
         "${CMAKE_BINARY_DIR}/driver/micmap/resources/settings/default.vrsettings"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/resources/input/micmap_hmd_profile.json"
-        "${CMAKE_BINARY_DIR}/driver/micmap/resources/input/micmap_hmd_profile.json"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/resources/input/micmap_vrcompositor_bindings.json"
-        "${CMAKE_BINARY_DIR}/driver/micmap/resources/input/micmap_vrcompositor_bindings.json"
     COMMENT "Copying driver resources to output directory"
 )
 
@@ -158,10 +150,4 @@ install(FILES resources/driver.vrresources
 
 install(FILES resources/settings/default.vrsettings
     DESTINATION driver/micmap/resources/settings
-)
-
-install(FILES
-    resources/input/micmap_hmd_profile.json
-    resources/input/micmap_vrcompositor_bindings.json
-    DESTINATION driver/micmap/resources/input
 )
