@@ -56,7 +56,7 @@ This roadmap delivers the "Seamless SteamVR Integration" milestone: rip out the 
 **Plans**: 3 plans
   - [x] 02-01-PLAN.md — Wave 0 test scaffold: register `test_config_manager` (5 RED scenarios) + link `nlohmann_json` PRIVATE into `micmap_core`
   - [x] 02-02-PLAN.md — Implement defensive nlohmann/json parser, atomic Windows save (ReplaceFile/MoveFileEx), UTF-8 wstring boundary, clamp/pow2-snap, corruption backup-and-rotate — turn RED → GREEN
-  - [ ] 02-03-PLAN.md — Verification: warnings-clean full build + M-1 manual end-to-end cycle (live UI persist-across-restart) + VALIDATION sign-off
+  - [x] 02-03-PLAN.md — Verification: warnings-clean full build + M-1 manual end-to-end cycle (live UI persist-across-restart) + VALIDATION sign-off *(partial: automated GREEN; M-1 DEFERRED — micmap.exe startup hang, Phase 01 regression; see 02-03-SUMMARY.md)*
 
 ### Phase 3: Auto-Start
 **Goal**: SteamVR launches `micmap.exe` automatically when SteamVR starts, MicMap exits cleanly when SteamVR exits, and registration is idempotent — no console window, no focus steal, no respawn loop.
