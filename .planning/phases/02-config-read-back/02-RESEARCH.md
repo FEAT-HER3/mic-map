@@ -976,19 +976,22 @@ If the planner decides to enable GTest instead, the test patterns translate dire
 | Concurrent write from another MicMap instance | Tampering | `ReplaceFileW` is atomic; last-writer-wins. Not a multi-instance product. |
 | Symlink attack (`%APPDATA%/MicMap/config.json` points elsewhere) | Tampering / EoP | Out of scope — user-mode, user-owned. `%APPDATA%` is already user-trust boundary. |
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+*All three Recommendations below have been adopted in Plan 01 / Plan 02 — codified here as RESOLVED resolutions for traceability. Marker requested by checker Dim 11 (RESEARCH.md Open Questions resolution).*
 
 1. **Should `saveDefault()` also rotate the current `config.json` → `config.json.bak.1` on every save?**
    - What we know: CONTEXT.md is silent beyond the `.corrupted.*` flow. ReplaceFile's backup parameter (third arg) is exactly for this but we pass `nullptr` in Recipe 9.
    - What's unclear: Is a generational `.bak` useful, or just noise?
-   - Recommendation: No generational backup this phase. One rolling `.bak` could be added if users report losing settings from the atomic-save path — but atomic save makes that nearly impossible. Defer unless requested.
+   - **RESOLVED:** No generational `.bak.N` rotation this phase. Recipe 9's `ReplaceFileW` call passes `nullptr` for the backup-file parameter. Adopted in Plan 02 Task 1 (`writeAtomicWindows` body uses `ReplaceFileW(dest, tmp, nullptr, REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr)` — no backup arg). One rolling `.bak` may be revisited if users report losing settings; atomic save makes that loss nearly impossible.
 
 2. **Does the planner want `test_config_manager` to run on non-Windows?**
    - What we know: `writeAtomicWindows` is `#ifdef _WIN32`. On other platforms it returns false, so `save()` uses direct-write fallback. Round-trip test would still pass there.
    - What's unclear: Is there value in guarding the whole test with `#ifdef _WIN32`?
-   - Recommendation: Let it run everywhere — round-trip works on any fs; atomic-path specifics only matter on Windows, and are covered by the Windows-specific test config validating via M-1.
+   - **RESOLVED:** Test runs on all platforms (no `#ifdef _WIN32` wrapper around the test body). Adopted in Plan 01 Task 2 (`tests/test_config_manager.cpp` is a plain `int main()` with no platform guard around the 5 scenarios). Round-trip is filesystem-agnostic; Windows-specific atomic-path semantics are covered by the M-1 manual check on Windows in Plan 03.
 
-3. **Log wording conventions.** CONTEXT.md D-section 7 punts exact log strings to executor discretion. Recommendation: mirror existing `config_manager.cpp` lines 129,140,154,160,182 — `"Loaded config from: ..."`, `"Saved config to: ..."`, `"Could not open ..."`. For new lines: `"Config '{field}'={value} out of range [{lo},{hi}]; clamping to {v}"`, `"Config file corrupted; backing up and using defaults: {path}"`, `"Backed up corrupt config to: {backup}"`, `"Config written by version {N}, reading on version {M}"`.
+3. **Log wording conventions.** CONTEXT.md D-section 7 punts exact log strings to executor discretion.
+   - **RESOLVED:** Adopted verbatim in Plan 02 Task 1 + Task 2. Preserved existing strings: `"Loaded config from: ..."`, `"Saved config to: ..."`. New strings used per Recipes 1 + 8: `"Config '{field}'={value} out of range [{lo},{hi}]; clamping to {v}"` (clampRange), `"Config file corrupted; backing up and using defaults: {path}"` (load corruption branch), `"Backed up corrupt config to: {backup}"` (backupAndRotate), `"Config written by version {N}, reading on version {M}"` (version check), `"No config file at {path}; using defaults"` (D-16 missing-file path).
 
 ## Environment Availability
 
