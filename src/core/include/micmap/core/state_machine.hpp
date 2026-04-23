@@ -15,8 +15,10 @@ namespace micmap::core {
  * @brief State machine configuration
  */
 struct StateMachineConfig {
-    std::chrono::milliseconds minDetectionDuration{500};  ///< Minimum detection time before trigger
-    std::chrono::milliseconds cooldownDuration{300};      ///< Cooldown after trigger
+    std::chrono::milliseconds minDetectionDuration{100};  ///< D-04: Min DOWN-edge hold on app side (was 500ms)
+    std::chrono::milliseconds minReleaseDuration{80};     ///< D-10: Symmetric debounce floor on confidence drop
+    // Post-release cooldown (D-11): blocks next DOWN after UP until elapsed.
+    std::chrono::milliseconds cooldownDuration{200};      ///< D-11: Cooldown after UP edge emitted (was 300ms)
     float detectionThreshold{0.7f};                       ///< Confidence threshold for detection
 };
 
@@ -27,8 +29,9 @@ enum class State {
     Idle,       ///< Waiting for detection
     Training,   ///< Training mode active
     Detecting,  ///< Pattern detected, waiting for duration
-    Triggered,  ///< Trigger fired
-    Cooldown    ///< Cooldown period after trigger
+    Triggered,  ///< Trigger fired; DOWN edge emitted
+    Releasing,  ///< Confidence dropped; debouncing UP edge (D-10)
+    Cooldown    ///< Cooldown period after UP edge (D-11)
 };
 
 /**
@@ -40,15 +43,24 @@ inline const char* stateToString(State state) {
         case State::Training: return "Training";
         case State::Detecting: return "Detecting";
         case State::Triggered: return "Triggered";
+        case State::Releasing: return "Releasing";
         case State::Cooldown: return "Cooldown";
         default: return "Unknown";
     }
 }
 
 /**
- * @brief Callback for trigger events
+ * @brief Press edge carried by the trigger callback.
+ *
+ * Down = Detecting -> Triggered transition.
+ * Up   = Releasing -> Cooldown transition.
  */
-using TriggerCallback = std::function<void()>;
+enum class PressEdge { Down, Up };
+
+/**
+ * @brief Callback for trigger events (carries the edge that just fired).
+ */
+using TriggerCallback = std::function<void(PressEdge)>;
 
 /**
  * @brief Callback for state changes
