@@ -1,0 +1,42 @@
+[05:26:04.845] [INFO] Loaded config from: C:\Users\decid\AppData\Roaming\MicMap\config.json
+[05:26:04.898] [INFO] Selected audio device: Microphone (3- Beyond)
+[05:26:04.933] [INFO] Loaded training data from: C:\Users\decid\AppData\Roaming\MicMap\training_data.bin
+[05:26:04.969] [INFO]   Sample rate: 48000 Hz
+[05:26:05.003] [INFO]   Profile size: 1025 bins
+[05:26:05.037] [INFO]   Energy threshold: 0.000465177
+[05:26:05.074] [INFO]   Correlation threshold: 0.49
+[05:26:05.108] [INFO] Audio format: 48000 Hz, 2 channels, 32 bits
+[05:26:05.154] [INFO] Audio capture started (output: mono float32)
+[05:26:05.193] [INFO] Connecting to MicMap driver...
+[05:26:05.195] [INFO] Connected to MicMap driver on port {}27015
+[05:26:05.197] [INFO] Initializing OpenVR input
+[05:26:05.351] [INFO] OpenVR initialized successfully
+[05:26:05.502] [INFO] Tap fired after 0ms
+[05:26:11.902] [INFO] Tap fired after 0ms
+[05:26:16.882] [INFO] Tap fired after 0ms
+[05:26:33.103] [INFO] Tap fired after 0ms
+[05:26:39.533] [INFO] Tap fired after 0ms
+[05:26:44.114] [INFO] Tap fired after 0ms
+[05:26:47.944] [INFO] Tap fired after 0ms
+[05:26:50.454] [INFO] Tap fired after 0ms
+[05:26:53.114] [INFO] Tap fired after 0ms
+[05:27:12.163] [INFO] Started noise detection training
+[05:27:13.668] [INFO]   Energy min threshold: 3.01718e-06
+[05:27:13.670] [INFO]   Energy CV threshold: 0.797519
+[05:27:13.671] [INFO] Training complete: 78 samples
+[05:27:13.673] [INFO]   Energy threshold: 2.4494e-05
+[05:27:13.674] [INFO]   Correlation threshold: 0.49
+[05:27:13.675] [INFO]   Flatness threshold: 0.353133
+[05:27:13.677] [INFO] Saved training data to: C:\Users\decid\AppData\Roaming\MicMap\training_data.bin
+[05:27:26.849] [INFO] Started noise detection training
+[05:27:28.346] [INFO]   Energy min threshold: 3.55736e-06
+[05:27:28.347] [INFO]   Energy CV threshold: 0.472667
+[05:27:28.349] [INFO] Training complete: 150 samples
+[05:27:28.350] [INFO]   Energy threshold: 2.82333e-05
+[05:27:28.351] [INFO]   Correlation threshold: 0.49
+[05:27:28.352] [INFO]   Flatness threshold: 0.571453
+[05:27:28.354] [INFO] Saved training data to: C:\Users\decid\AppData\Roaming\MicMap\training_data.bin
+[05:27:33.896] [INFO] Tap fired after 0ms
+[05:27:36.266] [INFO] Tap fired after 0ms
+[05:27:39.806] [INFO] Tap fired after 0ms
+[05:27:41.436] [INFO] Tap fired after 0ms
