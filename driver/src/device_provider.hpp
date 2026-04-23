@@ -1,32 +1,53 @@
 /**
  * @file device_provider.hpp
- * @brief OpenVR device provider for MicMap virtual controller
+ * @brief OpenVR device provider for MicMap HMD sidecar driver
  *
- * Implements IServerTrackedDeviceProvider to register our virtual controller
- * with SteamVR.
+ * Implements IServerTrackedDeviceProvider but does NOT register any tracked
+ * device. Instead, it creates its own /input/system/click boolean component
+ * on the HMD property container and drains PressCommands from a CommandQueue
+ * populated by the HTTP thread. See Phase 1 plan 01-03.
  */
 
 #pragma once
 
 #include <openvr_driver.h>
-#include <memory>
-#include <atomic>
-#include <string>
 
-#include "process_launcher.hpp"
+#include <atomic>
+#include <chrono>
+#include <memory>
+#include <optional>
 
 namespace micmap::driver {
 
 // Forward declarations
-class VirtualController;
 class HttpServer;
+class CommandQueue;
 
 /**
- * @brief Device provider that registers the virtual controller with SteamVR
+ * @brief Lifecycle state of the HMD-side /input/system/click component.
  *
- * This class implements the IServerTrackedDeviceProvider interface, which
- * SteamVR uses to discover and manage tracked devices. We use it to register
- * our virtual controller that can inject button events.
+ * - NotReady:   cold start, no HMD container seen yet.
+ * - Ready:      hSystemClick_ is valid; UpdateBooleanComponent may succeed.
+ * - Invalidated: HMD deactivation observed or Update returned an error; the
+ *                next RunFrame will attempt CreateBooleanComponent again.
+ */
+enum class HmdComponentState {
+    NotReady,
+    Ready,
+    Invalidated
+};
+
+/**
+ * @brief Device provider that runs the MicMap sidecar inside vrserver.
+ *
+ * RunFrame order (load-bearing):
+ *   0. first-frame init log (SVR-10)
+ *   1. drain OpenVR events (observe TrackedDeviceDeactivated for HMD)
+ *   2. create-or-recreate /input/system/click if not Ready
+ *   3. drain CommandQueue (DOWN stamps pressTimestamp_; UP applies or defers
+ *      until the min-hold floor is met)
+ *   4. tick any pending deferred release
+ *   5. max-hold watchdog (SVR-06) forces UP if the button has been held > 5s
  */
 class DeviceProvider : public vr::IServerTrackedDeviceProvider {
 public:
@@ -34,77 +55,41 @@ public:
     ~DeviceProvider();
 
     // IServerTrackedDeviceProvider interface
-    
-    /**
-     * @brief Initialize the device provider
-     * @param pDriverContext Driver context from SteamVR
-     * @return VRInitError_None on success
-     */
     vr::EVRInitError Init(vr::IVRDriverContext* pDriverContext) override;
-
-    /**
-     * @brief Cleanup the device provider
-     */
     void Cleanup() override;
-
-    /**
-     * @brief Get interface versions supported by this provider
-     * @return Array of interface version strings
-     */
     const char* const* GetInterfaceVersions() override;
-
-    /**
-     * @brief Called each frame to update device state
-     */
     void RunFrame() override;
-
-    /**
-     * @brief Check if this provider should block standby mode
-     * @return True if standby should be blocked
-     */
     bool ShouldBlockStandbyMode() override;
-
-    /**
-     * @brief Called when SteamVR is entering standby mode
-     */
     void EnterStandby() override;
-
-    /**
-     * @brief Called when SteamVR is leaving standby mode
-     */
     void LeaveStandby() override;
 
-    /**
-     * @brief Get the virtual controller instance
-     * @return Pointer to the virtual controller
-     */
-    VirtualController* GetController() const { return controller_.get(); }
-
 private:
-    /**
-     * @brief Launch the MicMap application if auto-launch is enabled
-     * @return True if launch was successful or auto-launch is disabled
-     */
-    bool launchMicMapApp();
+    // Central write helper: routes UpdateBooleanComponent + error handling
+    // through a single choke point (Pitfall 12 — avoid redundant writes,
+    // Pitfall 1 — flip to Invalidated on any error return).
+    void writeValue(bool v);
 
-    /**
-     * @brief Terminate the MicMap application if it was launched by us
-     */
-    void terminateMicMapApp();
-
-    /**
-     * @brief Get the path to the MicMap application
-     * @return Path to the executable, or empty string if not found
-     */
-    std::string getMicMapAppPath();
-
-    std::unique_ptr<VirtualController> controller_;
+    std::unique_ptr<CommandQueue> commandQueue_;
     std::unique_ptr<HttpServer> httpServer_;
     std::atomic<bool> initialized_{false};
-    
-    // Process management for auto-launched MicMap application
-    ProcessHandle micmapProcess_;
-    bool micmapLaunchedByUs_{false};
+
+    // HMD-side component state
+    vr::VRInputComponentHandle_t hSystemClick_{vr::k_ulInvalidInputComponentHandle};
+    HmdComponentState state_{HmdComponentState::NotReady};
+
+    // Press / release timing (D-04, D-05)
+    std::chrono::steady_clock::time_point pressTimestamp_{};
+    std::optional<std::chrono::steady_clock::time_point> pendingReleaseAt_;
+    bool isPressed_{false};
+    bool lastWrittenValue_{false};
+
+    // Transition-only logging flags (D-08)
+    bool initLogged_{false};
+    bool loggedAwaitingHmd_{false};
+
+    // Min-hold / max-hold durations
+    static constexpr std::chrono::milliseconds kMinHold{100};
+    static constexpr std::chrono::milliseconds kMaxHold{5000};
 };
 
 } // namespace micmap::driver

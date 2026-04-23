@@ -1,25 +1,37 @@
 /**
  * @file device_provider.cpp
- * @brief Implementation of the OpenVR device provider
+ * @brief Implementation of the MicMap HMD sidecar device provider.
+ *
+ * Sidecar architecture (Phase 1 / plan 01-03):
+ *   - Does NOT register any tracked device (zero virtual controllers).
+ *   - Creates /input/system/click on the HMD property container (index 0).
+ *   - Drains a CommandQueue populated by the HTTP thread.
+ *   - Enforces a 100 ms min-hold + 5 s max-hold safety on the driver side.
+ *   - Handles VREvent_TrackedDeviceDeactivated for sleep/wake recreation.
+ *   - Logs via DriverLog + VRInputErrorName on every failure (SVR-10).
  */
 
 #include "device_provider.hpp"
-#include "virtual_controller.hpp"
+#include "command_queue.hpp"
 #include "http_server.hpp"
-#include "process_launcher.hpp"
 #include "driver_log.hpp"
+#include "vr_error.hpp"
 
-#include <cstring>
-#include <filesystem>
+#include <openvr_driver.h>
 
-// Use OpenVR driver context macros
 using namespace vr;
+using micmap::driver::VRInputErrorName;
+
+#ifndef MICMAP_DRIVER_VERSION
+#define MICMAP_DRIVER_VERSION "0.0.0"
+#endif
 
 namespace micmap::driver {
 
-// Interface versions we support
+// Interface versions this provider speaks. Sidecar mode: we only claim the
+// server-device-provider interface; tracked-device-server is unused because
+// no tracked device is registered.
 static const char* const k_InterfaceVersions[] = {
-    ITrackedDeviceServerDriver_Version,
     IServerTrackedDeviceProvider_Version,
     nullptr
 };
@@ -31,45 +43,19 @@ DeviceProvider::~DeviceProvider() {
 }
 
 EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
-    // Initialize the driver context - this sets up VR_INIT_SERVER_DRIVER_CONTEXT
     VR_INIT_SERVER_DRIVER_CONTEXT(pDriverContext);
 
-    // Log initialization
-    DriverLog("MicMap driver initializing...\n");
+    DriverLog("MicMap driver initializing (sidecar mode)\n");
 
-    // Create the virtual controller
-    controller_ = std::make_unique<VirtualController>();
-
-    // Add the controller to SteamVR's tracked device list
-    // The serial number must be unique
-    if (!VRServerDriverHost()->TrackedDeviceAdded(
-            controller_->GetSerialNumber(),
-            TrackedDeviceClass_Controller,
-            controller_.get())) {
-        DriverLog("Failed to add virtual controller to SteamVR\n");
-        return VRInitError_Driver_Failed;
-    }
-
-    DriverLog("Virtual controller added successfully\n");
-
-    // Create and start the HTTP server for receiving commands
-    httpServer_ = std::make_unique<HttpServer>(controller_.get());
+    commandQueue_ = std::make_unique<CommandQueue>();
+    httpServer_ = std::make_unique<HttpServer>(*commandQueue_);
     if (!httpServer_->Start()) {
-        DriverLog("Failed to start HTTP server\n");
+        DriverLog("MicMap: failed to start HTTP server\n");
         return VRInitError_Driver_Failed;
     }
-
-    DriverLog("HTTP server started on port %d\n", httpServer_->GetPort());
-
-    // Launch MicMap application if auto-launch is enabled
-    if (!launchMicMapApp()) {
-        DriverLog("Warning: Failed to auto-launch MicMap application\n");
-        // Don't fail initialization - the driver can still work without the app
-    }
+    DriverLog("MicMap: HTTP server listening on port %d\n", httpServer_->GetPort());
 
     initialized_ = true;
-    DriverLog("MicMap driver initialized successfully\n");
-
     return VRInitError_None;
 }
 
@@ -80,21 +66,21 @@ void DeviceProvider::Cleanup() {
 
     DriverLog("MicMap driver cleaning up...\n");
 
-    // Terminate MicMap application if we launched it
-    terminateMicMapApp();
-
-    // Stop the HTTP server
     if (httpServer_) {
         httpServer_->Stop();
         httpServer_.reset();
     }
+    commandQueue_.reset();
 
-    // Clean up the controller
-    controller_.reset();
-
+    hSystemClick_ = k_ulInvalidInputComponentHandle;
+    state_ = HmdComponentState::NotReady;
+    pendingReleaseAt_.reset();
+    isPressed_ = false;
+    lastWrittenValue_ = false;
+    initLogged_ = false;
+    loggedAwaitingHmd_ = false;
     initialized_ = false;
 
-    // Clean up driver context
     VR_CLEANUP_SERVER_DRIVER_CONTEXT();
 
     DriverLog("MicMap driver cleanup complete\n");
@@ -105,16 +91,91 @@ const char* const* DeviceProvider::GetInterfaceVersions() {
 }
 
 void DeviceProvider::RunFrame() {
-    // Called each frame by SteamVR
-    // We can use this to process any pending operations
-    
-    if (controller_) {
-        controller_->RunFrame();
+    // 0. First-frame init log (SVR-10 / Pitfall 11).
+    if (!initLogged_) {
+        DriverLog("MicMap driver v%s built %s %s - RunFrame starting\n",
+                  MICMAP_DRIVER_VERSION, __DATE__, __TIME__);
+        initLogged_ = true;
+    }
+
+    // 1. Drain OpenVR events. A HMD deactivation must flip us to Invalidated
+    //    BEFORE any handle-dependent work this tick (Pitfall 1).
+    VREvent_t ev{};
+    while (VRServerDriverHost()->PollNextEvent(&ev, sizeof(ev))) {
+        if (ev.eventType == VREvent_TrackedDeviceDeactivated
+            && ev.trackedDeviceIndex == k_unTrackedDeviceIndex_Hmd) {
+            hSystemClick_ = k_ulInvalidInputComponentHandle;
+            state_ = HmdComponentState::Invalidated;
+            isPressed_ = false;
+            lastWrittenValue_ = false;
+            pendingReleaseAt_.reset();
+            DriverLog("MicMap: HMD deactivated, handle invalidated\n");
+        }
+    }
+
+    // 2. Create-or-recreate /input/system/click while not Ready.
+    if (state_ != HmdComponentState::Ready) {
+        auto hmd = VRProperties()->TrackedDeviceToPropertyContainer(
+            k_unTrackedDeviceIndex_Hmd);
+        if (hmd != k_ulInvalidPropertyContainer) {
+            auto err = VRDriverInput()->CreateBooleanComponent(
+                hmd, "/input/system/click", &hSystemClick_);
+            if (err == VRInputError_None) {
+                DriverLog("MicMap: /input/system/click created (handle=%llu)\n",
+                          static_cast<unsigned long long>(hSystemClick_));
+                state_ = HmdComponentState::Ready;
+                loggedAwaitingHmd_ = false;   // re-arm for future invalidation cycles
+            } else {
+                DriverLog("MicMap: CreateBooleanComponent failed: %s (%d)\n",
+                          VRInputErrorName(err), static_cast<int>(err));
+                hSystemClick_ = k_ulInvalidInputComponentHandle;
+            }
+        } else if (!loggedAwaitingHmd_) {
+            DriverLog("MicMap: awaiting HMD container\n");
+            loggedAwaitingHmd_ = true;   // transition-only (D-08)
+        }
+    }
+
+    // 3. Drain CommandQueue (non-blocking; lock held only inside try_pop).
+    while (auto cmd = commandQueue_->try_pop()) {
+        if (state_ != HmdComponentState::Ready) {
+            DriverLog("MicMap: dropped press command (handle invalid)\n");
+            continue;
+        }
+        if (cmd->kind == PressCommand::Kind::Down) {
+            pressTimestamp_ = std::chrono::steady_clock::now();
+            pendingReleaseAt_.reset();
+            writeValue(true);
+        } else {  // Up
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = now - pressTimestamp_;
+            if (elapsed >= kMinHold) {
+                writeValue(false);
+            } else {
+                pendingReleaseAt_ = pressTimestamp_ + kMinHold;
+            }
+        }
+    }
+
+    // 4. Tick any deferred release whose min-hold deadline has passed.
+    if (pendingReleaseAt_
+        && std::chrono::steady_clock::now() >= *pendingReleaseAt_) {
+        writeValue(false);
+        pendingReleaseAt_.reset();
+    }
+
+    // 5. Max-hold watchdog (SVR-06 + Open Question 5): guard against an app
+    //    crash mid-press leaving the system button stuck down.
+    if (isPressed_
+        && (std::chrono::steady_clock::now() - pressTimestamp_) > kMaxHold) {
+        DriverLog("MicMap: max-hold watchdog fired (no UP received in %lldms)\n",
+                  static_cast<long long>(kMaxHold.count()));
+        writeValue(false);
+        pendingReleaseAt_.reset();
     }
 }
 
 bool DeviceProvider::ShouldBlockStandbyMode() {
-    // We don't need to block standby
     return false;
 }
 
@@ -126,105 +187,23 @@ void DeviceProvider::LeaveStandby() {
     DriverLog("MicMap driver leaving standby\n");
 }
 
-bool DeviceProvider::launchMicMapApp() {
-    // Check if auto-launch is enabled in settings
-    bool autoLaunch = VRSettings()->GetBool("driver_micmap", "autoLaunchApp");
-    
-    // If the setting doesn't exist, default to true
-    EVRSettingsError error;
-    VRSettings()->GetBool("driver_micmap", "autoLaunchApp", &error);
-    if (error == VRSettingsError_UnsetSettingHasNoDefault) {
-        autoLaunch = true;
-    }
+void DeviceProvider::writeValue(bool v) {
+    if (state_ != HmdComponentState::Ready) return;
+    if (v == lastWrittenValue_) return;   // avoid redundant writes (Pitfall 12)
 
-    if (!autoLaunch) {
-        DriverLog("Auto-launch is disabled in settings\n");
-        return true;  // Not an error, just disabled
-    }
-
-    // Get the application path
-    std::string appPath = getMicMapAppPath();
-    if (appPath.empty()) {
-        DriverLog("Could not determine MicMap application path\n");
-        return false;
-    }
-
-    // Check if the file exists
-    if (!std::filesystem::exists(appPath)) {
-        DriverLog("MicMap application not found at: %s\n", appPath.c_str());
-        return false;
-    }
-
-    // Get command line arguments from settings
-    char argsBuffer[1024] = "";
-    VRSettings()->GetString("driver_micmap", "appArgs", argsBuffer, sizeof(argsBuffer));
-    std::string appArgs(argsBuffer);
-
-    DriverLog("Launching MicMap application: %s %s\n", appPath.c_str(), appArgs.c_str());
-
-    // Launch the process
-    micmapProcess_ = ProcessLauncher::launchProcess(appPath, appArgs);
-    
-    if (micmapProcess_.isValid()) {
-        micmapLaunchedByUs_ = true;
-        DriverLog("MicMap application launched successfully\n");
-        return true;
-    } else {
-        DriverLog("Failed to launch MicMap application\n");
-        return false;
-    }
-}
-
-void DeviceProvider::terminateMicMapApp() {
-    if (!micmapLaunchedByUs_ || !micmapProcess_.isValid()) {
+    auto err = VRDriverInput()->UpdateBooleanComponent(hSystemClick_, v, 0.0);
+    if (err != VRInputError_None) {
+        DriverLog("MicMap: UpdateBooleanComponent(%s) failed: %s (%d)\n",
+                  v ? "down" : "up", VRInputErrorName(err),
+                  static_cast<int>(err));
+        hSystemClick_ = k_ulInvalidInputComponentHandle;
+        state_ = HmdComponentState::Invalidated;
+        isPressed_ = false;
+        lastWrittenValue_ = false;
         return;
     }
-
-    DriverLog("Terminating MicMap application...\n");
-
-    // Check if the process is still running
-    if (!ProcessLauncher::isProcessRunning(micmapProcess_)) {
-        DriverLog("MicMap application already terminated\n");
-        micmapProcess_.close();
-        micmapLaunchedByUs_ = false;
-        return;
-    }
-
-    // Terminate the process (try graceful first, then force)
-    if (ProcessLauncher::terminateProcess(micmapProcess_, 3000)) {
-        DriverLog("MicMap application terminated successfully\n");
-    } else {
-        DriverLog("Warning: Could not terminate MicMap application cleanly\n");
-    }
-
-    micmapLaunchedByUs_ = false;
-}
-
-std::string DeviceProvider::getMicMapAppPath() {
-    // First, check if a custom path is specified in settings
-    char pathBuffer[1024] = "";
-    VRSettings()->GetString("driver_micmap", "appPath", pathBuffer, sizeof(pathBuffer));
-    std::string customPath(pathBuffer);
-
-    if (!customPath.empty()) {
-        // If it's a relative path, resolve it relative to the driver directory
-        std::filesystem::path path(customPath);
-        if (path.is_relative()) {
-            return ProcessLauncher::resolveRelativePath(customPath);
-        }
-        return customPath;
-    }
-
-    // Default path: relative to driver installation
-    // Driver is at: <steamvr>/drivers/micmap/bin/win64/driver_micmap.dll
-    // MicMap app should be at: <steamvr>/drivers/micmap/apps/micmap.exe
-    // So relative path from driver DLL is: ../../apps/micmap.exe
-    std::string defaultRelativePath = "../../apps/micmap.exe";
-    std::string resolvedPath = ProcessLauncher::resolveRelativePath(defaultRelativePath);
-    
-    DriverLog("Default MicMap app path: %s\n", resolvedPath.c_str());
-    
-    return resolvedPath;
+    lastWrittenValue_ = v;
+    isPressed_ = v;
 }
 
 } // namespace micmap::driver
