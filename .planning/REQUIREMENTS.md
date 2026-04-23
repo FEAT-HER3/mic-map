@@ -99,43 +99,43 @@ Populated during roadmap creation. Each requirement maps to exactly one phase.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SVR-01 | TBD | Pending |
-| SVR-02 | TBD | Pending |
-| SVR-03 | TBD | Pending |
-| SVR-04 | TBD | Pending |
-| SVR-05 | TBD | Pending |
-| SVR-06 | TBD | Pending |
-| SVR-07 | TBD | Pending |
-| SVR-08 | TBD | Pending |
-| SVR-09 | TBD | Pending |
-| SVR-10 | TBD | Pending |
-| SVR-11 | TBD | Pending |
-| CFG-01 | TBD | Pending |
-| CFG-02 | TBD | Pending |
-| CFG-03 | TBD | Pending |
-| CFG-04 | TBD | Pending |
-| CFG-05 | TBD | Pending |
-| AUTO-01 | TBD | Pending |
-| AUTO-02 | TBD | Pending |
-| AUTO-03 | TBD | Pending |
-| AUTO-04 | TBD | Pending |
-| AUTO-05 | TBD | Pending |
-| AUTO-06 | TBD | Pending |
-| INST-01 | TBD | Pending |
-| INST-02 | TBD | Pending |
-| INST-03 | TBD | Pending |
-| INST-04 | TBD | Pending |
-| INST-05 | TBD | Pending |
-| INST-06 | TBD | Pending |
-| INST-07 | TBD | Pending |
-| DOC-01 | TBD | Pending |
-| DOC-02 | TBD | Pending |
+| SVR-01 | Phase 1 — Driver Sidecar Migration | Pending |
+| SVR-02 | Phase 1 — Driver Sidecar Migration | Pending |
+| SVR-03 | Phase 1 — Driver Sidecar Migration | Pending |
+| SVR-04 | Phase 1 — Driver Sidecar Migration | Pending |
+| SVR-05 | Phase 1 — Driver Sidecar Migration | Pending |
+| SVR-06 | Phase 1 — Driver Sidecar Migration | Pending |
+| SVR-07 | Phase 1 — Driver Sidecar Migration | Pending |
+| SVR-08 | Phase 1 — Driver Sidecar Migration | Pending |
+| SVR-09 | Phase 1 — Driver Sidecar Migration | Pending |
+| SVR-10 | Phase 1 — Driver Sidecar Migration | Pending |
+| SVR-11 | Phase 1 — Driver Sidecar Migration | Pending |
+| CFG-01 | Phase 2 — Config Read-Back | Pending |
+| CFG-02 | Phase 2 — Config Read-Back | Pending |
+| CFG-03 | Phase 2 — Config Read-Back | Pending |
+| CFG-04 | Phase 2 — Config Read-Back | Pending |
+| CFG-05 | Phase 2 — Config Read-Back | Pending |
+| AUTO-01 | Phase 3 — Auto-Start | Pending |
+| AUTO-02 | Phase 3 — Auto-Start | Pending |
+| AUTO-03 | Phase 3 — Auto-Start | Pending |
+| AUTO-04 | Phase 3 — Auto-Start | Pending |
+| AUTO-05 | Phase 3 — Auto-Start | Pending |
+| AUTO-06 | Phase 3 — Auto-Start | Pending |
+| INST-01 | Phase 4 — Installer | Pending |
+| INST-02 | Phase 4 — Installer | Pending |
+| INST-03 | Phase 4 — Installer | Pending |
+| INST-04 | Phase 4 — Installer | Pending |
+| INST-05 | Phase 4 — Installer | Pending |
+| INST-06 | Phase 4 — Installer | Pending |
+| INST-07 | Phase 4 — Installer | Pending |
+| DOC-01 | Phase 5 — Documentation | Pending |
+| DOC-02 | Phase 5 — Documentation | Pending |
 
 **Coverage:**
 - v1 requirements: 31 total
-- Mapped to phases: 0 (populated by roadmapper)
-- Unmapped: 31 (expected — pre-roadmap)
+- Mapped to phases: 31 (100% coverage)
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-22*
-*Last updated: 2026-04-22 after initial definition*
+*Last updated: 2026-04-22 after roadmap creation (phase mapping populated)*
