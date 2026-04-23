@@ -30,7 +30,6 @@
 #include "micmap/audio/audio_capture.hpp"
 #include "micmap/detection/noise_detector.hpp"
 #include "micmap/steamvr/vr_input.hpp"
-#include "micmap/steamvr/dashboard_manager.hpp"
 #include "micmap/core/state_machine.hpp"
 #include "micmap/core/config_manager.hpp"
 #include "micmap/common/logger.hpp"
@@ -59,7 +58,6 @@ struct MicMapApp {
     std::unique_ptr<audio::IAudioCapture> audioCapture;
     std::unique_ptr<detection::INoiseDetector> detector;
     std::unique_ptr<steamvr::IVRInput> vrInput;
-    std::unique_ptr<steamvr::IDashboardManager> dashboardManager;
     std::unique_ptr<core::IStateMachine> stateMachine;
     std::unique_ptr<core::IConfigManager> configManager;
     std::unique_ptr<steamvr::IDriverClient> driverClient;
@@ -100,7 +98,7 @@ struct MicMapApp {
     
     bool initialize();
     void shutdown();
-    void onTrigger();
+    void onTrigger(core::PressEdge edge);
     void renderUI();
 };
 
@@ -217,7 +215,9 @@ bool MicMapApp::initialize() {
     // Initialize driver client (non-blocking - will connect in background)
     driverClient = steamvr::createDriverClient();
     
-    // Initialize VR input (don't initialize yet - will do async)
+    // Initialize VR input (don't initialize yet - will do async).
+    // VR input is only used for SteamVR-quit lifecycle notifications now;
+    // all button presses flow through driverClient (POST /button).
     vrInput = steamvr::createOpenVRInput();
     vrInput->setEventCallback([this](const steamvr::VREvent& event) {
         if (event.type == steamvr::VREventType::Quit) {
@@ -225,20 +225,13 @@ bool MicMapApp::initialize() {
             PostMessage(hwnd, WM_STEAMVR_QUIT, 0, 0);
         }
     });
-    
-    // Initialize dashboard manager (without VR connection initially)
-    dashboardManager = steamvr::createDashboardManager();
-    steamvr::DashboardManagerConfig dashConfig;
-    dashConfig.autoReconnect = true;
-    dashConfig.exitWithSteamVR = false; // Don't exit if SteamVR closes
-    // Don't initialize dashboard manager with VR yet - will be done when VR connects
-    
+
     core::StateMachineConfig smConfig;
     smConfig.minDetectionDuration = std::chrono::milliseconds(config.detection.minDurationMs);
     smConfig.cooldownDuration = std::chrono::milliseconds(config.detection.cooldownMs);
     smConfig.detectionThreshold = config.detection.sensitivity;
     stateMachine = core::createStateMachine(smConfig);
-    stateMachine->setTriggerCallback([this]() { onTrigger(); });
+    stateMachine->setTriggerCallback([this](core::PressEdge edge) { onTrigger(edge); });
     
     // Check if we have a profile loaded
     hasProfile = detector && detector->hasTrainingData();
@@ -289,8 +282,9 @@ bool MicMapApp::initialize() {
                     
                     if (duration >= detectionTimeMs && !buttonWouldFire && cooldownExpired && !inCooldown) {
                         buttonWouldFire = true;
-                        // Trigger the action!
-                        onTrigger();
+                        // Note: actual press/release dispatch now flows through the state
+                        // machine -> setTriggerCallback -> onTrigger(PressEdge). This branch
+                        // only updates the legacy "buttonWouldFire" UI hint + cooldown flag.
                         lastTriggerTime = now;
                         inCooldown = true;
                     }
@@ -331,50 +325,22 @@ void MicMapApp::shutdown() {
     if (audioCapture) audioCapture->stopCapture();
     if (detector && detector->hasTrainingData() && configManager)
         detector->saveTrainingData(configManager->getTrainingDataPath());
-    if (dashboardManager) dashboardManager->shutdown();
     if (vrInput) vrInput->shutdown();
     if (driverClient) driverClient->disconnect();
     if (configManager) configManager->saveDefault();
     RemoveSystemTray();
 }
 
-void MicMapApp::onTrigger() {
-    // Use dashboardManager->performDashboardAction() like hmd_button_test's Auto button
-    // This handles both opening dashboard (when closed) and sending click (when open)
-    
-    if (dashboardManager && dashboardManager->isConnected()) {
-        // Use the dashboard manager's performDashboardAction which handles both cases
-        dashboardManager->performDashboardAction();
+void MicMapApp::onTrigger(core::PressEdge edge) {
+    if (!driverClient || !driverClient->isConnected()) {
+        MICMAP_LOG_DEBUG("onTrigger({}): driver not connected, skipping",
+                         edge == core::PressEdge::Down ? "down" : "up");
         return;
     }
-    
-    // Fallback: try using driver client directly
-    if (driverClient && driverClient->isConnected()) {
-        auto state = steamvr::DashboardState::Unknown;
-        if (vrInput && vrInput->isInitialized()) {
-            state = vrInput->getDashboardState();
-        } else if (dashboardManager) {
-            state = dashboardManager->getDashboardState();
-        }
-        
-        if (state == steamvr::DashboardState::Closed || state == steamvr::DashboardState::Unknown) {
-            // Open dashboard - send system button to toggle dashboard
-            driverClient->click("system", 100);
-        } else if (state == steamvr::DashboardState::Open) {
-            // Send click to select item under pointer
-            driverClient->click("trigger", 100);
-        }
-        return;
-    }
-    
-    // Last resort: try VR input directly
-    if (vrInput && vrInput->isInitialized()) {
-        auto state = vrInput->getDashboardState();
-        if (state == steamvr::DashboardState::Closed || state == steamvr::DashboardState::Unknown) {
-            vrInput->sendHMDButtonEvent();
-        } else if (state == steamvr::DashboardState::Open) {
-            vrInput->sendDashboardSelect();
-        }
+    bool ok = (edge == core::PressEdge::Down) ? driverClient->press()
+                                              : driverClient->release();
+    if (!ok) {
+        MICMAP_LOG_WARNING("onTrigger failed: {}", driverClient->getLastError());
     }
 }
 
@@ -389,10 +355,6 @@ void MicMapApp::renderUI() {
     ImGui::TextColored(vrOk ? ImVec4(0,1,0,1) : ImVec4(1,0.5f,0,1), "SteamVR: %s", vrOk ? "Connected" : "Not Connected");
     bool drvOk = driverClient && driverClient->isConnected();
     ImGui::TextColored(drvOk ? ImVec4(0,1,0,1) : ImVec4(1,0.5f,0,1), "Driver: %s", drvOk ? "Connected" : "Not Connected");
-    if (dashboardManager) {
-        auto ds = dashboardManager->getDashboardState();
-        ImGui::Text("Dashboard: %s", ds == steamvr::DashboardState::Open ? "Open" : ds == steamvr::DashboardState::Closed ? "Closed" : "Unknown");
-    }
     
     ImGui::Spacing();
     ImGui::Text("Audio Device");
@@ -606,15 +568,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
         }
         if (g_app.vrInput) {
             g_app.vrInput->initialize();
-            // Initialize dashboard manager once VR is connected
-            if (g_app.vrInput->isInitialized() && g_app.dashboardManager) {
-                auto sharedVR = std::shared_ptr<steamvr::IVRInput>(steamvr::createOpenVRInput().release());
-                sharedVR->initialize();
-                steamvr::DashboardManagerConfig dashConfig;
-                dashConfig.autoReconnect = true;
-                dashConfig.exitWithSteamVR = false;
-                g_app.dashboardManager->initialize(sharedVR, dashConfig);
-            }
         }
     });
     initThread.detach();
@@ -635,9 +588,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
         // Non-blocking updates - only poll if initialized
         if (g_app.vrInput && g_app.vrInput->isInitialized()) {
             g_app.vrInput->pollEvents();
-        }
-        if (g_app.dashboardManager && g_app.dashboardManager->isConnected()) {
-            g_app.dashboardManager->update();
         }
         
         // Async reconnection attempts using futures to avoid blocking
@@ -665,15 +615,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
                     vrInitFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
                     vrInitFuture = std::async(std::launch::async, []() {
                         g_app.vrInput->initialize();
-                        // Initialize dashboard manager once VR is connected
-                        if (g_app.vrInput->isInitialized() && g_app.dashboardManager && !g_app.dashboardManager->isConnected()) {
-                            auto sharedVR = std::shared_ptr<steamvr::IVRInput>(steamvr::createOpenVRInput().release());
-                            sharedVR->initialize();
-                            steamvr::DashboardManagerConfig dashConfig;
-                            dashConfig.autoReconnect = true;
-                            dashConfig.exitWithSteamVR = false;
-                            g_app.dashboardManager->initialize(sharedVR, dashConfig);
-                        }
                     });
                 }
             }
