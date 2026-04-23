@@ -370,22 +370,70 @@ public:
     ~ConfigManagerImpl() override = default;
 
     bool load(const std::filesystem::path& path) override {
-        std::ifstream file(path);
-        if (!file) {
-            MICMAP_LOG_WARNING("Could not open config file: ", path.string());
-            return false;
+        std::string content;
+        {
+            std::ifstream file(path);
+            if (!file) {
+                // D-16: missing file is NOT corruption; defaults already loaded by ctor.
+                MICMAP_LOG_INFO("No config file at ", path.string(), "; using defaults");
+                return true;
+            }
+            std::stringstream buffer;
+            buffer << file.rdbuf();
+            content = buffer.str();
+        } // close the file handle BEFORE backupAndRotate may try to rename it
+
+        json j = json::parse(content, /*cb=*/nullptr, /*allow_exceptions=*/false);
+        if (j.is_discarded() || !j.is_object()) {
+            // D-15: top-level corruption -- back up + reset to defaults + return success.
+            MICMAP_LOG_WARNING("Config file corrupted; backing up and using defaults: ",
+                               path.string());
+            backupAndRotate(path);
+            resetToDefaults();
+            return true;
         }
-        std::stringstream buffer;
-        buffer << file.rdbuf();
-        std::string content = buffer.str();
+
+        // D-12: version best-effort -- log mismatch, keep parsing regardless.
+        const int onDiskVersion = readInt(j, "version", config_.version);
+        if (onDiskVersion != config_.version) {
+            MICMAP_LOG_INFO("Config written by version ", onDiskVersion,
+                            ", reading on version ", config_.version);
+        }
+
+        readAudio(j, config_.audio);
+        readDetection(j, config_.detection);
+        readSteamVR(j, config_.steamvr);
+        readTraining(j, config_.training);
+
         MICMAP_LOG_INFO("Loaded config from: ", path.string());
         return true;
     }
 
-    bool save(const std::filesystem::path& /*path*/) override {
-        MICMAP_LOG_ERROR("save() is stubbed during Plan 02 Task 1; Task 2 must replace it. "
-                         "If you see this in production logs, the phase is half-applied.");
-        return false;
+    bool save(const std::filesystem::path& path) override {
+#ifdef _WIN32
+        const std::string body = appConfigToJson(config_).dump(4);
+        if (!writeAtomicWindows(path, body)) {
+            return false;  // writeAtomicWindows already logged the failure cause.
+        }
+        MICMAP_LOG_INFO("Saved config to: ", path.string());
+        return true;
+#else
+        // Non-Windows fallback -- direct write, consistent with project Windows-only milestone.
+        std::error_code ec;
+        std::filesystem::create_directories(path.parent_path(), ec);
+        if (ec) {
+            MICMAP_LOG_ERROR("Could not create config directory: ", ec.message());
+            return false;
+        }
+        std::ofstream file(path);
+        if (!file) {
+            MICMAP_LOG_ERROR("Could not open config file for writing: ", path.string());
+            return false;
+        }
+        file << appConfigToJson(config_).dump(4);
+        MICMAP_LOG_INFO("Saved config to: ", path.string());
+        return true;
+#endif
     }
 
     bool loadDefault() override {
