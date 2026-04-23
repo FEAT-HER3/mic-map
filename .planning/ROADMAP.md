@@ -47,7 +47,10 @@ This roadmap delivers the "Seamless SteamVR Integration" milestone: rip out the 
   2. A corrupted `config.json` (e.g. trailing comma, truncated JSON) causes the app to back the file up to `config.json.corrupted.YYYYMMDD-HHMMSS`, fall back to defaults, and log a visible warning — no crash, no data loss (prevents Pitfall 9, validates CFG-02).
   3. Out-of-range numeric fields (sensitivity, detection duration, sample rate) are clamped to valid ranges with a warning log rather than accepted as-is (prevents malformed-input state corruption, validates CFG-03).
   4. A config written by `saveDefault()` and immediately reloaded produces identical in-memory state — round-trip is identity across the full `AppConfig` struct (validates CFG-04).
-**Plans**: TBD
+**Plans**: 3 plans
+  - [ ] 02-01-PLAN.md — Wave 0 test scaffold: register `test_config_manager` (5 RED scenarios) + link `nlohmann_json` PRIVATE into `micmap_core`
+  - [ ] 02-02-PLAN.md — Implement defensive nlohmann/json parser, atomic Windows save (ReplaceFile/MoveFileEx), UTF-8 wstring boundary, clamp/pow2-snap, corruption backup-and-rotate — turn RED → GREEN
+  - [ ] 02-03-PLAN.md — Verification: warnings-clean full build + M-1 manual end-to-end cycle (live UI persist-across-restart) + VALIDATION sign-off
 
 ### Phase 3: Auto-Start
 **Goal**: SteamVR launches `micmap.exe` automatically when SteamVR starts, MicMap exits cleanly when SteamVR exits, and registration is idempotent — no console window, no focus steal, no respawn loop.
@@ -92,7 +95,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5. Phase 2 is parallel-
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Driver Sidecar Migration | 0/TBD | Not started | - |
-| 2. Config Read-Back | 0/TBD | Not started | - |
+| 2. Config Read-Back | 0/3 | Not started | - |
 | 3. Auto-Start | 0/TBD | Not started | - |
 | 4. Installer | 0/TBD | Not started | - |
 | 5. Documentation | 0/TBD | Not started | - |
