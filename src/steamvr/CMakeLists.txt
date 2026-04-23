@@ -64,18 +64,25 @@ if(WIN32 AND TARGET OpenVR::openvr_api)
         
         find_file(OPENVR_DLL
             NAMES ${OPENVR_DLL_NAME}
-            PATHS "${OPENVR_DIR}" "${OPENVR_DIR}/../bin/win64" "${OPENVR_DIR}/../bin/win32"
+            PATHS "${OPENVR_DIR}"
+                  "${OPENVR_DIR}/../../bin/win64"
+                  "${OPENVR_DIR}/../../bin/win32"
+                  "${OPENVR_DIR}/../bin/win64"
+                  "${OPENVR_DIR}/../bin/win32"
             NO_DEFAULT_PATH
         )
-        
+
         if(OPENVR_DLL)
             message(STATUS "Found OpenVR DLL: ${OPENVR_DLL}")
-            # Copy DLL to output directory after build
+            # Copy DLL to the runtime output directory (shared by all exes).
+            # Using CMAKE_RUNTIME_OUTPUT_DIRECTORY is correct because
+            # micmap_steamvr is a STATIC library — $<TARGET_FILE_DIR:micmap_steamvr>
+            # would resolve to the archive dir (build/lib/<cfg>), not build/bin/<cfg>.
             add_custom_command(TARGET micmap_steamvr POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${OPENVR_DLL}"
-                    "$<TARGET_FILE_DIR:micmap_steamvr>"
-                COMMENT "Copying OpenVR DLL to output directory"
+                    "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/"
+                COMMENT "Copying OpenVR DLL to runtime output directory"
             )
         endif()
     endif()
