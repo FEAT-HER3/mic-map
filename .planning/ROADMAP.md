@@ -17,7 +17,7 @@ This roadmap delivers the "Seamless SteamVR Integration" milestone: rip out the 
 - Integer phases (1, 2, 3): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
-- [ ] **Phase 1: Driver Sidecar Migration** — Replace virtual-controller with pure HMD-sidecar injecting `/input/system/click`
+- [x] **Phase 1: Driver Sidecar Migration** — Replace virtual-controller with pure HMD-sidecar injecting `/input/system/click` (amended by 01-06 after spike falsified the bare-sidecar assumption: bindings patcher now ships alongside, routes HMD system click to ToggleDashboard on Bigscreen Beyond / any lighthouse-non-Index HMD)
 - [ ] **Phase 2: Config Read-Back** — Wire up the stubbed JSON read path so user settings persist (parallel-safe with Phase 1)
 - [ ] **Phase 3: Auto-Start** — SteamVR-native auto-launch via `app.vrmanifest` with `VREvent_Quit` handling
 - [ ] **Phase 4: Installer** — Single-click Inno Setup installer packaging driver + app + auto-start registration
@@ -35,12 +35,13 @@ This roadmap delivers the "Seamless SteamVR Integration" milestone: rip out the 
   3. The driver's first `RunFrame` emits an init log line visible in `%APPDATA%\openvr\logs\vrserver.txt`, and every OpenVR error is logged with its enum name (prevents Pitfall 11, validates SVR-10).
   4. HTTP `/trigger` requests are enqueued on the HTTP thread and drained in `RunFrame` — no OpenVR driver API is ever called from the HTTP thread; `RunFrame` stays under 1ms in dev-build timing asserts (prevents Pitfall 12, validates SVR-05/06).
   5. `grep -r` across the driver source for `VirtualController`, `TrackedDeviceAdded`, `dashboard_open`, `isDashboardOpen`, `ControllerDevice`, `open_vs_select` returns zero results; build is clean under `-Werror`/`/WX` (prevents Pitfall 7, validates SVR-04/07/08/09).
-**Plans**: 5 plans
+**Plans**: 6 plans
   - [x] 01-01-PLAN.md — CommandQueue + VRInputErrorName header-only primitives + unit test (Wave 1)
   - [x] 01-02-PLAN.md — State machine Releasing state + IDriverClient press/release collapse (Wave 1)
   - [x] 01-03-PLAN.md — Driver sidecar rewrite: DeviceProvider + HttpServer + CMake /WX + controller/launcher delete (Wave 2)
   - [x] 01-04-PLAN.md — App rewire: onTrigger(PressEdge), hmd_button_test buttons, dashboard_manager delete, forbidden-string sweep (Wave 2)
-  - [ ] 01-05-PLAN.md — D-02 manual-VR validation spike on real HMD (N=5 sleep/wake cycles) (Wave 3)
+  - [x] 01-05-PLAN.md — D-02 manual-VR validation spike on real HMD — falsified the Plan 01-03 assumption, triggered 01-06 amendment (Wave 3)
+  - [x] 01-06-SUMMARY.md — **AMENDMENT**: driver-side bindings_patcher.cpp writes PascalCase dashboard+lasermouse bindings into SteamVR's generic_hmd config; press/release collapsed to single tap. Validated on Bigscreen Beyond: dashboard opens on tap, head-locked cursor present, ToggleDashboard native toggle semantics. New INST-08 requirement for Phase 04.
 **Research spike**: HMD reactivation lifecycle (Case D in ARCHITECTURE.md) is untested in bey-closer-t1 — budget a half-day validation spike before declaring phase exit. If `VREvent_TrackedDeviceDeactivated` is unreliable, fall back to re-checking `TrackedDeviceToPropertyContainer` each `RunFrame` tick.
 
 ### Phase 2: Config Read-Back

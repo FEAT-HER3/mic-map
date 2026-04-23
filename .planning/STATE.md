@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-driver-sidecar-migration/01-04-PLAN.md (app rewire + dashboard_manager delete)
-last_updated: "2026-04-23T08:59:18.815Z"
-last_activity: 2026-04-23
+stopped_at: Phase 01 complete (bindings patcher + single-tap amendment; validated on Bigscreen Beyond). Phase 02 wave 2 still pending 02-03 verification.
+last_updated: "2026-04-23T11:00:00.000Z"
+last_activity: 2026-04-23 -- Phase 01 exit criterion met
 progress:
   total_phases: 5
-  completed_phases: 0
-  total_plans: 8
-  completed_plans: 6
-  percent: 75
+  completed_phases: 1
+  total_plans: 9
+  completed_plans: 8
+  percent: 89
 ---
 
 # Project State
@@ -21,16 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-22)
 
 **Core value:** Covering the microphone reliably toggles the SteamVR dashboard, invisibly to the rest of VR — no controller beam, no extra hardware, no focus loss.
-**Current focus:** Phase 01 — driver-sidecar-migration
+**Current focus:** Phase 02 — config-read-back (02-03 verification remains; 02-01 + 02-02 landed)
 
 ## Current Position
 
-Phase: 01 (driver-sidecar-migration) — EXECUTING
-Plan: 3 of 5
-Status: Ready to execute
-Last activity: 2026-04-23
+Phase: 01 (driver-sidecar-migration) — COMPLETE (amendment 01-06 shipped, validated on Bigscreen Beyond)
+Next: Phase 02 plan 03 verification, then Phase 03 auto-start
+Last activity: 2026-04-23 -- 01-06 amendment (bindings patcher + single-tap) validated on hardware
 
-Progress: [████████░░] 75%
+Progress: [█████████░] 89%
 
 ## Performance Metrics
 

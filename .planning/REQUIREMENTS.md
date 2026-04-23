@@ -27,7 +27,7 @@ Rip out the virtual-controller driver; replace with a pure sidecar that injects 
 **: `src/steamvr/virtual_controller.{hpp,cpp}`, `src/steamvr/process_launcher.{hpp,cpp}`, and `micmap_controller_profile.json` are deleted — no feature flag, no dead branches, `-Werror`/`/WX` clean
 - [x] **SVR-08
 **: Trigger path is single code path — `dashboard_manager` dashboard-state polling and the "open vs. select" branching are removed; every detection trigger issues the same `/input/system/click` press
-- [ ] **SVR-09**: App-side `driver_client` collapses to a single "click" endpoint matching the simplified driver surface
+- [x] **SVR-09**: App-side `driver_client` collapses to a single "click" endpoint matching the simplified driver surface (implemented as `IDriverClient::tap()` posting `{"kind":"tap"}` — see 10112ba)
 - [x] **SVR-10
 **: Driver logs via `DriverLog` — the first `RunFrame` emits an init line (driver version, build timestamp) so misconfiguration is visible in `%APPDATA%\openvr\logs\vrserver.txt`
 - [x] **SVR-11
@@ -65,6 +65,7 @@ Single-click Inno Setup installer replacing the batch scripts. MicMap owns its o
 - [ ] **INST-05**: Uninstaller `[UninstallRun]` invokes `micmap.exe --unregister-vrmanifest` and `vrpathreg.exe removedriver <driver-dir>` for symmetric teardown; `Uninstallable=yes` in the script (unlike bey-closer-t1's nested install)
 - [ ] **INST-06**: Upgrade from legacy 0.x (virtual-controller) version cleans up stale controller bindings under `%LOCALAPPDATA%\openvr\input\` so no ghost controller haunts SteamVR after upgrade
 - [ ] **INST-07**: CMake `package` target invokes ISCC.exe with the correct `/D` defines so `cmake --build --target package` produces `MicMap-Setup-vX.Y.Z.exe`
+- [ ] **INST-08**: Installer patches `<SteamVR>/resources/config/vrcompositor_bindings_generic_hmd.json` at install time to wire `/user/head/input/system` -> `ToggleDashboard` / `ToggleRoomView` + lasermouse `LeftClick` / `Pointer` (mirrors the discovery in `driver/src/bindings_patcher.cpp`). Saves the original alongside as `.micmap_backup` on first write. Uninstaller restores from backup when present. Driver-side patcher remains as fallback for manual driver installs.
 
 ### Documentation (DOC)
 
@@ -138,6 +139,7 @@ Populated during roadmap creation. Each requirement maps to exactly one phase.
 | INST-05 | Phase 4 — Installer | Pending |
 | INST-06 | Phase 4 — Installer | Pending |
 | INST-07 | Phase 4 — Installer | Pending |
+| INST-08 | Phase 4 — Installer | Pending |
 | DOC-01 | Phase 5 — Documentation | Pending |
 | DOC-02 | Phase 5 — Documentation | Pending |
 
