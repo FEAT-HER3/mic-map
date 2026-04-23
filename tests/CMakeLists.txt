@@ -33,3 +33,10 @@ add_executable(test_config_manager test_config_manager.cpp)
 target_compile_features(test_config_manager PRIVATE cxx_std_17)
 target_link_libraries(test_config_manager PRIVATE micmap::core)
 add_test(NAME test_config_manager COMMAND test_config_manager)
+
+# SVR-05: CommandQueue thread-safety / drop-oldest / depth-8 coverage
+add_executable(test_command_queue test_command_queue.cpp)
+target_compile_features(test_command_queue PRIVATE cxx_std_17)
+target_include_directories(test_command_queue PRIVATE
+    ${CMAKE_SOURCE_DIR}/driver/src)
+add_test(NAME test_command_queue COMMAND test_command_queue)
