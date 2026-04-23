@@ -25,11 +25,13 @@ Rip out the virtual-controller driver; replace with a pure sidecar that injects 
 **: Scheduled button-release timing (currently in `virtual_controller`) moves into the driver's `RunFrame` loop so that `UpdateBooleanComponent(true)` → hold → `UpdateBooleanComponent(false)` is serviced without external scheduling
 - [x] **SVR-07
 **: `src/steamvr/virtual_controller.{hpp,cpp}`, `src/steamvr/process_launcher.{hpp,cpp}`, and `micmap_controller_profile.json` are deleted — no feature flag, no dead branches, `-Werror`/`/WX` clean
-- [ ] **SVR-08**: Trigger path is single code path — `dashboard_manager` dashboard-state polling and the "open vs. select" branching are removed; every detection trigger issues the same `/input/system/click` press
+- [x] **SVR-08
+**: Trigger path is single code path — `dashboard_manager` dashboard-state polling and the "open vs. select" branching are removed; every detection trigger issues the same `/input/system/click` press
 - [ ] **SVR-09**: App-side `driver_client` collapses to a single "click" endpoint matching the simplified driver surface
 - [x] **SVR-10
 **: Driver logs via `DriverLog` — the first `RunFrame` emits an init line (driver version, build timestamp) so misconfiguration is visible in `%APPDATA%\openvr\logs\vrserver.txt`
-- [ ] **SVR-11**: End-to-end validation: `hmd_button_test.exe` triggers dashboard open on real HMD with no visible laser beam, and a second trigger after HMD sleep/wake continues to work
+- [x] **SVR-11
+**: End-to-end validation: `hmd_button_test.exe` triggers dashboard open on real HMD with no visible laser beam, and a second trigger after HMD sleep/wake continues to work
 
 ### Config Persistence (CFG)
 

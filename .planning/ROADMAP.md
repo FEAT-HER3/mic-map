@@ -39,7 +39,7 @@ This roadmap delivers the "Seamless SteamVR Integration" milestone: rip out the 
   - [x] 01-01-PLAN.md — CommandQueue + VRInputErrorName header-only primitives + unit test (Wave 1)
   - [x] 01-02-PLAN.md — State machine Releasing state + IDriverClient press/release collapse (Wave 1)
   - [x] 01-03-PLAN.md — Driver sidecar rewrite: DeviceProvider + HttpServer + CMake /WX + controller/launcher delete (Wave 2)
-  - [ ] 01-04-PLAN.md — App rewire: onTrigger(PressEdge), hmd_button_test buttons, dashboard_manager delete, forbidden-string sweep (Wave 2)
+  - [x] 01-04-PLAN.md — App rewire: onTrigger(PressEdge), hmd_button_test buttons, dashboard_manager delete, forbidden-string sweep (Wave 2)
   - [ ] 01-05-PLAN.md — D-02 manual-VR validation spike on real HMD (N=5 sleep/wake cycles) (Wave 3)
 **Research spike**: HMD reactivation lifecycle (Case D in ARCHITECTURE.md) is untested in bey-closer-t1 — budget a half-day validation spike before declaring phase exit. If `VREvent_TrackedDeviceDeactivated` is unreliable, fall back to re-checking `TrackedDeviceToPropertyContainer` each `RunFrame` tick.
 
