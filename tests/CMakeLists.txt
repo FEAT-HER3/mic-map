@@ -27,3 +27,9 @@ endif()
 add_executable(test_placeholder test_placeholder.cpp)
 target_compile_features(test_placeholder PRIVATE cxx_std_17)
 add_test(NAME test_placeholder COMMAND test_placeholder)
+
+# Config manager round-trip, corruption, clamp, missing-file, and retention tests
+add_executable(test_config_manager test_config_manager.cpp)
+target_compile_features(test_config_manager PRIVATE cxx_std_17)
+target_link_libraries(test_config_manager PRIVATE micmap::core)
+add_test(NAME test_config_manager COMMAND test_config_manager)
