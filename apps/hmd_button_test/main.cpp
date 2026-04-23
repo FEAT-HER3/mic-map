@@ -414,7 +414,7 @@ void CreateControls(HWND hwnd) {
 }
 
 void UpdateStatus() {
-    // SteamVR status (IVRInput-based; no DashboardManager anymore)
+    // SteamVR status (IVRInput-based; dashboard-state polling was removed in Plan 01-04)
     if (g_state.vrInput) {
         if (g_state.vrInput->isInitialized()) {
             SetWindowTextW(g_state.steamvrStatusLabel, L"[●] Connected");

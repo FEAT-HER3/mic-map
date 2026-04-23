@@ -4,17 +4,14 @@
  * @file vr_input.hpp
  * @brief VR input handling for SteamVR integration
  *
- * This module provides the interface for sending HMD button events to SteamVR.
- * The implementation uses OpenVR SDK for HMD button support.
- *
- * Key behaviors:
- * - If dashboard is closed: Opens the SteamVR dashboard (via ShowDashboard)
- * - If dashboard is open: Sends HMD button press to activate whatever is under
- *   the head-locked virtual pointer (like pressing the HMD button on Valve Index
- *   or A button on a gamepad)
- *
- * For dashboard selection (clicking), the implementation communicates with the
- * MicMap OpenVR driver via HTTP to inject button events.
+ * This module provides:
+ * - IVRInput: connection + Quit-lifecycle monitoring against SteamVR via OpenVR
+ *   (used by apps to detect SteamVR shutdown and to know whether the runtime
+ *   is available). No dashboard-state branching — the MicMap driver owns
+ *   /input/system/click directly (Plan 01-03) and the app simply pushes edges
+ *   over HTTP via IDriverClient.
+ * - IDriverClient: HTTP surface that sends press()/release() edges to the
+ *   driver's POST /button endpoint.
  */
 
 #include <memory>
@@ -23,24 +20,6 @@
 #include <vector>
 
 namespace micmap::steamvr {
-
-/**
- * @brief Dashboard state enumeration
- */
-enum class DashboardState {
-    Closed,     ///< Dashboard is not visible
-    Open,       ///< Dashboard is visible
-    Unknown     ///< State cannot be determined (e.g., not connected)
-};
-
-/**
- * @brief HMD button action types
- */
-enum class HMDButtonAction {
-    ToggleDashboard,    ///< Toggle dashboard visibility
-    DashboardSelect,    ///< Select/activate item under head-locked pointer
-    CustomAction        ///< Custom user-defined action
-};
 
 /**
  * @brief VR event types
@@ -73,15 +52,16 @@ using VREventCallback = std::function<void(const VREvent&)>;
  * @brief Interface for VR input handling
  *
  * This interface provides methods for:
- * - Initializing and shutting down the VR connection
- * - Querying dashboard state
- * - Sending HMD button events
- * - Polling for VR events
+ * - Initializing and shutting down the connection to SteamVR
+ * - Polling for VR lifecycle events (Quit, SteamVRConnected/Disconnected)
+ *
+ * Button presses are NOT sent through this interface; they go through
+ * IDriverClient -> POST /button to the MicMap driver.
  */
 class IVRInput {
 public:
     virtual ~IVRInput() = default;
-    
+
     /**
      * @brief Initialize the VR input system
      * @return True if initialization was successful
@@ -90,20 +70,20 @@ public:
      * If SteamVR is not running, returns false.
      */
     virtual bool initialize() = 0;
-    
+
     /**
      * @brief Shutdown the VR input system
      *
      * Disconnects from SteamVR and releases all resources.
      */
     virtual void shutdown() = 0;
-    
+
     /**
      * @brief Check if the system is initialized
      * @return True if initialized and connected to SteamVR
      */
     virtual bool isInitialized() const = 0;
-    
+
     /**
      * @brief Check if VR runtime is available
      * @return True if SteamVR is running and accessible
@@ -112,41 +92,7 @@ public:
      * to initialize, or to detect if SteamVR has been closed.
      */
     virtual bool isVRAvailable() const = 0;
-    
-    /**
-     * @brief Get the current dashboard state
-     * @return Current dashboard state (Open, Closed, or Unknown)
-     */
-    virtual DashboardState getDashboardState() = 0;
-    
-    /**
-     * @brief Send an HMD button press event to open the dashboard
-     * @return True if event was sent successfully
-     *
-     * This opens the SteamVR dashboard using ShowDashboard().
-     * Use when dashboard is closed.
-     */
-    virtual bool sendHMDButtonEvent() = 0;
-    
-    /**
-     * @brief Send an HMD button press to select item under head-locked pointer
-     * @return True if event was sent successfully
-     *
-     * This simulates pressing the HMD button (like Valve Index HMD button
-     * or A button on gamepad) to activate whatever is under the head-locked
-     * virtual pointer. Use when dashboard is already open.
-     */
-    virtual bool sendDashboardSelect() = 0;
-    
-    /**
-     * @brief Perform the appropriate action based on dashboard state
-     * @return True if action was performed successfully
-     *
-     * If dashboard is closed: Opens the dashboard via ShowDashboard()
-     * If dashboard is open: Sends HMD button press to select item
-     */
-    virtual bool performDashboardAction() = 0;
-    
+
     /**
      * @brief Poll for VR events
      *
@@ -179,7 +125,8 @@ public:
  * @return Unique pointer to VR input interface
  *
  * This is the recommended implementation for SteamVR integration.
- * Uses OpenVR SDK for HMD button events and dashboard interaction.
+ * Uses OpenVR SDK as a VRApplication_Background for lifecycle monitoring
+ * (Quit / SteamVRConnected / SteamVRDisconnected events).
  */
 std::unique_ptr<IVRInput> createOpenVRInput();
 

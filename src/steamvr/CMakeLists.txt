@@ -11,7 +11,6 @@
 
 add_library(micmap_steamvr STATIC
     src/vr_input.cpp
-    src/dashboard_manager.cpp
 )
 
 target_include_directories(micmap_steamvr
