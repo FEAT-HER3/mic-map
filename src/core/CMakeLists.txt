@@ -15,6 +15,8 @@ target_include_directories(micmap_core
 target_link_libraries(micmap_core
     PUBLIC
         micmap_common
+    PRIVATE
+        nlohmann_json
 )
 
 target_compile_features(micmap_core PUBLIC cxx_std_17)
