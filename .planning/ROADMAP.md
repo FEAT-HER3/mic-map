@@ -53,8 +53,8 @@ This roadmap delivers the "Seamless SteamVR Integration" milestone: rip out the 
   3. Out-of-range numeric fields (sensitivity, detection duration, sample rate) are clamped to valid ranges with a warning log rather than accepted as-is (prevents malformed-input state corruption, validates CFG-03).
   4. A config written by `saveDefault()` and immediately reloaded produces identical in-memory state — round-trip is identity across the full `AppConfig` struct (validates CFG-04).
 **Plans**: 3 plans
-  - [ ] 02-01-PLAN.md — Wave 0 test scaffold: register `test_config_manager` (5 RED scenarios) + link `nlohmann_json` PRIVATE into `micmap_core`
-  - [ ] 02-02-PLAN.md — Implement defensive nlohmann/json parser, atomic Windows save (ReplaceFile/MoveFileEx), UTF-8 wstring boundary, clamp/pow2-snap, corruption backup-and-rotate — turn RED → GREEN
+  - [x] 02-01-PLAN.md — Wave 0 test scaffold: register `test_config_manager` (5 RED scenarios) + link `nlohmann_json` PRIVATE into `micmap_core`
+  - [x] 02-02-PLAN.md — Implement defensive nlohmann/json parser, atomic Windows save (ReplaceFile/MoveFileEx), UTF-8 wstring boundary, clamp/pow2-snap, corruption backup-and-rotate — turn RED → GREEN
   - [ ] 02-03-PLAN.md — Verification: warnings-clean full build + M-1 manual end-to-end cycle (live UI persist-across-restart) + VALIDATION sign-off
 
 ### Phase 3: Auto-Start
