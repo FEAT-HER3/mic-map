@@ -210,97 +210,67 @@ public:
         return connected_;
     }
 
-    bool click(const std::string& button, int durationMs) override {
+    bool press() override {
         if (!ensureConnected()) {
+            lastError_ = "Not connected to driver";
+            MICMAP_LOG_ERROR("DriverClient::press() failed: {}", lastError_);
             return false;
         }
 
-        MICMAP_LOG_DEBUG("Sending click command (button: {}, duration: {}ms)",
-                         button, durationMs);
+        MICMAP_LOG_DEBUG("Sending press (POST /button {{\"state\":\"down\"}})");
 
         httplib::Client client(host_, port_);
         client.set_connection_timeout(2);
         client.set_read_timeout(2);
 
-        std::string path = "/click?button=" + button + "&duration=" + std::to_string(durationMs);
-        auto res = client.Post(path);
+        auto res = client.Post("/button", R"({"state":"down"})", "application/json");
 
         if (!res) {
             lastError_ = "HTTP request failed";
-            MICMAP_LOG_ERROR("Click command failed: {}", lastError_);
+            MICMAP_LOG_ERROR("DriverClient::press() failed: {}", lastError_);
             connected_ = false;  // Mark as disconnected to retry
             return false;
         }
 
         if (res->status != 200) {
             lastError_ = "Server returned status " + std::to_string(res->status);
-            MICMAP_LOG_ERROR("Click command failed: {}", lastError_);
+            MICMAP_LOG_ERROR("DriverClient::press() failed: {}", lastError_);
             return false;
         }
 
-        MICMAP_LOG_DEBUG("Click command successful");
+        MICMAP_LOG_DEBUG("DriverClient::press() successful");
         return true;
     }
 
-    bool press(const std::string& button) override {
+    bool release() override {
         if (!ensureConnected()) {
+            lastError_ = "Not connected to driver";
+            MICMAP_LOG_ERROR("DriverClient::release() failed: {}", lastError_);
             return false;
         }
 
-        MICMAP_LOG_DEBUG("Sending press command (button: {})", button);
+        MICMAP_LOG_DEBUG("Sending release (POST /button {{\"state\":\"up\"}})");
 
         httplib::Client client(host_, port_);
         client.set_connection_timeout(2);
         client.set_read_timeout(2);
 
-        std::string path = "/press?button=" + button;
-        auto res = client.Post(path);
+        auto res = client.Post("/button", R"({"state":"up"})", "application/json");
 
         if (!res) {
             lastError_ = "HTTP request failed";
-            MICMAP_LOG_ERROR("Press command failed: {}", lastError_);
+            MICMAP_LOG_ERROR("DriverClient::release() failed: {}", lastError_);
             connected_ = false;
             return false;
         }
 
         if (res->status != 200) {
             lastError_ = "Server returned status " + std::to_string(res->status);
-            MICMAP_LOG_ERROR("Press command failed: {}", lastError_);
+            MICMAP_LOG_ERROR("DriverClient::release() failed: {}", lastError_);
             return false;
         }
 
-        MICMAP_LOG_DEBUG("Press command successful");
-        return true;
-    }
-
-    bool release(const std::string& button) override {
-        if (!ensureConnected()) {
-            return false;
-        }
-
-        MICMAP_LOG_DEBUG("Sending release command (button: {})", button);
-
-        httplib::Client client(host_, port_);
-        client.set_connection_timeout(2);
-        client.set_read_timeout(2);
-
-        std::string path = "/release?button=" + button;
-        auto res = client.Post(path);
-
-        if (!res) {
-            lastError_ = "HTTP request failed";
-            MICMAP_LOG_ERROR("Release command failed: {}", lastError_);
-            connected_ = false;
-            return false;
-        }
-
-        if (res->status != 200) {
-            lastError_ = "Server returned status " + std::to_string(res->status);
-            MICMAP_LOG_ERROR("Release command failed: {}", lastError_);
-            return false;
-        }
-
-        MICMAP_LOG_DEBUG("Release command successful");
+        MICMAP_LOG_DEBUG("DriverClient::release() successful");
         return true;
     }
 
@@ -503,9 +473,17 @@ public:
             }
         }
         
-        // Send click command to the driver - use trigger for laser mouse selection
-        if (!driverClient_->click("trigger", 100)) {
-            lastError_ = "Failed to send click command: " + driverClient_->getLastError();
+        // Single-button surface (Plan 01-02): press then release on the HMD /input/system/click.
+        // NOTE: OpenVRInput::sendDashboardSelect is dashboard-state-aware and is scheduled
+        // for removal in Plan 04 along with the full dashboard-branching path. Bridging it
+        // to press()/release() here keeps micmap_steamvr compiling under MICMAP_HAS_OPENVR.
+        if (!driverClient_->press()) {
+            lastError_ = "Failed to send press command: " + driverClient_->getLastError();
+            MICMAP_LOG_ERROR(lastError_);
+            return false;
+        }
+        if (!driverClient_->release()) {
+            lastError_ = "Failed to send release command: " + driverClient_->getLastError();
             MICMAP_LOG_ERROR(lastError_);
             return false;
         }

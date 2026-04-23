@@ -220,26 +220,23 @@ public:
     virtual bool isConnected() const = 0;
 
     /**
-     * @brief Send a button click command
-     * @param button Button name ("system" or "a")
-     * @param durationMs Duration to hold the button in milliseconds
-     * @return True if command was sent successfully
+     * @brief Press the SteamVR system click (Down edge).
+     * @return true if the HTTP request returned 200 OK.
+     *
+     * Sends POST /button with body {"state":"down"}. The driver enqueues
+     * the command and applies it in RunFrame (D-06).
      */
-    virtual bool click(const std::string& button = "system", int durationMs = 100) = 0;
+    virtual bool press() = 0;
 
     /**
-     * @brief Send a button press command
-     * @param button Button name ("system" or "a")
-     * @return True if command was sent successfully
+     * @brief Release the SteamVR system click (Up edge).
+     * @return true if the HTTP request returned 200 OK.
+     *
+     * Sends POST /button with body {"state":"up"}. Driver enforces the
+     * 100ms min-hold floor; a release arriving inside that window is
+     * deferred by the driver (D-05).
      */
-    virtual bool press(const std::string& button = "system") = 0;
-
-    /**
-     * @brief Send a button release command
-     * @param button Button name ("system" or "a")
-     * @return True if command was sent successfully
-     */
-    virtual bool release(const std::string& button = "system") = 0;
+    virtual bool release() = 0;
 
     /**
      * @brief Get driver status
