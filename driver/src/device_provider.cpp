@@ -12,6 +12,7 @@
  */
 
 #include "device_provider.hpp"
+#include "bindings_patcher.hpp"
 #include "command_queue.hpp"
 #include "http_server.hpp"
 #include "driver_log.hpp"
@@ -47,6 +48,12 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
 
     DriverLog("MicMap driver initializing (sidecar mode)\n");
 
+    // Ensure SteamVR's generic-HMD bindings route /user/head/input/system to
+    // dashboard + lasermouse leftclick. Best-effort; logs its own outcome.
+    // Takes effect on the NEXT SteamVR start (vrcompositor caches bindings
+    // at connect time — already happened before our Init runs).
+    (void)PatchGenericHmdBindings();
+
     commandQueue_ = std::make_unique<CommandQueue>();
     httpServer_ = std::make_unique<HttpServer>(*commandQueue_);
     if (!httpServer_->Start()) {
@@ -79,6 +86,7 @@ void DeviceProvider::Cleanup() {
     lastWrittenValue_ = false;
     initLogged_ = false;
     loggedAwaitingHmd_ = false;
+    profilePropsWritten_ = false;
     initialized_ = false;
 
     VR_CLEANUP_SERVER_DRIVER_CONTEXT();
@@ -109,6 +117,7 @@ void DeviceProvider::RunFrame() {
             isPressed_ = false;
             lastWrittenValue_ = false;
             pendingReleaseAt_.reset();
+            profilePropsWritten_ = false;  // re-arm profile writes on reactivation
             DriverLog("MicMap: HMD deactivated, handle invalidated\n");
         }
     }
@@ -118,6 +127,18 @@ void DeviceProvider::RunFrame() {
         auto hmd = VRProperties()->TrackedDeviceToPropertyContainer(
             k_unTrackedDeviceIndex_Hmd);
         if (hmd != k_ulInvalidPropertyContainer) {
+            // We intentionally do NOT SetStringProperty(Prop_ControllerType /
+            // Prop_InputProfilePath) here. Lighthouse owns the HMD container
+            // and its controller_type (e.g. "lighthouse_hmd") wins at binding-
+            // resolve time, so our controller_type write has no effect.
+            // Meanwhile, setting our own Prop_InputProfilePath_String *does*
+            // stick (lighthouse doesn't set it on non-Index HMDs) -- but then
+            // SteamVR loads OUR profile, sees its controller_type mismatches
+            // the container's, and the binding layer silently drops bindings
+            // (including /actions/lasermouse/in/Pointer -- so the head-locked
+            // cursor disappears). The dashboard + cursor are wired via the
+            // generic_hmd bindings file we patch in bindings_patcher instead.
+
             auto err = VRDriverInput()->CreateBooleanComponent(
                 hmd, "/input/system/click", &hSystemClick_);
             if (err == VRInputError_None) {
@@ -202,6 +223,9 @@ void DeviceProvider::writeValue(bool v) {
         lastWrittenValue_ = false;
         return;
     }
+    DriverLog("MicMap: UpdateBooleanComponent(%s) OK (handle=%llu)\n",
+              v ? "down" : "up",
+              static_cast<unsigned long long>(hSystemClick_));
     lastWrittenValue_ = v;
     isPressed_ = v;
 }

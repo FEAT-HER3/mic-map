@@ -86,6 +86,7 @@ private:
     // Transition-only logging flags (D-08)
     bool initLogged_{false};
     bool loggedAwaitingHmd_{false};
+    bool profilePropsWritten_{false};  // SetString(ControllerType,InputProfilePath) once per (re)activation
 
     // Min-hold / max-hold durations
     static constexpr std::chrono::milliseconds kMinHold{100};
