@@ -11,16 +11,24 @@ Requirements for the "Seamless SteamVR Integration" milestone. Each maps to one 
 
 Rip out the virtual-controller driver; replace with a pure sidecar that injects `/input/system/click` on the HMD property container.
 
-- [ ] **SVR-01**: Driver starts with zero registered devices — no `TrackedDeviceAdded` call anywhere in `device_provider`
-- [ ] **SVR-02**: Driver defers HMD-container component creation until `IVRProperties::TrackedDeviceToPropertyContainer(k_unTrackedDeviceIndex_Hmd)` returns a valid container — polled each `RunFrame`, not at `Init`
-- [ ] **SVR-03**: Once the HMD container is available, driver creates its own `/input/system/click` boolean component via `IVRDriverInput_004::CreateBooleanComponent` on the HMD container and retains the returned handle
-- [ ] **SVR-04**: Driver subscribes to `VREvent_TrackedDeviceDeactivated` for device index 0 and invalidates its cached HMD-side input handle; next `RunFrame` re-creates the component against the re-activated HMD container (HMD sleep/wake resilience)
-- [ ] **SVR-05**: Driver exposes a thread-safe `CommandQueue` (mutex-guarded bounded deque, depth 8, drop-oldest policy) — HTTP server thread pushes click requests; `RunFrame` drains. No OpenVR driver API is ever called from the HTTP thread.
-- [ ] **SVR-06**: Scheduled button-release timing (currently in `virtual_controller`) moves into the driver's `RunFrame` loop so that `UpdateBooleanComponent(true)` → hold → `UpdateBooleanComponent(false)` is serviced without external scheduling
-- [ ] **SVR-07**: `src/steamvr/virtual_controller.{hpp,cpp}`, `src/steamvr/process_launcher.{hpp,cpp}`, and `micmap_controller_profile.json` are deleted — no feature flag, no dead branches, `-Werror`/`/WX` clean
+- [x] **SVR-01
+**: Driver starts with zero registered devices — no `TrackedDeviceAdded` call anywhere in `device_provider`
+- [x] **SVR-02
+**: Driver defers HMD-container component creation until `IVRProperties::TrackedDeviceToPropertyContainer(k_unTrackedDeviceIndex_Hmd)` returns a valid container — polled each `RunFrame`, not at `Init`
+- [x] **SVR-03
+**: Once the HMD container is available, driver creates its own `/input/system/click` boolean component via `IVRDriverInput_004::CreateBooleanComponent` on the HMD container and retains the returned handle
+- [x] **SVR-04
+**: Driver subscribes to `VREvent_TrackedDeviceDeactivated` for device index 0 and invalidates its cached HMD-side input handle; next `RunFrame` re-creates the component against the re-activated HMD container (HMD sleep/wake resilience)
+- [x] **SVR-05
+**: Driver exposes a thread-safe `CommandQueue` (mutex-guarded bounded deque, depth 8, drop-oldest policy) — HTTP server thread pushes click requests; `RunFrame` drains. No OpenVR driver API is ever called from the HTTP thread.
+- [x] **SVR-06
+**: Scheduled button-release timing (currently in `virtual_controller`) moves into the driver's `RunFrame` loop so that `UpdateBooleanComponent(true)` → hold → `UpdateBooleanComponent(false)` is serviced without external scheduling
+- [x] **SVR-07
+**: `src/steamvr/virtual_controller.{hpp,cpp}`, `src/steamvr/process_launcher.{hpp,cpp}`, and `micmap_controller_profile.json` are deleted — no feature flag, no dead branches, `-Werror`/`/WX` clean
 - [ ] **SVR-08**: Trigger path is single code path — `dashboard_manager` dashboard-state polling and the "open vs. select" branching are removed; every detection trigger issues the same `/input/system/click` press
 - [ ] **SVR-09**: App-side `driver_client` collapses to a single "click" endpoint matching the simplified driver surface
-- [ ] **SVR-10**: Driver logs via `DriverLog` — the first `RunFrame` emits an init line (driver version, build timestamp) so misconfiguration is visible in `%APPDATA%\openvr\logs\vrserver.txt`
+- [x] **SVR-10
+**: Driver logs via `DriverLog` — the first `RunFrame` emits an init line (driver version, build timestamp) so misconfiguration is visible in `%APPDATA%\openvr\logs\vrserver.txt`
 - [ ] **SVR-11**: End-to-end validation: `hmd_button_test.exe` triggers dashboard open on real HMD with no visible laser beam, and a second trigger after HMD sleep/wake continues to work
 
 ### Config Persistence (CFG)

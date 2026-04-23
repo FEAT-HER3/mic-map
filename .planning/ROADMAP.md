@@ -36,9 +36,9 @@ This roadmap delivers the "Seamless SteamVR Integration" milestone: rip out the 
   4. HTTP `/trigger` requests are enqueued on the HTTP thread and drained in `RunFrame` — no OpenVR driver API is ever called from the HTTP thread; `RunFrame` stays under 1ms in dev-build timing asserts (prevents Pitfall 12, validates SVR-05/06).
   5. `grep -r` across the driver source for `VirtualController`, `TrackedDeviceAdded`, `dashboard_open`, `isDashboardOpen`, `ControllerDevice`, `open_vs_select` returns zero results; build is clean under `-Werror`/`/WX` (prevents Pitfall 7, validates SVR-04/07/08/09).
 **Plans**: 5 plans
-  - [ ] 01-01-PLAN.md — CommandQueue + VRInputErrorName header-only primitives + unit test (Wave 1)
-  - [ ] 01-02-PLAN.md — State machine Releasing state + IDriverClient press/release collapse (Wave 1)
-  - [ ] 01-03-PLAN.md — Driver sidecar rewrite: DeviceProvider + HttpServer + CMake /WX + controller/launcher delete (Wave 2)
+  - [x] 01-01-PLAN.md — CommandQueue + VRInputErrorName header-only primitives + unit test (Wave 1)
+  - [x] 01-02-PLAN.md — State machine Releasing state + IDriverClient press/release collapse (Wave 1)
+  - [x] 01-03-PLAN.md — Driver sidecar rewrite: DeviceProvider + HttpServer + CMake /WX + controller/launcher delete (Wave 2)
   - [ ] 01-04-PLAN.md — App rewire: onTrigger(PressEdge), hmd_button_test buttons, dashboard_manager delete, forbidden-string sweep (Wave 2)
   - [ ] 01-05-PLAN.md — D-02 manual-VR validation spike on real HMD (N=5 sleep/wake cycles) (Wave 3)
 **Research spike**: HMD reactivation lifecycle (Case D in ARCHITECTURE.md) is untested in bey-closer-t1 — budget a half-day validation spike before declaring phase exit. If `VREvent_TrackedDeviceDeactivated` is unreliable, fall back to re-checking `TrackedDeviceToPropertyContainer` each `RunFrame` tick.
@@ -99,7 +99,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5. Phase 2 is parallel-
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Driver Sidecar Migration | 0/5 | Not started | - |
+| 1. Driver Sidecar Migration | 3/5 | In progress | - |
 | 2. Config Read-Back | 0/3 | Not started | - |
 | 3. Auto-Start | 0/TBD | Not started | - |
 | 4. Installer | 0/TBD | Not started | - |
