@@ -3,10 +3,11 @@ phase: 02-config-read-back
 plan: 03
 wave: 3
 type: verification
-status: partial
+status: complete
 requirements: [CFG-01, CFG-02, CFG-03, CFG-04, CFG-05]
-m1_status: DEFERRED
+m1_status: PASSED
 completed: 2026-04-23
+closed: 2026-04-23
 ---
 
 # Phase 2 Plan 03 — Verification & Phase Close
@@ -14,7 +15,7 @@ completed: 2026-04-23
 **Completed:** 2026-04-23
 **Type:** verification (no code changes)
 **Phase:** 02-config-read-back
-**Status:** partial — automated gates GREEN; manual M-1 DEFERRED pending Phase 01 startup regression fix
+**Status:** complete — automated gates GREEN; manual M-1 PASSED 2026-04-23 after startup-hang + activation + title regressions resolved in commit `73681c5` (see `.planning/debug/micmap-*.md` for investigation trail and the next section "M-1 Resolution" below).
 
 ## Build Warnings Audit (Task 1)
 
@@ -88,15 +89,25 @@ Suggested debug path: insert `MICMAP_LOG_INFO` markers at each line of `MicMapAp
 | Zero warnings on `config_manager.cpp` | ✅ GREEN | Task 1 above |
 | Zero warnings on `test_config_manager.cpp` | ✅ GREEN | Task 1 above |
 | Full test suite (canary intact) | ✅ GREEN | 3/3 pass |
-| M-1 live UI persist cycle (CFG-01 + CFG-05 success criterion #1) | ⚠️ DEFERRED | `micmap.exe` hangs on launch — Phase 01 regression, not Phase 02 scope |
-| Full `cmake --build build` | ❌ Phase 01 target fails | `copy_distributable_files` missing `build/driver/micmap` — pre-existing, unrelated to Phase 02 |
+| M-1 live UI persist cycle (CFG-01 + CFG-05 success criterion #1) | ✅ PASSED | 2026-04-23 — confirmed live by user after commit `73681c5` resolved the startup + activation + title bugs below |
+| Full `cmake --build build` | ❌ Phase 01 target fails | `copy_distributable_files` missing `build/driver/micmap` — pre-existing, unrelated to Phase 02 (tracked separately; does not block Phase 02 close) |
 
-**Phase 2 code path:** COMPLETE. Automated verification COMPLETE. Manual verification DEFERRED pending Phase 01 fix.
+**Phase 2 code path:** COMPLETE. Automated verification COMPLETE. Manual M-1 verification PASSED. Phase 02 closed 2026-04-23.
+
+## M-1 Resolution
+
+The DEFERRED blocker ("`micmap.exe` all-white frozen window on launch") was resolved on 2026-04-23 via three bundled fixes in `apps/micmap/main.cpp` (commit `73681c5`), investigated and documented under `.planning/debug/`:
+
+1. **`micmap-white-frozen-launch`** — second-instance restore path used direct `ShowWindow(SW_SHOW) + SetForegroundWindow`, bypassing the `IDM_SHOW` handler that clears `minimizedToTray`. The first instance's render loop kept hitting `Sleep(50)` and never repainted; Windows showed the default white client area. Fix: `PostMessageW(w, WM_COMMAND, IDM_SHOW, 0)` so the handler runs.
+2. **`micmap-activation-no-hmd-tap`** — state machine was fed raw `result.confidence` (instantaneous, dips between callbacks) while the UI used `result.isWhiteNoise` (temporally gated by detector). `IStateMachine::updateDetecting()` bounced back to Idle before `minDetectionDuration` elapsed, so `triggerCallback_` never fired. Fix: drive state machine from `isWhiteNoise` as `1.0/0.0`, set `minDetectionDuration=0` and threshold `0.5f` (detector owns the gate; state machine is pure latch+cooldown).
+3. **`micmap-title-m-truncation`** — `apps/micmap` target defines no `UNICODE`/`_UNICODE`, so `DefWindowProc` resolved to the A-variant. `WM_SETTEXT` delivered wide bytes (`L"MicMap"` = `4D 00 69 00 ...`) interpreted as narrow, truncating the title to "M". Fix: explicit `DefWindowProcW` (matches surrounding explicit-W pattern).
+
+After the fix: user ran the M-1 cycle (change setting → quit → relaunch → verify persistence) live and confirmed **PASSED**. `VALIDATION.md` flipped to `nyquist_compliant: true`.
 
 ## Escalations (for orchestrator / next-phase planner)
 
-1. **BLOCKING for M-1 close:** `micmap.exe` startup hang (all-white frozen window) on both Debug and Release builds, fresh and stored AppData. Must be fixed before M-1 can be run to close CFG-01/CFG-05 success criterion. Scope: `apps/micmap/main.cpp` initialize() chain + its dependencies. Not Phase 02 scope.
-2. **BLOCKING for full build:** `copy_distributable_files` target fails — `build/driver/micmap` directory does not exist. Phase 01 driver sidecar output path needs to be produced before this custom command runs, or the dependency needs to be gated.
+1. ~~**BLOCKING for M-1 close:** `micmap.exe` startup hang~~ — **RESOLVED 2026-04-23**, commit `73681c5`. See "M-1 Resolution" above.
+2. **BLOCKING for full build (still open):** `copy_distributable_files` target fails — `build/driver/micmap` directory does not exist. Phase 01 driver sidecar output path needs to be produced before this custom command runs, or the dependency needs to be gated. Carried forward to Phase 04 (Installer) scope — distributable layout is its concern.
 
 ## Commits (Plan 02-03)
 

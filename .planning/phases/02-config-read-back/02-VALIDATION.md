@@ -1,11 +1,12 @@
 ---
 phase: 2
 slug: config-read-back
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: complete
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-04-22
 revised: 2026-04-23
+closed: 2026-04-23
 ---
 
 # Phase 2 — Validation Strategy
@@ -72,17 +73,17 @@ revised: 2026-04-23
 
 | Behavior | Requirement | Why Manual | Test Instructions | Result |
 |----------|-------------|------------|-------------------|--------|
-| End-to-end user cycle: change a setting in the MicMap UI → quit → relaunch → setting preserved | CFG-01, CFG-05 (success criterion #1) | Requires live GUI interaction + real `%APPDATA%` path + real SteamVR/WASAPI context; cannot be scripted cleanly | 1. Launch `mic_map.exe`. 2. Change audio device, sensitivity slider, detection duration, SteamVR dashboard toggle. 3. Quit via normal shutdown path (graceful — saveDefault must run). 4. Relaunch. 5. Assert the changed values are displayed in the UI (not defaults). 6. Confirm no `config.json.tmp` left behind. See Plan 03 Task 2 for full step-by-step. | **DEFERRED** — `micmap.exe` hangs with all-white frozen window on launch (Debug + Release, fresh and stored `%APPDATA%`). `mic_test.exe` launches normally, so WASAPI path is fine. Hang is in micmap.exe VR/UI init — Phase 02 did NOT modify `apps/micmap/main.cpp`; last touches were Phase 01 `9545811` (driverClient rewire) and `10112ba` (single-tap amend). M-1 cannot run until Phase 01 startup regression is fixed. See `02-03-SUMMARY.md` for full diagnostic trail. |
+| End-to-end user cycle: change a setting in the MicMap UI → quit → relaunch → setting preserved | CFG-01, CFG-05 (success criterion #1) | Requires live GUI interaction + real `%APPDATA%` path + real SteamVR/WASAPI context; cannot be scripted cleanly | 1. Launch `mic_map.exe`. 2. Change audio device, sensitivity slider, detection duration, SteamVR dashboard toggle. 3. Quit via normal shutdown path (graceful — saveDefault must run). 4. Relaunch. 5. Assert the changed values are displayed in the UI (not defaults). 6. Confirm no `config.json.tmp` left behind. See Plan 03 Task 2 for full step-by-step. | **M-1 PASSED** (2026-04-23) — prior DEFERRAL resolved. Root causes landed in commit `73681c5` (second-instance restore via `IDM_SHOW`, state machine driven by `isWhiteNoise`, `DefWindowProcW` for wide-title plumbing). Live UI → quit → relaunch cycle confirmed by user: changed settings persist across restart; no stray `config.json.tmp`. See `.planning/debug/micmap-*.md` for resolved investigation trail and `02-03-SUMMARY.md` for close-out narrative. |
 
 ---
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies (Plan 03 Task 2 is pure checkpoint:human-verify per checker Blocker 2 — manual gate is the documented exception)
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify (verified — every wave has at least one automated `<verify><automated>`)
-- [ ] Wave 0 covers all MISSING references (`tests/test_config_manager.cpp` created in Plan 01 Task 2; `tests/CMakeLists.txt` registration in Plan 01 Task 3)
-- [ ] No watch-mode flags (none used)
-- [ ] Feedback latency < 5s (Plan 02 incremental rebuilds; Plan 01 Task 3 + Plan 03 Task 1 are one-shot full builds intentionally — see Test Infrastructure latency table)
-- [ ] `nyquist_compliant: true` set in frontmatter (will be flipped by Plan 03 Task 3 Phase B at phase close)
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies (Plan 03 Task 2 is pure checkpoint:human-verify per checker Blocker 2 — manual gate is the documented exception)
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify (verified — every wave has at least one automated `<verify><automated>`)
+- [x] Wave 0 covers all MISSING references (`tests/test_config_manager.cpp` created in Plan 01 Task 2; `tests/CMakeLists.txt` registration in Plan 01 Task 3)
+- [x] No watch-mode flags (none used)
+- [x] Feedback latency < 5s (Plan 02 incremental rebuilds; Plan 01 Task 3 + Plan 03 Task 1 are one-shot full builds intentionally — see Test Infrastructure latency table)
+- [x] `nyquist_compliant: true` set in frontmatter (flipped 2026-04-23 after M-1 PASSED)
 
-**Approval:** pending
+**Approval:** approved 2026-04-23 — automated 7/8 gates GREEN + M-1 manual cycle PASSED live after commit `73681c5` resolved startup-hang + activation + title regressions.

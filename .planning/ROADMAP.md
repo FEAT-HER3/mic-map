@@ -18,7 +18,7 @@ This roadmap delivers the "Seamless SteamVR Integration" milestone: rip out the 
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
 - [x] **Phase 1: Driver Sidecar Migration** — Replace virtual-controller with pure HMD-sidecar injecting `/input/system/click` (amended by 01-06 after spike falsified the bare-sidecar assumption: bindings patcher now ships alongside, routes HMD system click to ToggleDashboard on Bigscreen Beyond / any lighthouse-non-Index HMD)
-- [ ] **Phase 2: Config Read-Back** — Wire up the stubbed JSON read path so user settings persist (parallel-safe with Phase 1)
+- [x] **Phase 2: Config Read-Back** — Wire up the stubbed JSON read path so user settings persist (parallel-safe with Phase 1) — CLOSED 2026-04-23, M-1 PASSED live
 - [ ] **Phase 3: Auto-Start** — SteamVR-native auto-launch via `app.vrmanifest` with `VREvent_Quit` handling
 - [ ] **Phase 4: Installer** — Single-click Inno Setup installer packaging driver + app + auto-start registration
 - [ ] **Phase 5: Documentation** — README + architecture docs updated to shipped reality
@@ -56,7 +56,7 @@ This roadmap delivers the "Seamless SteamVR Integration" milestone: rip out the 
 **Plans**: 3 plans
   - [x] 02-01-PLAN.md — Wave 0 test scaffold: register `test_config_manager` (5 RED scenarios) + link `nlohmann_json` PRIVATE into `micmap_core`
   - [x] 02-02-PLAN.md — Implement defensive nlohmann/json parser, atomic Windows save (ReplaceFile/MoveFileEx), UTF-8 wstring boundary, clamp/pow2-snap, corruption backup-and-rotate — turn RED → GREEN
-  - [x] 02-03-PLAN.md — Verification: warnings-clean full build + M-1 manual end-to-end cycle (live UI persist-across-restart) + VALIDATION sign-off *(partial: automated GREEN; M-1 DEFERRED — micmap.exe startup hang, Phase 01 regression; see 02-03-SUMMARY.md)*
+  - [x] 02-03-PLAN.md — Verification: warnings-clean full build + M-1 manual end-to-end cycle (live UI persist-across-restart) + VALIDATION sign-off *(CLOSED 2026-04-23: automated GREEN; M-1 PASSED live after commit `73681c5` resolved startup-hang + activation + title regressions; see 02-03-SUMMARY.md "M-1 Resolution")*
 
 ### Phase 3: Auto-Start
 **Goal**: SteamVR launches `micmap.exe` automatically when SteamVR starts, MicMap exits cleanly when SteamVR exits, and registration is idempotent — no console window, no focus steal, no respawn loop.
@@ -101,7 +101,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5. Phase 2 is parallel-
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Driver Sidecar Migration | 3/5 | In progress | - |
-| 2. Config Read-Back | 0/3 | Not started | - |
+| 2. Config Read-Back | 3/3 | Complete | 2026-04-23 |
 | 3. Auto-Start | 0/TBD | Not started | - |
 | 4. Installer | 0/TBD | Not started | - |
 | 5. Documentation | 0/TBD | Not started | - |

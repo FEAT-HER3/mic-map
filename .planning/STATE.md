@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 01 complete (bindings patcher + single-tap amendment; validated on Bigscreen Beyond). Phase 02 wave 2 still pending 02-03 verification.
-last_updated: "2026-04-23T11:00:00.000Z"
-last_activity: 2026-04-23 -- Phase 01 exit criterion met
+stopped_at: Phase 02 CLOSED — M-1 PASSED after commit 73681c5 resolved startup-hang + activation + title regressions. Ready to discuss Phase 03 (Auto-Start).
+last_updated: "2026-04-23T12:00:00.000Z"
+last_activity: 2026-04-23 -- Phase 02 M-1 PASSED live; Phase 02 closed
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 9
-  completed_plans: 8
-  percent: 89
+  completed_plans: 9
+  percent: 100
 ---
 
 # Project State
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-22)
 
 **Core value:** Covering the microphone reliably toggles the SteamVR dashboard, invisibly to the rest of VR — no controller beam, no extra hardware, no focus loss.
-**Current focus:** Phase 02 — config-read-back (02-03 verification remains; 02-01 + 02-02 landed)
+**Current focus:** Phase 03 — auto-start (SteamVR-native `app.vrmanifest` + VREvent_Quit handling)
 
 ## Current Position
 
-Phase: 01 (driver-sidecar-migration) — COMPLETE (amendment 01-06 shipped, validated on Bigscreen Beyond)
-Next: Phase 02 plan 03 verification, then Phase 03 auto-start
-Last activity: 2026-04-23 -- 01-06 amendment (bindings patcher + single-tap) validated on hardware
+Phase: 02 (config-read-back) — COMPLETE (M-1 PASSED 2026-04-23 after commit 73681c5 fixed startup + activation + title regressions)
+Next: Phase 03 discuss (no CONTEXT.md yet — start with `/gsd-discuss-phase 3`)
+Last activity: 2026-04-23 -- Phase 02 closed; main.cpp bundled-fix commit + debug artifacts landed
 
-Progress: [█████████░] 89%
+Progress: [██████████] 100% of planned plans · 2/5 phases
 
 ## Performance Metrics
 
@@ -95,8 +95,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-04-23T08:58:47.897Z
-Stopped at: Completed 01-driver-sidecar-migration/01-04-PLAN.md (app rewire + dashboard_manager delete)
+Last session: 2026-04-23T12:00:00.000Z
+Stopped at: Phase 02 closed (M-1 PASSED); uncommitted main.cpp bundled fixes landed as commit 73681c5; debug trail committed as 127d730. Ready to discuss Phase 03.
 Resume file: None
 
-**Planned Phase:** 1 (Driver Sidecar Migration) — 5 plans — 2026-04-23T08:05:44.071Z
+**Planned Phase:** 3 (Auto-Start) — plans TBD — start with /gsd-discuss-phase 3
