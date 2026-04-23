@@ -5,17 +5,18 @@
 
 namespace micmap::driver {
 
-struct PressCommand {
-    enum class Kind { Down, Up };
-    Kind kind;
-};
+// A single tap command. The app posts one of these per detection rising
+// edge; the driver expands it into UpdateBooleanComponent(true) followed
+// by UpdateBooleanComponent(false) after a short hold, so SteamVR's
+// complex_button binding sees a clean single-click.
+struct TapCommand {};
 
 class CommandQueue {
 public:
     static constexpr size_t kMaxDepth = 8;
 
     // Producer (HTTP thread). Returns true if queue was full and oldest dropped.
-    bool push(PressCommand cmd) {
+    bool push(TapCommand cmd) {
         std::lock_guard<std::mutex> lk(m_);
         bool dropped = false;
         if (q_.size() >= kMaxDepth) { q_.pop_front(); dropped = true; }
@@ -24,7 +25,7 @@ public:
     }
 
     // Consumer (RunFrame). Never blocks.
-    std::optional<PressCommand> try_pop() {
+    std::optional<TapCommand> try_pop() {
         std::lock_guard<std::mutex> lk(m_);
         if (q_.empty()) return std::nullopt;
         auto c = q_.front();
@@ -34,7 +35,7 @@ public:
 
 private:
     std::mutex m_;
-    std::deque<PressCommand> q_;
+    std::deque<TapCommand> q_;
 };
 
 } // namespace micmap::driver

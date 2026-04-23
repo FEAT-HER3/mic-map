@@ -157,67 +157,35 @@ public:
         return connected_;
     }
 
-    bool press() override {
+    bool tap() override {
         if (!ensureConnected()) {
             lastError_ = "Not connected to driver";
-            MICMAP_LOG_ERROR("DriverClient::press() failed: {}", lastError_);
+            MICMAP_LOG_ERROR("DriverClient::tap() failed: {}", lastError_);
             return false;
         }
 
-        MICMAP_LOG_DEBUG("Sending press (POST /button {{\"state\":\"down\"}})");
+        MICMAP_LOG_DEBUG("Sending tap (POST /button {{\"kind\":\"tap\"}})");
 
         httplib::Client client(host_, port_);
         client.set_connection_timeout(2);
         client.set_read_timeout(2);
 
-        auto res = client.Post("/button", R"({"state":"down"})", "application/json");
+        auto res = client.Post("/button", R"({"kind":"tap"})", "application/json");
 
         if (!res) {
             lastError_ = "HTTP request failed";
-            MICMAP_LOG_ERROR("DriverClient::press() failed: {}", lastError_);
+            MICMAP_LOG_ERROR("DriverClient::tap() failed: {}", lastError_);
             connected_ = false;  // Mark as disconnected to retry
             return false;
         }
 
         if (res->status != 200) {
             lastError_ = "Server returned status " + std::to_string(res->status);
-            MICMAP_LOG_ERROR("DriverClient::press() failed: {}", lastError_);
+            MICMAP_LOG_ERROR("DriverClient::tap() failed: {}", lastError_);
             return false;
         }
 
-        MICMAP_LOG_DEBUG("DriverClient::press() successful");
-        return true;
-    }
-
-    bool release() override {
-        if (!ensureConnected()) {
-            lastError_ = "Not connected to driver";
-            MICMAP_LOG_ERROR("DriverClient::release() failed: {}", lastError_);
-            return false;
-        }
-
-        MICMAP_LOG_DEBUG("Sending release (POST /button {{\"state\":\"up\"}})");
-
-        httplib::Client client(host_, port_);
-        client.set_connection_timeout(2);
-        client.set_read_timeout(2);
-
-        auto res = client.Post("/button", R"({"state":"up"})", "application/json");
-
-        if (!res) {
-            lastError_ = "HTTP request failed";
-            MICMAP_LOG_ERROR("DriverClient::release() failed: {}", lastError_);
-            connected_ = false;
-            return false;
-        }
-
-        if (res->status != 200) {
-            lastError_ = "Server returned status " + std::to_string(res->status);
-            MICMAP_LOG_ERROR("DriverClient::release() failed: {}", lastError_);
-            return false;
-        }
-
-        MICMAP_LOG_DEBUG("DriverClient::release() successful");
+        MICMAP_LOG_DEBUG("DriverClient::tap() successful");
         return true;
     }
 

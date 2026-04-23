@@ -158,27 +158,22 @@ void DeviceProvider::RunFrame() {
     }
 
     // 3. Drain CommandQueue (non-blocking; lock held only inside try_pop).
+    //    Each TapCommand writes DOWN immediately and schedules a matching
+    //    UP at now + kTapHold. If another tap arrives while one is pending,
+    //    the latest tap's DOWN restarts the hold window (the pending release
+    //    is overwritten).
     while (auto cmd = commandQueue_->try_pop()) {
+        (void)cmd;  // TapCommand is empty -- its presence is the signal.
         if (state_ != HmdComponentState::Ready) {
-            DriverLog("MicMap: dropped press command (handle invalid)\n");
+            DriverLog("MicMap: dropped tap command (handle invalid)\n");
             continue;
         }
-        if (cmd->kind == PressCommand::Kind::Down) {
-            pressTimestamp_ = std::chrono::steady_clock::now();
-            pendingReleaseAt_.reset();
-            writeValue(true);
-        } else {  // Up
-            auto now = std::chrono::steady_clock::now();
-            auto elapsed = now - pressTimestamp_;
-            if (elapsed >= kMinHold) {
-                writeValue(false);
-            } else {
-                pendingReleaseAt_ = pressTimestamp_ + kMinHold;
-            }
-        }
+        pressTimestamp_ = std::chrono::steady_clock::now();
+        writeValue(true);
+        pendingReleaseAt_ = pressTimestamp_ + kTapHold;
     }
 
-    // 4. Tick any deferred release whose min-hold deadline has passed.
+    // 4. Tick the scheduled release once its hold deadline has passed.
     if (pendingReleaseAt_
         && std::chrono::steady_clock::now() >= *pendingReleaseAt_) {
         writeValue(false);

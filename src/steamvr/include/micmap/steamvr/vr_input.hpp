@@ -10,8 +10,9 @@
  *   is available). No dashboard-state branching — the MicMap driver owns
  *   /input/system/click directly (Plan 01-03) and the app simply pushes edges
  *   over HTTP via IDriverClient.
- * - IDriverClient: HTTP surface that sends press()/release() edges to the
- *   driver's POST /button endpoint.
+ * - IDriverClient: HTTP surface that sends a single tap() to the driver's
+ *   POST /button endpoint. The driver handles the full press+release
+ *   sequence internally (D-04 / D-05 semantics).
  */
 
 #include <memory>
@@ -167,23 +168,16 @@ public:
     virtual bool isConnected() const = 0;
 
     /**
-     * @brief Press the SteamVR system click (Down edge).
+     * @brief Fire a single tap on the SteamVR HMD system button.
      * @return true if the HTTP request returned 200 OK.
      *
-     * Sends POST /button with body {"state":"down"}. The driver enqueues
-     * the command and applies it in RunFrame (D-06).
+     * Sends POST /button with body {"kind":"tap"}. The driver performs
+     * UpdateBooleanComponent(true), holds for ~150 ms (its own min-hold
+     * floor), then UpdateBooleanComponent(false). SteamVR's
+     * complex_button binding interprets the resulting press+release as a
+     * single-click -> ToggleDashboard action.
      */
-    virtual bool press() = 0;
-
-    /**
-     * @brief Release the SteamVR system click (Up edge).
-     * @return true if the HTTP request returned 200 OK.
-     *
-     * Sends POST /button with body {"state":"up"}. Driver enforces the
-     * 100ms min-hold floor; a release arriving inside that window is
-     * deferred by the driver (D-05).
-     */
-    virtual bool release() = 0;
+    virtual bool tap() = 0;
 
     /**
      * @brief Get driver status

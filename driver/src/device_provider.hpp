@@ -4,8 +4,10 @@
  *
  * Implements IServerTrackedDeviceProvider but does NOT register any tracked
  * device. Instead, it creates its own /input/system/click boolean component
- * on the HMD property container and drains PressCommands from a CommandQueue
- * populated by the HTTP thread. See Phase 1 plan 01-03.
+ * on the HMD property container and drains TapCommands from a CommandQueue
+ * populated by the HTTP thread. Each tap command fires DOWN immediately
+ * then UP after a short hold so SteamVR's complex_button binding sees a
+ * single-click. See Phase 1 plan 01-03 (amended).
  */
 
 #pragma once
@@ -88,8 +90,11 @@ private:
     bool loggedAwaitingHmd_{false};
     bool profilePropsWritten_{false};  // SetString(ControllerType,InputProfilePath) once per (re)activation
 
-    // Min-hold / max-hold durations
-    static constexpr std::chrono::milliseconds kMinHold{100};
+    // Tap hold duration: DOWN -> wait kTapHold -> UP, fired per TapCommand.
+    // Long enough for SteamVR's complex_button "single" classifier to see it.
+    static constexpr std::chrono::milliseconds kTapHold{150};
+    // Max-hold watchdog: safety net, forces UP if anything leaves the
+    // component stuck DOWN longer than this.
     static constexpr std::chrono::milliseconds kMaxHold{5000};
 };
 

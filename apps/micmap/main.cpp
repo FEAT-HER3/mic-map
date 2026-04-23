@@ -98,7 +98,7 @@ struct MicMapApp {
     
     bool initialize();
     void shutdown();
-    void onTrigger(core::PressEdge edge);
+    void onTrigger();
     void renderUI();
 };
 
@@ -231,7 +231,7 @@ bool MicMapApp::initialize() {
     smConfig.cooldownDuration = std::chrono::milliseconds(config.detection.cooldownMs);
     smConfig.detectionThreshold = config.detection.sensitivity;
     stateMachine = core::createStateMachine(smConfig);
-    stateMachine->setTriggerCallback([this](core::PressEdge edge) { onTrigger(edge); });
+    stateMachine->setTriggerCallback([this]() { onTrigger(); });
     
     // Check if we have a profile loaded
     hasProfile = detector && detector->hasTrainingData();
@@ -282,9 +282,10 @@ bool MicMapApp::initialize() {
                     
                     if (duration >= detectionTimeMs && !buttonWouldFire && cooldownExpired && !inCooldown) {
                         buttonWouldFire = true;
-                        // Note: actual press/release dispatch now flows through the state
-                        // machine -> setTriggerCallback -> onTrigger(PressEdge). This branch
-                        // only updates the legacy "buttonWouldFire" UI hint + cooldown flag.
+                        // Note: actual tap dispatch flows through the state
+                        // machine -> setTriggerCallback -> onTrigger(). This
+                        // branch only updates the legacy "buttonWouldFire"
+                        // UI hint + cooldown flag.
                         lastTriggerTime = now;
                         inCooldown = true;
                     }
@@ -331,15 +332,12 @@ void MicMapApp::shutdown() {
     RemoveSystemTray();
 }
 
-void MicMapApp::onTrigger(core::PressEdge edge) {
+void MicMapApp::onTrigger() {
     if (!driverClient || !driverClient->isConnected()) {
-        MICMAP_LOG_DEBUG("onTrigger({}): driver not connected, skipping",
-                         edge == core::PressEdge::Down ? "down" : "up");
+        MICMAP_LOG_DEBUG("onTrigger: driver not connected, skipping");
         return;
     }
-    bool ok = (edge == core::PressEdge::Down) ? driverClient->press()
-                                              : driverClient->release();
-    if (!ok) {
+    if (!driverClient->tap()) {
         MICMAP_LOG_WARNING("onTrigger failed: {}", driverClient->getLastError());
     }
 }

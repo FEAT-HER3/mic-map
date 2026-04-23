@@ -2,7 +2,7 @@
  * @file http_server.cpp
  * @brief Implementation of the sidecar driver HTTP server.
  *
- * The HTTP thread parses JSON bodies and enqueues PressCommands on the
+ * The HTTP thread parses JSON bodies and enqueues TapCommands on the
  * CommandQueue. It never touches OpenVR API surface (SVR-05); RunFrame owns
  * all UpdateBooleanComponent calls.
  */
@@ -122,30 +122,27 @@ void HttpServer::Stop() {
 }
 
 void HttpServer::SetupRoutes() {
-    // POST /button — JSON body {"state":"down"|"up"} (SVR-05, D-06).
-    // Never touches OpenVR API; enqueues a PressCommand and returns.
+    // POST /button -- JSON body {"kind":"tap"} (SVR-05, D-06).
+    // Never touches OpenVR API; enqueues a TapCommand and returns. The
+    // driver expands the tap into press+release with its own min-hold so
+    // SteamVR's complex_button binding sees a clean single-click.
     server_->Post("/button", [this](const httplib::Request& req, httplib::Response& res) {
         try {
             auto body = nlohmann::json::parse(req.body);
-            if (!body.contains("state")) {
+            if (!body.contains("kind")) {
                 res.status = 400;
-                res.set_content(R"({"error":"missing \"state\" field"})",
+                res.set_content(R"({"error":"missing \"kind\" field"})",
                                 "application/json");
                 return;
             }
-            const auto state = body.at("state").get<std::string>();
-            PressCommand cmd;
-            if (state == "down") {
-                cmd = { PressCommand::Kind::Down };
-            } else if (state == "up") {
-                cmd = { PressCommand::Kind::Up };
-            } else {
+            const auto kind = body.at("kind").get<std::string>();
+            if (kind != "tap") {
                 res.status = 400;
-                res.set_content(R"({"error":"state must be \"down\" or \"up\""})",
+                res.set_content(R"({"error":"kind must be \"tap\""})",
                                 "application/json");
                 return;
             }
-            queue_.push(cmd);  // never blocks; drop-oldest at depth 8 (SVR-05)
+            queue_.push(TapCommand{});  // never blocks; drop-oldest at depth 8 (SVR-05)
             res.set_content(R"({"status":"ok"})", "application/json");
         } catch (const nlohmann::json::exception&) {
             res.status = 400;

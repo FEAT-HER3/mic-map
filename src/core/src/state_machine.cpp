@@ -48,11 +48,10 @@ public:
                 break;
 
             case State::Triggered:
-                updateTriggered(detectionConfidence);
-                break;
-
-            case State::Releasing:
-                updateReleasing(detectionConfidence);
+                // One-tick latch: Triggered lasts a single update so the
+                // callback observer has a chance to see the state. Next
+                // tick drops straight into Cooldown.
+                transitionTo(State::Cooldown);
                 break;
 
             case State::Cooldown:
@@ -132,47 +131,18 @@ private:
         }
 
         if (timeInState_ >= config_.minDetectionDuration) {
-            // Detection held long enough - emit DOWN edge.
+            // Detection held long enough -- fire a single tap event.
             transitionTo(State::Triggered);
 
-            MICMAP_LOG_INFO("Trigger DOWN fired after ", timeInState_.count(), "ms");
+            MICMAP_LOG_INFO("Tap fired after ", timeInState_.count(), "ms");
 
             if (triggerCallback_) {
-                triggerCallback_(PressEdge::Down);
+                triggerCallback_();
             }
         }
     }
 
-    void updateTriggered(float detectionConfidence) {
-        // Confidence drop begins the Releasing debounce window.
-        // UP does NOT fire here; it fires only from Releasing -> Cooldown.
-        if (detectionConfidence < config_.detectionThreshold) {
-            transitionTo(State::Releasing);
-        }
-    }
-
-    void updateReleasing(float detectionConfidence) {
-        // Confidence recovered before min-release elapsed: return to Triggered.
-        // UP was never emitted, so no callback on this back-edge.
-        if (detectionConfidence >= config_.detectionThreshold) {
-            transitionTo(State::Triggered);
-            return;
-        }
-
-        // Confidence stayed low long enough: emit UP and enter post-release cooldown.
-        if (timeInState_ >= config_.minReleaseDuration) {
-            transitionTo(State::Cooldown);
-
-            MICMAP_LOG_INFO("Trigger UP fired after ", timeInState_.count(),
-                            "ms in Releasing");
-
-            if (triggerCallback_) {
-                triggerCallback_(PressEdge::Up);
-            }
-        }
-    }
-
-    // Post-release cooldown (D-11): blocks next DOWN after the UP edge has fired.
+    // Cooldown (D-11): blocks next tap until duration elapses.
     void updateCooldown() {
         if (timeInState_ >= config_.cooldownDuration) {
             transitionTo(State::Idle);

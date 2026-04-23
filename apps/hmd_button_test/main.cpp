@@ -4,15 +4,13 @@
  *
  * Test harness for the MicMap driver's POST /button API. Operator-facing
  * buttons:
- *   - "Send Press (Down)"  -> driverClient->press()  (POST /button {"state":"down"})
- *   - "Send Release (Up)"  -> driverClient->release() (POST /button {"state":"up"})
- *   - "Tap (Press+150ms+Release)" -> convenience single-click for Plan 05 spike
- *   - "Test Driver"        -> probes /health + /status for the driver
- *   - "Reconnect Driver"   -> disconnect + reconnect the HTTP client
+ *   - "Tap"               -> driverClient->tap() (POST /button {"kind":"tap"})
+ *   - "Test Driver"       -> probes /health + /status for the driver
+ *   - "Reconnect Driver"  -> disconnect + reconnect the HTTP client
  *
  * No dashboard-manager / virtual-controller wiring: the driver owns the
- * HMD /input/system/click component directly (Plan 01-03), and the app
- * simply sends press/release edges over HTTP.
+ * HMD /input/system/click component directly (Plan 01-03) and expands a
+ * single tap command into press+release internally.
  */
 
 #ifdef _WIN32
@@ -40,8 +38,6 @@ constexpr int WINDOW_WIDTH = 470;
 constexpr int WINDOW_HEIGHT = 560;
 
 // Control IDs
-constexpr int ID_SEND_PRESS_BUTTON = 201;
-constexpr int ID_SEND_RELEASE_BUTTON = 202;
 constexpr int ID_SEND_TAP_BUTTON = 203;
 constexpr int ID_TEST_DRIVER_BUTTON = 204;
 constexpr int ID_RECONNECT_DRIVER_BUTTON = 205;
@@ -62,8 +58,6 @@ struct AppState {
     HWND hwnd = nullptr;
     HWND steamvrStatusLabel = nullptr;
     HWND driverStatusLabel = nullptr;
-    HWND sendPressButton = nullptr;
-    HWND sendReleaseButton = nullptr;
     HWND sendTapButton = nullptr;
     HWND testDriverButton = nullptr;
     HWND reconnectDriverButton = nullptr;
@@ -81,8 +75,6 @@ void CreateControls(HWND hwnd);
 void UpdateStatus();
 void AddLogEntry(const std::wstring& message);
 void SetLastResult(const std::wstring& result, bool success);
-void OnSendPressClicked();
-void OnSendReleaseClicked();
 void OnSendTapClicked();
 void OnTestDriverClicked();
 void OnReconnectDriverClicked();
@@ -191,7 +183,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // depend on the driver being live; Press/Release/Tap will create it
     // on demand.
     AddLogEntry(L"Click 'Test Driver' to check driver HTTP connection");
-    AddLogEntry(L"Ready - Use Send Press / Send Release / Tap to drive /button");
+    AddLogEntry(L"Ready - Click 'Tap' to fire one POST /button {\"kind\":\"tap\"}");
 
     ShowWindow(g_state.hwnd, nCmdShow);
     UpdateWindow(g_state.hwnd);
@@ -234,12 +226,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
         case WM_COMMAND:
             switch (LOWORD(wParam)) {
-                case ID_SEND_PRESS_BUTTON:
-                    OnSendPressClicked();
-                    break;
-                case ID_SEND_RELEASE_BUTTON:
-                    OnSendReleaseClicked();
-                    break;
                 case ID_SEND_TAP_BUTTON:
                     OnSendTapClicked();
                     break;
@@ -315,25 +301,12 @@ void CreateControls(HWND hwnd) {
 
     y += 25;
 
-    // Row 1: Send Press / Send Release
+    // Single Tap button spans the action row.
     int btnHeight = 35;
     int btnWidth1 = 200;
     int btnSpacing = 10;
 
-    g_state.sendPressButton = CreateWindowW(L"BUTTON", L"Send Press (Down)",
-        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        leftMargin, y, btnWidth1, btnHeight,
-        hwnd, (HMENU)ID_SEND_PRESS_BUTTON, nullptr, nullptr);
-
-    g_state.sendReleaseButton = CreateWindowW(L"BUTTON", L"Send Release (Up)",
-        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        leftMargin + btnWidth1 + btnSpacing, y, btnWidth1, btnHeight,
-        hwnd, (HMENU)ID_SEND_RELEASE_BUTTON, nullptr, nullptr);
-
-    y += btnHeight + 10;
-
-    // Row 2: Tap (wide convenience button)
-    g_state.sendTapButton = CreateWindowW(L"BUTTON", L"Tap (Press + 150ms + Release)",
+    g_state.sendTapButton = CreateWindowW(L"BUTTON", L"Tap",
         WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         leftMargin, y, btnWidth1 * 2 + btnSpacing, btnHeight,
         hwnd, (HMENU)ID_SEND_TAP_BUTTON, nullptr, nullptr);
@@ -470,76 +443,8 @@ void SetLastResult(const std::wstring& result, bool success) {
     SetWindowTextW(g_state.lastResultLabel, (prefix + result).c_str());
 }
 
-void OnSendPressClicked() {
-    AddLogEntry(L"Sending POST /button {\"state\":\"down\"}...");
-
-    EnsureDriverClient();
-    if (!g_state.driverClient) {
-        SetLastResult(L"Driver client not available", false);
-        return;
-    }
-
-    if (!g_state.driverClient->isConnected()) {
-        AddLogEntry(L"Driver not connected, attempting to connect...");
-        if (!g_state.driverClient->connect()) {
-            std::wstring err = Utf8ToWide(g_state.driverClient->getLastError());
-            AddLogEntry(L"Connect failed: " + err);
-            SetLastResult(L"press() FAILED: " + err, false);
-            return;
-        }
-        g_state.driverPort = g_state.driverClient->getPort();
-        AddLogEntry(L"Connected to driver on port " +
-                    std::to_wstring(g_state.driverPort));
-    }
-
-    if (g_state.driverClient->press()) {
-        AddLogEntry(L"press() OK");
-        SetLastResult(L"press() OK (POST /button down)", true);
-    } else {
-        std::wstring err = Utf8ToWide(g_state.driverClient->getLastError());
-        AddLogEntry(L"press() FAILED: " + err);
-        SetLastResult(L"press() FAILED: " + err, false);
-    }
-
-    UpdateDriverStatus();
-}
-
-void OnSendReleaseClicked() {
-    AddLogEntry(L"Sending POST /button {\"state\":\"up\"}...");
-
-    EnsureDriverClient();
-    if (!g_state.driverClient) {
-        SetLastResult(L"Driver client not available", false);
-        return;
-    }
-
-    if (!g_state.driverClient->isConnected()) {
-        AddLogEntry(L"Driver not connected, attempting to connect...");
-        if (!g_state.driverClient->connect()) {
-            std::wstring err = Utf8ToWide(g_state.driverClient->getLastError());
-            AddLogEntry(L"Connect failed: " + err);
-            SetLastResult(L"release() FAILED: " + err, false);
-            return;
-        }
-        g_state.driverPort = g_state.driverClient->getPort();
-        AddLogEntry(L"Connected to driver on port " +
-                    std::to_wstring(g_state.driverPort));
-    }
-
-    if (g_state.driverClient->release()) {
-        AddLogEntry(L"release() OK");
-        SetLastResult(L"release() OK (POST /button up)", true);
-    } else {
-        std::wstring err = Utf8ToWide(g_state.driverClient->getLastError());
-        AddLogEntry(L"release() FAILED: " + err);
-        SetLastResult(L"release() FAILED: " + err, false);
-    }
-
-    UpdateDriverStatus();
-}
-
 void OnSendTapClicked() {
-    AddLogEntry(L"Tap: press() + Sleep(150) + release()");
+    AddLogEntry(L"Sending POST /button {\"kind\":\"tap\"}...");
 
     EnsureDriverClient();
     if (!g_state.driverClient) {
@@ -560,25 +465,13 @@ void OnSendTapClicked() {
                     std::to_wstring(g_state.driverPort));
     }
 
-    bool downOk = g_state.driverClient->press();
-    if (!downOk) {
-        std::wstring err = Utf8ToWide(g_state.driverClient->getLastError());
-        AddLogEntry(L"Tap: press() FAILED: " + err);
-        SetLastResult(L"Tap FAILED on press: " + err, false);
-        UpdateDriverStatus();
-        return;
-    }
-    AddLogEntry(L"Tap: press() OK, holding 150ms...");
-    ::Sleep(150);
-
-    bool upOk = g_state.driverClient->release();
-    if (upOk) {
-        AddLogEntry(L"Tap: release() OK");
-        SetLastResult(L"Tap OK (press + 150ms + release)", true);
+    if (g_state.driverClient->tap()) {
+        AddLogEntry(L"tap() OK");
+        SetLastResult(L"tap() OK (POST /button tap)", true);
     } else {
         std::wstring err = Utf8ToWide(g_state.driverClient->getLastError());
-        AddLogEntry(L"Tap: release() FAILED: " + err);
-        SetLastResult(L"Tap FAILED on release: " + err, false);
+        AddLogEntry(L"tap() FAILED: " + err);
+        SetLastResult(L"tap() FAILED: " + err, false);
     }
 
     UpdateDriverStatus();
