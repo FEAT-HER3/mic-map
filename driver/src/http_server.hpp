@@ -1,9 +1,10 @@
 /**
  * @file http_server.hpp
- * @brief HTTP server for receiving commands from MicMap application
+ * @brief HTTP server for the MicMap sidecar driver.
  *
- * This server listens on localhost for HTTP requests from the MicMap
- * application and triggers button events on the virtual controller.
+ * Listens on localhost for commands from the MicMap app and enqueues them
+ * onto a CommandQueue for RunFrame to drain. No OpenVR driver API is ever
+ * called from the HTTP thread (SVR-05).
  */
 
 #pragma once
@@ -21,66 +22,46 @@ namespace httplib {
 namespace micmap::driver {
 
 // Forward declaration
-class VirtualController;
+class CommandQueue;
 
 /**
- * @brief HTTP server for receiving button commands
+ * @brief HTTP server for receiving press/release commands.
  *
- * Provides REST-style endpoints for controlling the virtual controller:
- * - POST /click - Press and release button
- * - POST /press - Press button down
- * - POST /release - Release button
- * - GET /status - Get driver status
+ * Endpoints:
+ *   POST /button  -- JSON {"state":"down"|"up"}, enqueues on CommandQueue.
+ *   GET  /health  -- liveness check for app-side port discovery.
+ *   GET  /port    -- numeric listening port as text.
+ *   GET  /status  -- minimal status JSON (no driver-state coupling).
  */
 class HttpServer {
 public:
     /**
-     * @brief Construct HTTP server
-     * @param controller Pointer to the virtual controller to control
-     * @param port Port to listen on (default: 27015)
-     * @param host Host to bind to (default: 127.0.0.1)
+     * @brief Construct HTTP server.
+     * @param queue Reference to the CommandQueue that POST /button pushes to.
+     * @param port  Starting port (default: 27015; retry up to 27025).
+     * @param host  Bind host (default: 127.0.0.1 — localhost only).
      */
-    explicit HttpServer(VirtualController* controller, int port = 27015, const std::string& host = "127.0.0.1");
-    
+    explicit HttpServer(CommandQueue& queue,
+                        int port = 27015,
+                        const std::string& host = "127.0.0.1");
+
     ~HttpServer();
 
-    /**
-     * @brief Start the HTTP server
-     * @return True if server started successfully
-     */
     bool Start();
-
-    /**
-     * @brief Stop the HTTP server
-     */
     void Stop();
 
-    /**
-     * @brief Check if server is running
-     * @return True if server is running
-     */
     bool IsRunning() const { return running_; }
-
-    /**
-     * @brief Get the port the server is listening on
-     * @return Port number
-     */
     int GetPort() const { return port_; }
-
-    /**
-     * @brief Get the host the server is bound to
-     * @return Host string
-     */
     const std::string& GetHost() const { return host_; }
 
 private:
     void SetupRoutes();
     void ServerThread();
 
-    VirtualController* controller_;
+    CommandQueue& queue_;
     int port_;
     std::string host_;
-    
+
     std::unique_ptr<httplib::Server> server_;
     std::thread serverThread_;
     std::atomic<bool> running_{false};
