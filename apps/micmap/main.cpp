@@ -576,7 +576,15 @@ void MicMapApp::renderUI() {
     ImGui::Text("Detection Time: %d ms", detectionTimeMs);
     ImGui::SetNextItemWidth(-1);
     if (ImGui::SliderInt("##Time", &detectionTimeMs, 100, 1000, "")) {
-        if (detector) detector->setMinDetectionDuration(detectionTimeMs);
+        // WR-07: mirror WR-03 — guard detector state mutations under
+        // audioMutex so the WASAPI callback (which locks audioMutex before
+        // calling detector->analyze/addTrainingSample) cannot race with a
+        // UI-thread setMinDetectionDuration writing the detector's
+        // duration-threshold field.
+        if (detector) {
+            std::lock_guard<std::mutex> lock(audioMutex);
+            detector->setMinDetectionDuration(detectionTimeMs);
+        }
         if (configManager) configManager->getConfig().detection.minDurationMs = detectionTimeMs;
     }
 
@@ -585,13 +593,24 @@ void MicMapApp::renderUI() {
     ImGui::Separator();
 
     // Check for auto-stop training (matching mic_test)
+    // WR-07: finishTraining + saveTrainingData mutate detector internals
+    // (FFT pattern buffers, training-sample accumulators) that the audio
+    // callback reads via addTrainingSample / analyze under audioMutex. Mirror
+    // the WR-03 lock discipline at every UI-thread detector->* call-site.
     if (isTraining && trainingSampleCount >= MIN_TRAINING_SAMPLES * 3) {
         if (detector) {
-            bool success = detector->finishTraining();
+            bool success;
+            {
+                std::lock_guard<std::mutex> lock(audioMutex);
+                success = detector->finishTraining();
+            }
             isTraining = false;
             if (success) {
                 hasProfile = true;
-                if (configManager) detector->saveTrainingData(configManager->getTrainingDataPath());
+                if (configManager) {
+                    std::lock_guard<std::mutex> lock(audioMutex);
+                    detector->saveTrainingData(configManager->getTrainingDataPath());
+                }
             }
         }
     }
@@ -599,9 +618,16 @@ void MicMapApp::renderUI() {
     if (isTraining) {
         if (ImGui::Button("Stop Training", ImVec2(120, 30))) {
             if (detector) {
-                bool success = detector->finishTraining();
+                bool success;
+                {
+                    std::lock_guard<std::mutex> lock(audioMutex);
+                    success = detector->finishTraining();
+                }
                 if (success && configManager) {
-                    detector->saveTrainingData(configManager->getTrainingDataPath());
+                    {
+                        std::lock_guard<std::mutex> lock(audioMutex);
+                        detector->saveTrainingData(configManager->getTrainingDataPath());
+                    }
                     hasProfile = true;
                 }
             }
@@ -611,7 +637,12 @@ void MicMapApp::renderUI() {
         ImGui::TextColored(ImVec4(1,0.5f,0,1), "Cover mic now! (%d samples)", trainingSampleCount.load());
     } else {
         if (ImGui::Button("Train Pattern", ImVec2(120, 30)) && detector) {
-            detector->startTraining();
+            // WR-07: startTraining resets the detector's training-sample
+            // accumulator; must be serialized with the audio callback.
+            {
+                std::lock_guard<std::mutex> lock(audioMutex);
+                detector->startTraining();
+            }
             isTraining = true;
             trainingSampleCount = 0;
         }
