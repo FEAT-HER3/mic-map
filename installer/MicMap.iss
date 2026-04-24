@@ -211,6 +211,11 @@ begin
       Result := 'Setup was cancelled because SteamVR is still running.';
       Exit;
     end;
+    // IN-03: give vrserver a moment to clear on a racing shutdown. WMI can
+    // report a phantom "running" state for a few seconds while vrserver is
+    // in WAITING_FOR_EXIT. Without this pause a quick Retry loops the user
+    // straight back into the same dialog.
+    Sleep(500);
     Running := GetRunningSteamVrProcesses();
   end;
 end;
