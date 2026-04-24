@@ -441,7 +441,7 @@ void MicMapApp::onTrigger() {
         return;
     }
     if (!driverClient->tap()) {
-        MICMAP_LOG_WARNING("onTrigger failed: {}", driverClient->getLastError());
+        MICMAP_LOG_WARNING("onTrigger failed: ", driverClient->getLastError());
     }
 }
 
