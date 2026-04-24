@@ -94,3 +94,16 @@ target_compile_definitions(test_vrmanifest_schema PRIVATE
     MICMAP_MANIFEST_PATH="${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/app.vrmanifest")
 add_dependencies(test_vrmanifest_schema micmap)
 add_test(NAME test_vrmanifest_schema COMMAND test_vrmanifest_schema)
+
+# Phase 4 INST-08 / D-08 / D-11: bindings patcher unit tests.
+# Covers six scenarios (idempotency, write-once backup, unpatch-restore,
+# unpatch marker-erase, unpatch no-op, AtomicWriteJson crash safety) against
+# a throwaway tmp dir — no SteamVR runtime required. The second add_test
+# line with `idempotent-only` argv routes ctest through the same exe but
+# filters to scenario 1, satisfying 04-VALIDATION.md 04-01-03.
+add_executable(test_bindings_patcher test_bindings_patcher.cpp)
+target_compile_features(test_bindings_patcher PRIVATE cxx_std_17)
+target_link_libraries(test_bindings_patcher PRIVATE micmap::bindings nlohmann_json)
+add_test(NAME test_bindings_patcher COMMAND test_bindings_patcher)
+add_test(NAME bindings_patcher_idempotent
+         COMMAND test_bindings_patcher idempotent-only)

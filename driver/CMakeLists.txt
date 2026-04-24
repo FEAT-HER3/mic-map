@@ -24,7 +24,6 @@ add_library(driver_micmap SHARED
     src/driver_main.cpp
     src/device_provider.cpp
     src/http_server.cpp
-    src/bindings_patcher.cpp
 )
 
 # Include directories
@@ -62,6 +61,12 @@ elseif(TARGET nlohmann_json::nlohmann_json)
 else()
     message(FATAL_ERROR "driver_micmap: nlohmann/json is required for POST /button body parse.")
 endif()
+
+# Phase 4 D-10: bindings_patcher was lifted to src/bindings/ so both
+# driver_micmap.dll and micmap.exe can share one source of truth. The driver
+# now links the shared lib + wraps DriverLog in a LogSink adapter (see
+# device_provider.cpp).
+target_link_libraries(driver_micmap PRIVATE micmap::bindings)
 
 # Version string used in SVR-10 init log line
 target_compile_definitions(driver_micmap PRIVATE
