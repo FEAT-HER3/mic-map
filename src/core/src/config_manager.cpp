@@ -32,6 +32,14 @@ using json = nlohmann::json;
 
 std::filesystem::path getAppDataPath() {
 #ifdef _WIN32
+    // IN-01: SHGetFolderPathW with CSIDL_APPDATA is deprecated in favor of
+    // SHGetKnownFolderPath(FOLDERID_RoamingAppData, ...). We intentionally
+    // keep the legacy form for now because (a) it still works on every
+    // supported Windows version (Vista+), (b) MAX_PATH (260) is sufficient
+    // for %APPDATA%\MicMap on all realistic user profiles, and (c) the
+    // migration would require heap allocation + CoTaskMemFree cleanup for
+    // a single call. Revisit if we ever need to respect per-user known-
+    // folder redirection or long paths under %APPDATA%.
     wchar_t path[MAX_PATH];
     if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, path))) {
         return std::filesystem::path(path) / "MicMap";
