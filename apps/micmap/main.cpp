@@ -714,7 +714,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
     ImGui_ImplWin32_Init(g_app.hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
-    g_app.initialize();
+    // WR-03: fail-closed on initialize() failure. If audio capture couldn't
+    // be created the app has no way to detect; proceeding would (a) still
+    // register the manifest via the retry thread, causing SteamVR to
+    // auto-launch a broken instance on next boot, and (b) leak a tray icon
+    // / window / mutex into a zombie process. Tear everything down cleanly
+    // and propagate the failure as exit code 1 to WinMain's caller.
+    if (!g_app.initialize()) {
+        MICMAP_LOG_ERROR("MicMapApp::initialize failed; exiting");
+        ImGui_ImplDX11_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext();
+        CleanupDeviceD3D();
+        DestroyWindow(g_app.hwnd);
+        UnregisterClassW(wc.lpszClassName, wc.hInstance);
+        CloseHandle(hMutex);
+        return 1;
+    }
     SetupSystemTray(g_app.hwnd);
 
     // Start async initialization of VR and driver
