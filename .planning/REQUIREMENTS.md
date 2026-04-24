@@ -53,7 +53,8 @@ SteamVR-native auto-launch via `app.vrmanifest`. No Windows Run-key, no startup 
 - [ ] **AUTO-03**: App supports `--unregister-vrmanifest` CLI mode — symmetric teardown invoked by the installer uninstaller
 - [ ] **AUTO-04**: On normal startup, app runs idempotent re-registration so manifest state is self-healing across SteamVR upgrades / user-initiated removal
 - [ ] **AUTO-05**: App pumps `IVRSystem::PollNextEvent` in its main loop — on `VREvent_Quit`: call `AcknowledgeQuit_Exiting()`, tear down subsystems, exit. Prevents the OpenVR #1425 respawn loop.
-- [ ] **AUTO-06**: Auto-launched `micmap.exe` opens silently — no console window allocation, no foreground focus, tray-icon-only behavior on background startup
+- [x] **AUTO-06
+**: Auto-launched `micmap.exe` opens silently — no console window allocation, no foreground focus, tray-icon-only behavior on background startup
 
 ### Installer (INST)
 

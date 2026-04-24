@@ -53,7 +53,7 @@ created: 2026-04-23
 - [ ] `src/steamvr/include/micmap/steamvr/manifest_registrar.hpp` — `IManifestRegistrar` interface + `createManifestRegistrar()` factory (header stub so downstream tasks compile)
 - [ ] `src/steamvr/src/manifest_registrar.cpp` — empty implementation stubs returning error (to be filled per plan)
 - [x] Empirical resolution of **A2 (arguments field format)** — RESOLVED 2026-04-23 in Plan 03-02 Task 2: STRING form wins. SteamVR auto-launched `micmap.exe --minimized` from `"arguments": "--minimized"` on Bigscreen Beyond + Windows 11. Array variant deleted. See `.planning/phases/03-auto-start/03-02-A2-RESULT.md`.
-- [ ] Empirical resolution of **Q4 (Phase 2 JSON writer round-trip)** — add `shownTrayNotification: true`, save/reload config, assert persistence via existing `config_manager` test path.
+- [x] Empirical resolution of **Q4 (Phase 2 JSON writer round-trip)** — RESOLVED 2026-04-23 in Plan 03-03 Task 1. Phase 2 writer does NOT auto-serialize newly-added struct fields without explicit wiring (RED test Case 2 failed before adding `j["shownTrayNotification"] = c.shownTrayNotification;` to `appConfigToJson`). After wiring read + write, all 5 round-trip cases GREEN. See `.planning/phases/03-auto-start/03-03-SUMMARY.md`.
 - [ ] Linking `Pathcch.lib` in `apps/micmap/CMakeLists.txt` (for `PathCchRemoveFileSpec`).
 
 ---

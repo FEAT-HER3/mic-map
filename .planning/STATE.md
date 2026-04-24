@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Phase 03 Plan 02 complete — A2 LOCKED to string form; configure_file + Pathcch wired; test_vrmanifest_schema GREEN. Ready for Plan 03-03 (parallel with 03-02 already done) or Wave 1 plans (03-04, 03-05).
-last_updated: "2026-04-24T03:30:54.299Z"
+stopped_at: Phase 03 Plan 03 complete — shownTrayNotification field wired (read+write); Q4 closed GREEN; 5 round-trip cases pass. Plan 06 has its persistence flag.
+last_updated: "2026-04-24T03:36:44.308Z"
 last_activity: 2026-04-24
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 15
-  completed_plans: 10
-  percent: 67
+  completed_plans: 11
+  percent: 73
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-04-22)
 ## Current Position
 
 Phase: 03 (auto-start) — EXECUTING
-Plan: 3 of 7 (next: 03-02 — `app.vrmanifest.in` + configure_file + A2 empirical resolution)
+Plan: 5 of 7 (next: 03-02 — `app.vrmanifest.in` + configure_file + A2 empirical resolution)
 Next: Plans 03-02 / 03-03 are Wave 0 parallel-safe followers (both depend only on 03-01's RED scaffold)
 Last activity: 2026-04-24
 
-Progress: [███████░░░] 67%
+Progress: [███████░░░] 73%
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Progress: [███████░░░] 67%
 | Phase 01-driver-sidecar-migration P04 | 2580 | 3 tasks | 7 files |
 | Phase 03-auto-start P01 | 600 | 2 tasks | 7 files |
 | Phase 03-auto-start P02 | 480 | 3 tasks | 8 files |
+| Phase 03-auto-start P03 | 34 | 1 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -79,6 +80,7 @@ Recent decisions affecting current work:
 - Plan 03-01 vrmanifest schema test uses ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/app.vrmanifest path (multi-config-correct under MSBuild) and links against bare `nlohmann_json` target (project's external/CMakeLists.txt declares interface lib without `::` alias)
 - Plan 03-01 vr_input quit-ordering test follows OPTION 1 (free function processVREvent in vr_input_events.{hpp,cpp}) — Plan 03-05 must extract to free fn rather than refactor OpenVRInput class internals
 - Plan 03-02 — A2 LOCKED to STRING form: 'arguments': '--minimized'. SteamVR auto-launched 'micmap.exe --minimized' on Bigscreen Beyond + Win11; array-form variant deleted; test_vrmanifest_schema strict-asserts string form. Forward-slash manifest path is a SILENT KILLER (vrserver treats it as working dir, skips manifest, returns no error) — surfaced as <critical_pitfall> in Plan 03-04 with mandatory runtime guard.
+- Plan 03-03 closes Q4 GREEN: Phase 2 writer requires explicit per-field wiring (j["key"] = c.field) — no struct introspection in nlohmann::json. Future AppConfig fields require 3 edits: declaration, read line, write line.
 
 ### Pending Todos
 
@@ -102,8 +104,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-04-24T03:30:54.294Z
-Stopped at: Phase 03 Plan 02 complete — A2 LOCKED to string form; configure_file + Pathcch wired; test_vrmanifest_schema GREEN. Ready for Plan 03-03 (parallel with 03-02 already done) or Wave 1 plans (03-04, 03-05).
+Last session: 2026-04-24T03:36:44.303Z
+Stopped at: Phase 03 Plan 03 complete — shownTrayNotification field wired (read+write); Q4 closed GREEN; 5 round-trip cases pass. Plan 06 has its persistence flag.
 Resume file: None
 
 **Planned Phase:** 03 (auto-start) — 7 plans — 2026-04-24T02:46:02.744Z
