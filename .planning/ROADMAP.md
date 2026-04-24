@@ -71,7 +71,7 @@ This roadmap delivers the "Seamless SteamVR Integration" milestone: rip out the 
   - [x] 03-01-PLAN.md — Wave 0 test scaffold: RED ctest hooks for all AUTO-0x + injection seams (IVRApplicationsSurface, IVRSystem seam, Shell_NotifyIcon fn-ptr, IConfigManager) so Plans 04–07 are unit-testable without booting SteamVR (Wave 0) — see 03-01-SUMMARY.md
   - [x] 03-02-PLAN.md — `app.vrmanifest.in` template + `configure_file(@ONLY)` + `Pathcch.lib` link + A2 empirical resolution: STRING form WINS (`"arguments": "--minimized"`); array variant deleted; test_vrmanifest_schema GREEN. Forward-slash-path silent-skip pitfall surfaced for Plan 03-04. (Wave 0) — see 03-02-SUMMARY.md
   - [x] 03-03-PLAN.md — `AppConfig::shownTrayNotification` top-level bool (default false) + Phase 2 defensive reader + writer round-trip; empirically closed Research Open Q #4 GREEN (writer requires explicit per-field wiring) — see 03-03-SUMMARY.md
-  - [ ] 03-04-PLAN.md — `manifest_registrar` module: `IManifestRegistrar` (registerApp / unregisterApp / ensureRegistered / getLastError) via `vr::VRApplications()` accessor; `AddApplicationManifest(path, bTemporary=false)` → 100ms×20 poll → `SetApplicationAutoLaunch`; absolute path via `GetModuleFileNameW` + `PathCchRemoveFileSpec` (D-21). Stub under `!MICMAP_HAS_OPENVR` (Wave 1)
+  - [x] 03-04-PLAN.md — `manifest_registrar` module: `IManifestRegistrar` + `IVRApplicationsSurface` seam + `VRApplicationsAdapter` + `ManifestRegistrarImpl` shipped; A2 forward-slash guard live; `ctest -R test_manifest_registrar` 5/5 GREEN (2.43s including Case 2 poll-timeout). AUTO-02/03/04 closed at unit level — see 03-04-SUMMARY.md
   - [ ] 03-05-PLAN.md — Extract `processVREvent` to testable free function in `vr_input_events.{hpp,cpp}`; inject `vr::VRSystem()->AcknowledgeQuit_Exiting()` BEFORE `notifyEvent(Quit)` — load-bearing fix for AUTO-05 / OpenVR #1425 (Wave 1)
   - [ ] 03-06-PLAN.md — `main.cpp` CLI + silent-boot integration: `CommandLineToArgvW` parse (D-01), WinMain CLI fork early-exit (D-02, D-03, D-04), single-instance mutex `--minimized` skip (D-08), silent-mode `ShowWindow` skip (D-06), first-silent-launch tray balloon via `NIM_MODIFY + NIF_INFO + NIIF_RESPECT_QUIET_TIME` (D-09, D-10) (Wave 2)
   - [ ] 03-07-PLAN.md — Re-registration `std::thread` + `std::atomic<bool>` retry loop (NEVER `std::async` — Pitfall 6 / amended D-15) + `MicMapApp::shutdown()` ordered teardown per D-12 + exit-path convergence (D-14); SteamVR full-restart UAT (Wave 3)
@@ -109,7 +109,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5. Phase 2 is parallel-
 |-------|----------------|--------|-----------|
 | 1. Driver Sidecar Migration | 3/5 | In progress | - |
 | 2. Config Read-Back | 3/3 | Complete | 2026-04-23 |
-| 3. Auto-Start | 3/7 | In progress | - |
+| 3. Auto-Start | 4/7 | In progress | - |
 | 4. Installer | 0/TBD | Not started | - |
 | 5. Documentation | 0/TBD | Not started | - |
 
