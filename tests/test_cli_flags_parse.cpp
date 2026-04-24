@@ -92,6 +92,26 @@ int main() {
         std::cout << "PASS case_6_no_flags\n";
     }
 
+    // ---- case_7: --patch-bindings sets patchBindings only (Phase 4 INST-08) ----
+    {
+        const wchar_t* argv[] = { L"micmap.exe", L"--patch-bindings" };
+        CliFlags f = parseCliArgs(2, argv);
+        MM_CHECK(f.patchBindings == true);
+        MM_CHECK(f.unpatchBindings == false);
+        MM_CHECK(f.registerManifest == false);
+        std::cout << "PASS case_7_patch_bindings\n";
+    }
+
+    // ---- case_8: --unpatch-bindings sets unpatchBindings only (Phase 4 INST-08) ----
+    {
+        const wchar_t* argv[] = { L"micmap.exe", L"--unpatch-bindings" };
+        CliFlags f = parseCliArgs(2, argv);
+        MM_CHECK(f.unpatchBindings == true);
+        MM_CHECK(f.patchBindings == false);
+        MM_CHECK(f.registerManifest == false);
+        std::cout << "PASS case_8_unpatch_bindings\n";
+    }
+
     std::cout << "all tests passed\n";
     return 0;
 }
