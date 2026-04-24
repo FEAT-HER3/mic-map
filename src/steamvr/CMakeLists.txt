@@ -11,6 +11,7 @@
 
 add_library(micmap_steamvr STATIC
     src/vr_input.cpp
+    src/vr_input_events.cpp
     src/manifest_registrar.cpp
 )
 

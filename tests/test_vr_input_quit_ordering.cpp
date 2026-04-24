@@ -10,10 +10,15 @@
  *
  * Plan 03-05 supplies:
  *   - src/steamvr/include/micmap/steamvr/vr_input_events.hpp
- *       declares IVRSystemSeam, IEventSink, processVREvent() (free fn).
+ *       declares IVRSystemSeam, IEventSink, processVREventImpl() (free fn).
  *   - src/steamvr/src/vr_input_events.cpp
- *       implements processVREvent so the VREvent_Quit branch calls
+ *       implements processVREventImpl so the VREvent_Quit branch calls
  *       seam.AcknowledgeQuit_Exiting() first, then sink.notifyEvent(Quit).
+ *
+ * Free function is named processVREventImpl (not processVREvent) to avoid
+ * shadowing OpenVRInput::processVREvent — the member calls the free fn
+ * via a pair of thin adapters, and the distinct name keeps the delegation
+ * call site unambiguous without `::` scoping gymnastics.
  *
  * Plan 03-05 also rewrites vr_input.cpp's existing private processVREvent
  * member to delegate into the free function so the production code path
@@ -75,7 +80,7 @@ int main() {
         StubVRSystemSeam system(log);
         StubEventSink    sink(log);
 
-        svr::processVREvent(system, sink, static_cast<uint32_t>(vr::VREvent_Quit));
+        svr::processVREventImpl(system, sink, static_cast<uint32_t>(vr::VREvent_Quit));
 
         // Both calls must have happened.
         MM_CHECK(log.size() == 2);
@@ -93,8 +98,8 @@ int main() {
         StubVRSystemSeam system(log);
         StubEventSink    sink(log);
 
-        svr::processVREvent(system, sink,
-                            static_cast<uint32_t>(vr::VREvent_DashboardActivated));
+        svr::processVREventImpl(system, sink,
+                                static_cast<uint32_t>(vr::VREvent_DashboardActivated));
 
         // No AcknowledgeQuit_Exiting for a non-Quit event.
         bool sawAck = false;
