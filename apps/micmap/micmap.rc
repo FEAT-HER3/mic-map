@@ -6,9 +6,9 @@
 #include <windows.h>
 #include "resource.h"
 
-// Note: Icon is loaded from system resources at runtime
-// If you want a custom icon, create micmap.ico and uncomment:
-// IDI_MICMAP_ICON ICON "micmap.ico"
+// Shared icon asset (single source of truth for the exe + installer + tray)
+// Path is relative to this .rc file (apps/micmap/micmap.rc -> installer/micmap.ico).
+IDI_MICMAP_ICON ICON "../../installer/micmap.ico"
 
 // Version information
 VS_VERSION_INFO VERSIONINFO
