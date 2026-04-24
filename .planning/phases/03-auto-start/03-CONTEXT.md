@@ -36,7 +36,8 @@ Out of scope (other phases / future milestones):
 
 ### Silent auto-launch UX (AUTO-06)
 
-- **D-05:** **SteamVR auto-launches pass `--minimized` via `app.vrmanifest`'s `arguments` field** (`"arguments": ["--minimized"]`). User-clicked shortcuts do not. This is the sole signal the app uses to start silent. No parent-process inspection, no environment sniffing, no heuristics.
+- **D-05:** **SteamVR auto-launches pass `--minimized` via `app.vrmanifest`'s `arguments` field**. User-clicked shortcuts do not. This is the sole signal the app uses to start silent. No parent-process inspection, no environment sniffing, no heuristics.
+  - **Open item A2 (flagged by research 2026-04-23):** `arguments` field format is ambiguous — CONTEXT.md originally specified array form `["--minimized"]`; surveyed live vrmanifests use string form `"--minimized"`. Wave 0 empirically resolves by registering both forms and observing SteamVR's auto-launch invocation. Lock the working form into `app.vrmanifest.in`.
 - **D-06:** Silent-mode window policy: `CreateWindowW` runs as today but **`ShowWindow` is never called**; `minimizedToTray = true` from boot. Tray icon's "Show" menu item restores normally. Matches the current `--minimized` behavior.
 - **D-07:** Console-window guardrail: continue relying on `/SUBSYSTEM:WINDOWS` (already in `apps/micmap/CMakeLists.txt`). Add a verification grep gate at phase exit: `grep -r "SUBSYSTEM:CONSOLE" apps/micmap` must return zero results. No runtime `FreeConsole()` call.
 - **D-08:** Single-instance mutex: keep existing "focus existing window + exit" path for user-clicked second instances. **When the second instance has `--minimized` in argv, skip the `SetForegroundWindow` / `PostMessage(IDM_SHOW)` calls** and exit silently. Prevents a SteamVR re-launch from stealing focus from the already-running tray app.
@@ -58,8 +59,8 @@ Out of scope (other phases / future milestones):
 
 ### Registration flow (AUTO-01, AUTO-02, AUTO-04)
 
-- **D-15:** GUI startup re-registers on **every boot, fire-and-forget via `std::async(std::launch::async, ...)`**. The task: `VR_Init(Utility)` → `IsApplicationInstalled(app_key)` → if `false`, call `AddApplicationManifest` + poll + `SetApplicationAutoLaunch`; if `true`, no-op. Self-heals across SteamVR upgrades and user-initiated manifest removal (AUTO-04).
-- **D-16:** When `VR_Init` fails with `VRInitError_Init_HmdNotFound` / `VRInitError_Init_NoServerForBackgroundApp` (SteamVR not running): **silent retry loop, 30s interval, stops after first successful registration**. No log spam for the expected "SteamVR not running" case. Log INFO once on first successful registration; log WARNING once with the enum name if the error is anything else (unexpected). Detached thread; joins on app shutdown.
+- **D-15 (amended 2026-04-23):** GUI startup re-registers on **every boot via a dedicated `std::thread` with a `std::atomic<bool> stop` flag**. **Do NOT use `std::async(std::launch::async, ...)`** — the returned `std::future`'s destructor joins (standards-mandated), defeating fire-and-forget semantics and blocking the main thread on shutdown. The thread: `VR_Init(Utility)` → `IsApplicationInstalled(app_key)` → if `false`, call `AddApplicationManifest` + poll + `SetApplicationAutoLaunch`; if `true`, no-op. Self-heals across SteamVR upgrades and user-initiated manifest removal (AUTO-04). Thread handle is owned by `MicMapApp`; `shutdown()` (D-12) sets `stop.store(true)`, wakes the thread (condition_variable or short sleep interval), and `join()`s before returning. Research note: this corrects the pre-research `std::async` wording; all other D-15 semantics unchanged.
+- **D-16:** When `VR_Init` fails with `VRInitError_Init_HmdNotFound` / `VRInitError_Init_NoServerForBackgroundApp` (SteamVR not running): **silent retry loop, 30s interval, stops after first successful registration OR on `stop.load() == true`**. No log spam for the expected "SteamVR not running" case. Log INFO once on first successful registration; log WARNING once with the enum name if the error is anything else (unexpected). Detached-lifetime via `std::thread` owned by `MicMapApp`; joined in `shutdown()` (per amended D-15).
 - **D-17:** `IsApplicationInstalled` poll tuning (OpenVR issue #1378): **100ms ticks, 2000ms ceiling (20 attempts max)**, log `"polling for manifest install"` once on entry and either `"manifest ready after Nms"` or `"timeout after 2000ms"` on exit. No per-tick log output.
 - **D-18:** Re-registration task logs at **INFO on state change only** (not-installed → installed). Subsequent boots that find the manifest already installed emit no log output.
 
@@ -122,13 +123,14 @@ Out of scope (other phases / future milestones):
 
 ### OpenVR API surface (consult SDK headers directly at planning time)
 
-- `IVRApplications_008::AddApplicationManifest(absolutePath, bTemporary=false)`
-- `IVRApplications_008::IsApplicationInstalled(pchAppKey)` — polling target after `AddApplicationManifest`.
-- `IVRApplications_008::SetApplicationAutoLaunch(pchAppKey, bAutoLaunch)` — only call after `IsApplicationInstalled` returns true (OpenVR #1378).
-- `IVRApplications_008::RemoveApplicationManifest(pchApplicationsManifestFullPath)` — Phase 3 unregister path.
-- `IVRSystem::PollNextEvent` (already in use) — source of `VREvent_Quit`.
-- `IVRSystem::AcknowledgeQuit_Exiting()` — D-11 call site.
-- `VR_Init(VRApplication_Utility)` — for CLI modes and the async re-registration task; does NOT require an HMD.
+- **Use the `vr::VRApplications()` accessor function — never hardcode the interface version string.** Linked OpenVR SDK at `bey-closer-t1/extern/openvr` is v2.5.1, exposing `IVRApplications_007` (not `_008` as SUMMARY.md previously referenced). The four methods MicMap needs are ABI-compatible across `_007` and `_008`; accessor-based calls survive any future SDK bump.
+- `vr::VRApplications()->AddApplicationManifest(absolutePath, bTemporary=false)`
+- `vr::VRApplications()->IsApplicationInstalled(pchAppKey)` — polling target after `AddApplicationManifest`.
+- `vr::VRApplications()->SetApplicationAutoLaunch(pchAppKey, bAutoLaunch)` — only call after `IsApplicationInstalled` returns true (OpenVR #1378).
+- `vr::VRApplications()->RemoveApplicationManifest(pchApplicationsManifestFullPath)` — Phase 3 unregister path.
+- `vr::VRSystem()->PollNextEvent` (already in use) — source of `VREvent_Quit`.
+- `vr::VRSystem()->AcknowledgeQuit_Exiting()` — D-11 call site. Return type is `void`; call extends the watchdog, does not terminate the process.
+- `VR_Init(VRApplication_Utility)` — for CLI modes and the re-registration thread; does NOT require an HMD.
 
 ### External references (not canonical, for context)
 
