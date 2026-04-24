@@ -176,10 +176,23 @@ void CleanupDeviceD3D() {
 }
 
 void CreateRenderTarget() {
-    ID3D11Texture2D* pBackBuffer;
-    g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
-    g_pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &g_mainRenderTargetView);
+    // IN-13 iter-3: check HRESULTs. GetBuffer failure leaves pBackBuffer
+    // uninitialized (UB on subsequent deref/Release); CreateRenderTargetView
+    // failure leaves g_mainRenderTargetView null, which the render loop
+    // then binds via OMSetRenderTargets -> crash on ClearRenderTargetView.
+    ID3D11Texture2D* pBackBuffer = nullptr;
+    HRESULT hr = g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+    if (FAILED(hr) || !pBackBuffer) {
+        MICMAP_LOG_ERROR("GetBuffer failed: hr=0x", std::hex, hr);
+        g_mainRenderTargetView = nullptr;
+        return;
+    }
+    hr = g_pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &g_mainRenderTargetView);
     pBackBuffer->Release();
+    if (FAILED(hr)) {
+        MICMAP_LOG_ERROR("CreateRenderTargetView failed: hr=0x", std::hex, hr);
+        g_mainRenderTargetView = nullptr;
+    }
 }
 
 void CleanupRenderTarget() {
@@ -486,8 +499,14 @@ void MicMapApp::shutdown() {
     // 5. Persist config (shownTrayNotification flag + any UI-edited fields)
     if (configManager) configManager->saveDefault();
     // 6. Remove tray icon
+    // IN-12 iter-3: symmetric WARNING log with IN-03 NIM_ADD path so a
+    // "stuck zombie tray icon after MicMap quit" is diagnosable from the log.
     if (nid.cbSize != 0) {
-        Shell_NotifyIconW(NIM_DELETE, &nid);
+        if (!Shell_NotifyIconW(NIM_DELETE, &nid)) {
+            MICMAP_LOG_WARNING("Shell_NotifyIconW(NIM_DELETE) failed; tray icon "
+                               "may persist until explorer restart (GetLastError=",
+                               GetLastError(), ")");
+        }
         nid.cbSize = 0;  // mark removed so re-entry into shutdown is a no-op
     }
     // Steps 7-8 (ImGui shutdown, D3D/window cleanup, UnregisterClassW) are
@@ -936,12 +955,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
     });
     g_app.driverConnectFuture = connectTask.get_future();
     g_app.vrInitFuture = vrInitTask.get_future();
+    // IN-11 iter-3: invoke both packaged_tasks unconditionally so their
+    // futures always resolve to a valid void() rather than broken_promise.
+    // Each task body already short-circuits on initialConnectCancel (lines
+    // 925-929, 931-935), so the fast-cancel intent is preserved without
+    // leaving the main-loop reconnect guard looking at broken-promise futures.
     g_app.initialConnectThread = std::thread(
         [connectTask = std::move(connectTask),
          vrInitTask  = std::move(vrInitTask)]() mutable {
-            if (g_app.initialConnectCancel.load()) return;
             connectTask();
-            if (g_app.initialConnectCancel.load()) return;
             vrInitTask();
         });
 
