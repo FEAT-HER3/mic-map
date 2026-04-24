@@ -102,6 +102,13 @@ struct MicMapApp {
     bool minimizedToTray = false;
     std::mutex audioMutex;
 
+    // Phase 3 Plan 07: fire-and-forget re-registration thread (D-15 amended,
+    // Pitfall 6). MUST be std::thread + atomic stop — std::async's future
+    // destructor blocks in its dtor, which would defeat fire-and-forget.
+    std::unique_ptr<steamvr::IManifestRegistrar> manifestRegistrar;
+    std::thread                                   manifestRetryThread;
+    std::atomic<bool>                             manifestRetryCancel{false};
+
     bool initialize();
     void shutdown();
     void onTrigger();
@@ -232,6 +239,44 @@ bool MicMapApp::initialize() {
         }
     });
 
+    // Phase 3 Plan 07 / D-15 amended (Pitfall 6): fire-and-forget manifest
+    // re-registration on every GUI boot. Self-heals across SteamVR upgrades
+    // and user-initiated manifest removal (AUTO-04). MUST use std::thread
+    // with std::atomic<bool> cancel — std::async's future destructor would
+    // block in its dtor and defeat fire-and-forget semantics (Pitfall 6).
+    manifestRegistrar = steamvr::createManifestRegistrar();
+    manifestRetryThread = std::thread([this]() {
+#ifdef MICMAP_HAS_OPENVR
+        while (!manifestRetryCancel.load()) {
+            vr::EVRInitError err = vr::VRInitError_None;
+            vr::VR_Init(&err, vr::VRApplication_Utility);
+            if (err == vr::VRInitError_None) {
+                const auto r = manifestRegistrar->ensureRegistered();
+                vr::VR_Shutdown();
+                if (r == steamvr::RegisterResult::Success) {
+                    // D-18: state-change-only logging. ensureRegistered already
+                    // logs INFO on not-installed -> installed transition; no-op
+                    // when already installed. Thread exits after success.
+                    return;
+                }
+                // ensureRegistered logs its own WARNINGs on failure paths;
+                // do not spam here (D-16 / D-18).
+            } else if (err == vr::VRInitError_Init_HmdNotFound ||
+                       err == vr::VRInitError_Init_NoServerForBackgroundApp) {
+                // D-16: SteamVR not running — silent retry, no log spam.
+            } else {
+                // D-16: unexpected VRInitError — one WARNING with enum name.
+                MICMAP_LOG_WARNING("manifest retry VR_Init unexpected error: ",
+                                   vr::VR_GetVRInitErrorAsEnglishDescription(err));
+            }
+            // 30s sleep in 1s cancel-responsive ticks so shutdown is prompt.
+            for (int i = 0; i < 30 && !manifestRetryCancel.load(); ++i) {
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+        }
+#endif
+    });
+
     // State machine acts as a pure edge-latch + cooldown over the
     // detector's already temporally-gated DetectionResult::isWhiteNoise
     // boolean. The detector owns the "sustain for minDurationMs" logic
@@ -351,14 +396,43 @@ bool MicMapApp::initialize() {
 }
 
 void MicMapApp::shutdown() {
+    // Phase 3 Plan 07 / D-12 / D-14: idempotent ordered teardown. Called from
+    // the main-loop exit path in WinMain after `running=false` breaks the
+    // message pump; may also be reached via fatal-error paths. Guard
+    // re-entry so a second invocation is a no-op (all exit paths converge).
+    static std::atomic<bool> alreadyShutdown{false};
+    if (alreadyShutdown.exchange(true)) return;
+
     running = false;
+
+    // 0. Stop retry thread FIRST — before vrInput->shutdown — so no retry
+    //    attempt is mid-VR_Init while vrInput::shutdown is calling VR_Shutdown
+    //    (T-03-07-02 mitigation). Cancel is atomic; join blocks up to 1s
+    //    worst-case thanks to the 1s-tick cancel-responsive sleep loop.
+    manifestRetryCancel.store(true);
+    if (manifestRetryThread.joinable()) manifestRetryThread.join();
+
+    // D-12 ordered teardown (reverse-init):
+    // 1. Stop audio capture
     if (audioCapture) audioCapture->stopCapture();
+    // 2. Persist detector training (pre-reset) + reset detector
     if (detector && detector->hasTrainingData() && configManager)
         detector->saveTrainingData(configManager->getTrainingDataPath());
-    if (vrInput) vrInput->shutdown();
+    if (detector) detector.reset();
+    // 3. Disconnect driver client
     if (driverClient) driverClient->disconnect();
+    // 4. Shutdown VR input (calls VR_Shutdown under MICMAP_HAS_OPENVR)
+    if (vrInput) vrInput->shutdown();
+    // 5. Persist config (shownTrayNotification flag + any UI-edited fields)
     if (configManager) configManager->saveDefault();
-    RemoveSystemTray();
+    // 6. Remove tray icon
+    if (nid.cbSize != 0) {
+        Shell_NotifyIconW(NIM_DELETE, &nid);
+        nid.cbSize = 0;  // mark removed so RemoveSystemTray is a no-op
+    }
+    // Steps 7-8 (ImGui shutdown, D3D/window cleanup, UnregisterClassW) are
+    // handled by WinMain's tail after shutdown() returns — preserves the
+    // existing call-site topology.
 }
 
 void MicMapApp::onTrigger() {
