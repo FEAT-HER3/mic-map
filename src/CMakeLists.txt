@@ -3,6 +3,7 @@
 
 add_subdirectory(common)
 add_subdirectory(audio)
+add_subdirectory(bindings)
 add_subdirectory(detection)
 add_subdirectory(steamvr)
 add_subdirectory(core)
