@@ -147,11 +147,16 @@ else()
         COMMAND ${CMAKE_COMMAND} -E echo
             "Installer built: ${MICMAP_INSTALLER_DIR}/MicMap-Setup-v${PROJECT_VERSION}.exe"
 
-        DEPENDS micmap
+        # WR-06: target-level dependency on micmap must be expressed via
+        # add_dependencies(package micmap) below -- add_custom_target's
+        # DEPENDS keyword is for FILE-level dependencies (CMake semantics),
+        # not target dependencies, so listing `micmap` there does not force
+        # a rebuild when its sources change.
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
         COMMENT "Building MicMap-Setup-v${PROJECT_VERSION}.exe"
         VERBATIM
     )
+    add_dependencies(package micmap)
     if(MICMAP_BUILD_DRIVER AND OpenVR_FOUND)
         add_dependencies(package driver_micmap)
     endif()
