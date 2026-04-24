@@ -324,7 +324,15 @@ bool writeAtomicWindows(const std::filesystem::path& dest, const std::string& ut
         }
         f.write(utf8Content.data(), static_cast<std::streamsize>(utf8Content.size()));
         if (!f) {
+            // WR-06: unlink the partial/zero-byte temp file on write failure
+            // so repeated save failures (disk full, ACL changes) don't leak
+            // orphan config.json.tmp files next to the real config. Mirrors
+            // the cleanup already performed on ReplaceFileW / MoveFileExW
+            // failure below.
             MICMAP_LOG_ERROR("Write to temp config file failed");
+            f.close();
+            std::error_code remEc;
+            fs::remove(tmp, remEc);
             return false;
         }
         f.flush();
