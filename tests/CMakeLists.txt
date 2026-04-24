@@ -57,3 +57,32 @@ add_executable(test_manifest_registrar test_manifest_registrar.cpp)
 target_compile_features(test_manifest_registrar PRIVATE cxx_std_17)
 target_link_libraries(test_manifest_registrar PRIVATE micmap::steamvr)
 add_test(NAME test_manifest_registrar COMMAND test_manifest_registrar)
+
+# AUTO-05 / D-11: ack-before-notify ordering inside processVREvent.
+# (impl + vr_input_events.hpp arrive in Plan 03-05).
+add_executable(test_vr_input_quit_ordering test_vr_input_quit_ordering.cpp)
+target_compile_features(test_vr_input_quit_ordering PRIVATE cxx_std_17)
+target_link_libraries(test_vr_input_quit_ordering PRIVATE micmap::steamvr)
+add_test(NAME test_vr_input_quit_ordering COMMAND test_vr_input_quit_ordering)
+
+# AUTO-06 / D-09 / D-10: first-silent-launch tray balloon one-shot.
+# (impl + first_launch_balloon.hpp arrive in Plan 03-06; AppConfig field
+# shownTrayNotification also lands in Plan 03-06.)
+add_executable(test_tray_balloon_once test_tray_balloon_once.cpp)
+target_compile_features(test_tray_balloon_once PRIVATE cxx_std_17)
+target_include_directories(test_tray_balloon_once PRIVATE
+    ${CMAKE_SOURCE_DIR}/apps/micmap)
+target_link_libraries(test_tray_balloon_once PRIVATE micmap::core)
+add_test(NAME test_tray_balloon_once COMMAND test_tray_balloon_once)
+
+# AUTO-01 + Open-item A2: app.vrmanifest schema gate.
+# (manifest emission via configure_file arrives in Plan 03-02.
+# add_dependencies forces ctest to build micmap first so the manifest
+# is on disk when the schema test runs.)
+add_executable(test_vrmanifest_schema test_vrmanifest_schema.cpp)
+target_compile_features(test_vrmanifest_schema PRIVATE cxx_std_17)
+target_link_libraries(test_vrmanifest_schema PRIVATE nlohmann_json)
+target_compile_definitions(test_vrmanifest_schema PRIVATE
+    MICMAP_MANIFEST_PATH="${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/app.vrmanifest")
+add_dependencies(test_vrmanifest_schema micmap)
+add_test(NAME test_vrmanifest_schema COMMAND test_vrmanifest_schema)
