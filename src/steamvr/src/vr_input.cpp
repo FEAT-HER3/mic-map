@@ -10,9 +10,11 @@
  */
 
 #include "micmap/steamvr/vr_input.hpp"
+#include "micmap/steamvr/vr_input_events.hpp"
 #include "micmap/common/logger.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <mutex>
 
 #ifdef MICMAP_HAS_OPENVR
@@ -351,20 +353,43 @@ public:
     }
     
 private:
-    void processVREvent(const vr::VREvent_t& event) {
-        switch (event.eventType) {
-            case vr::VREvent_Quit:
-                MICMAP_LOG_INFO("SteamVR quit event received");
-                notifyEvent(VREventType::Quit);
-                break;
-
-            default:
-                // Ignore other events - button edges are driven by IDriverClient,
-                // dashboard-state polling is no longer needed by the app layer.
-                break;
+    // Adapters that let OpenVRInput::processVREvent delegate to the free
+    // processVREventImpl(IVRSystemSeam&, IEventSink&, uint32_t) without
+    // leaking OpenVR surface into the test-only seam header.
+    //
+    // Defined as nested private classes so EventSinkAdapter has access to
+    // OpenVRInput::notifyEvent without a friend declaration.
+    class VRSystemAdapter : public IVRSystemSeam {
+    public:
+        explicit VRSystemAdapter(vr::IVRSystem* sys) : sys_(sys) {}
+        void AcknowledgeQuit_Exiting() override {
+            // D-11 / Pitfall 2 / OpenVR #1425: this is THE call that
+            // stops Valve's 2-second quit watchdog. Called BEFORE the
+            // app-level notifyEvent callback in processVREventImpl.
+            if (sys_) sys_->AcknowledgeQuit_Exiting();
         }
+    private:
+        vr::IVRSystem* sys_;
+    };
+
+    class EventSinkAdapter : public IEventSink {
+    public:
+        explicit EventSinkAdapter(OpenVRInput& self) : self_(self) {}
+        void notifyEvent(VREventType t) override { self_.notifyEvent(t); }
+    private:
+        OpenVRInput& self_;
+    };
+
+    void processVREvent(const vr::VREvent_t& event) {
+        // Delegate to the testable free function so production and unit
+        // tests share the same ack-before-notify ordering logic.
+        // See src/steamvr/include/micmap/steamvr/vr_input_events.hpp.
+        VRSystemAdapter  sysAdapter(vrSystem_);
+        EventSinkAdapter sinkAdapter(*this);
+        processVREventImpl(sysAdapter, sinkAdapter,
+                           static_cast<uint32_t>(event.eventType));
     }
-    
+
     void notifyEvent(VREventType type) {
         std::lock_guard<std::mutex> lock(callbackMutex_);
         if (eventCallback_) {
