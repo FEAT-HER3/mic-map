@@ -18,6 +18,16 @@
 #include <fstream>
 #include <system_error>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
+
 namespace micmap::bindings {
 
 namespace {
@@ -189,12 +199,17 @@ json BuildControllerTypeProfile(const std::string& controllerType) {
 // does not expose VR_GetRuntimePath, so we parse this JSON ourselves.
 fs::path ResolveSteamVrConfigDir(LogSink log) {
 #ifdef _WIN32
-    const char* localAppData = std::getenv("LOCALAPPDATA");
-    if (!localAppData) {
-        LogFmt(log, "MicMap[patch]: LOCALAPPDATA not set; cannot resolve SteamVR path\n");
+    // IN-06: std::getenv returns an ACP-encoded copy on Windows, which
+    // mangles non-ASCII user-profile paths (e.g. C:\Users\Jörg\...). Use
+    // GetEnvironmentVariableW + a wchar_t buffer so the path survives
+    // as UTF-16 end-to-end. fs::path has a native wchar_t ctor on Windows.
+    wchar_t localAppDataW[MAX_PATH];
+    DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", localAppDataW, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) {
+        LogFmt(log, "MicMap[patch]: LOCALAPPDATA not set or too long; cannot resolve SteamVR path\n");
         return {};
     }
-    fs::path pathsFile = fs::path(localAppData) / "openvr" / "openvrpaths.vrpath";
+    fs::path pathsFile = fs::path(localAppDataW) / L"openvr" / L"openvrpaths.vrpath";
 #else
     // Not expected to be exercised (driver is Windows-only), but keep the
     // filesystem code portable.
@@ -218,8 +233,12 @@ fs::path ResolveSteamVrConfigDir(LogSink log) {
             LogFmt(log, "MicMap[patch]: openvrpaths.vrpath has no runtime entries\n");
             return {};
         }
+        // IN-06: nlohmann/json stores strings as UTF-8. fs::path(const
+        // std::string&) on Windows interprets its argument as ACP, which
+        // corrupts non-ASCII SteamVR install paths. fs::u8path preserves
+        // the UTF-8 bytes end-to-end.
         const std::string runtime = j["runtime"][0].get<std::string>();
-        return fs::path(runtime) / "resources" / "config";
+        return fs::u8path(runtime) / "resources" / "config";
     } catch (const std::exception& e) {
         LogFmt(log, "MicMap[patch]: failed to parse openvrpaths.vrpath: %s\n", e.what());
         return {};
