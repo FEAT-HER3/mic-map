@@ -139,20 +139,27 @@ add_custom_command(TARGET driver_micmap POST_BUILD
     COMMENT "Copying driver resources to output directory"
 )
 
-# Installation rules for the driver
+# Installation rules for the driver.
+#
+# Phase 4 D-01: installer lands driver files at {SteamVR}\drivers\micmap\ -- so
+# the staged tree (cmake --install . --prefix build/stage) must match that
+# layout under drivers/ (plural) so installer/MicMap.iss [Files] can source
+# {#STAGE_DIR}\drivers\micmap\* verbatim. The dev-workflow POST_BUILD copies
+# above still emit to build/driver/micmap/** (singular) for local testing --
+# only the install destinations are plural.
 install(TARGETS driver_micmap
-    RUNTIME DESTINATION driver/micmap/bin/win64
-    LIBRARY DESTINATION driver/micmap/bin/win64
+    RUNTIME DESTINATION drivers/micmap/bin/win64
+    LIBRARY DESTINATION drivers/micmap/bin/win64
 )
 
 install(FILES driver.vrdrivermanifest
-    DESTINATION driver/micmap
+    DESTINATION drivers/micmap
 )
 
 install(FILES resources/driver.vrresources
-    DESTINATION driver/micmap/resources
+    DESTINATION drivers/micmap/resources
 )
 
 install(FILES resources/settings/default.vrsettings
-    DESTINATION driver/micmap/resources/settings
+    DESTINATION drivers/micmap/resources/settings
 )
