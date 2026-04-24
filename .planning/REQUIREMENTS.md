@@ -133,11 +133,11 @@ Populated during roadmap creation. Each requirement maps to exactly one phase.
 | CFG-04 | Phase 2 — Config Read-Back | Pending |
 | CFG-05 | Phase 2 — Config Read-Back | Pending |
 | AUTO-01 | Phase 3 — Auto-Start | Pending |
-| AUTO-02 | Phase 3 — Auto-Start | Pending |
-| AUTO-03 | Phase 3 — Auto-Start | Pending |
+| AUTO-02 | Phase 3 — Auto-Start | Complete (integration level — Plan 03-06) |
+| AUTO-03 | Phase 3 — Auto-Start | Complete (integration level — Plan 03-06) |
 | AUTO-04 | Phase 3 — Auto-Start | Pending |
 | AUTO-05 | Phase 3 — Auto-Start | Complete (unit level — Plan 03-05) |
-| AUTO-06 | Phase 3 — Auto-Start | Pending |
+| AUTO-06 | Phase 3 — Auto-Start | Complete (integration level — Plan 03-06) |
 | INST-01 | Phase 4 — Installer | Pending |
 | INST-02 | Phase 4 — Installer | Pending |
 | INST-03 | Phase 4 — Installer | Pending |
