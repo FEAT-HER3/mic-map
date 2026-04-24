@@ -622,9 +622,17 @@ void MicMapApp::renderUI() {
     bool buttonFire = buttonWouldFire.load();
     bool detected = isDetected.load();
 
+    // IN-08: detectionBuf was declared unconditionally at outer scope even
+    // though only the `detected` branch needs a formatted string; the
+    // "TRIGGERED" / "NOT DETECTED" branches use string literals. Keeping the
+    // buffer at outer scope here (rather than inside the branch) is REQUIRED
+    // because `detectionText` is a `const char*` that must remain valid until
+    // the ImGui::Button call below — moving the buffer into the branch would
+    // dangle the pointer. We now populate the buffer only when needed and
+    // document the lifetime so future refactors don't regress.
     ImVec4 boxColor;
     const char* detectionText;
-    char detectionBuf[128];
+    char detectionBuf[128];  // lifetime: must outlive ImGui::Button(detectionText, ...) below
 
     if (buttonFire) {
         boxColor = ImVec4(0, 0.78f, 0, 1);  // Green - triggered
