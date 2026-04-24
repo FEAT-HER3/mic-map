@@ -251,6 +251,7 @@ json appConfigToJson(const AppConfig& c) {
     j["detection"] = detectionToJson(c.detection);
     j["steamvr"]   = steamvrToJson(c.steamvr);
     j["training"]  = trainingToJson(c.training);
+    j["shownTrayNotification"] = c.shownTrayNotification;
     return j;
 }
 
@@ -404,6 +405,7 @@ public:
         readDetection(j, config_.detection);
         readSteamVR(j, config_.steamvr);
         readTraining(j, config_.training);
+        config_.shownTrayNotification = readBool(j, "shownTrayNotification", false);
 
         MICMAP_LOG_INFO("Loaded config from: ", path.string());
         return true;
