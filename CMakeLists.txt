@@ -81,6 +81,12 @@ if(MICMAP_BUILD_TEST_APPS)
     add_subdirectory(apps)
 endif()
 
+# Phase 03 ad-hoc tools (register_manifest). Throwaway — delete after Phase 03 exit.
+# Guarded on OpenVR availability (Phase 03 A2 test requires live SteamVR API).
+if(WIN32 AND OpenVR_FOUND)
+    add_subdirectory(tools)
+endif()
+
 if(MICMAP_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)

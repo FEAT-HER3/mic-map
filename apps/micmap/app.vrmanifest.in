@@ -1,0 +1,19 @@
+{
+  "source": "builtin",
+  "applications": [
+    {
+      "app_key": "@MICMAP_APP_KEY@",
+      "launch_type": "binary",
+      "binary_path_windows": "micmap.exe",
+      "arguments": "--minimized",
+      "is_dashboard_overlay": true,
+      "app_version": "@MICMAP_VERSION@",
+      "strings": {
+        "en_us": {
+          "name": "MicMap",
+          "description": "Hands-free SteamVR dashboard toggle via microphone pattern."
+        }
+      }
+    }
+  ]
+}

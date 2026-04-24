@@ -6,6 +6,33 @@ set(MICMAP_SOURCES
     main.cpp
 )
 
+# ---- app.vrmanifest generation (Plan 03-02 — D-19) -----------------------
+# Explicit set() for MICMAP_VERSION per RESEARCH §Pitfall 10 — guards against
+# stale substitutions when project() VERSION is bumped upstream. Use @ONLY so
+# only @TOKEN@ markers are substituted (prevents accidental ${...} expansion
+# inside JSON values).
+#
+# configure_file() does not honor generator expressions in its OUTPUT path, so
+# we emit to ${CMAKE_CURRENT_BINARY_DIR} and copy into the per-config runtime
+# dir via a POST_BUILD step. The schema test
+# (test_vrmanifest_schema) reads from ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/
+# under multi-config generators (MSBuild), so the POST_BUILD copy is the
+# load-bearing step.
+set(MICMAP_VERSION ${PROJECT_VERSION})
+set(MICMAP_APP_KEY "bigscreen.micmap")
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/app.vrmanifest.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/app.vrmanifest"
+    @ONLY
+)
+# A2 empirical test variant — REMOVED by Plan 03-02 Task 3 once A2 resolves.
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/app.vrmanifest.A2test_array.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/app.vrmanifest.A2test_array"
+    @ONLY
+)
+
 add_executable(micmap WIN32
     ${MICMAP_SOURCES}
 )
@@ -22,13 +49,30 @@ target_compile_features(micmap PRIVATE cxx_std_17)
 target_include_directories(micmap PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Windows-specific libraries
+# Pathcch.lib (D-21) is precondition for Plan 06's runtime path resolution
+# (PathCchRemoveFileSpec / PathCchCombineEx). Built into the Windows SDK
+# since Vista — naked target name resolves via MSVC default link search.
 if(WIN32)
-    target_link_libraries(micmap PRIVATE shell32 dwmapi)
+    target_link_libraries(micmap PRIVATE shell32 dwmapi Pathcch)
 endif()
 
 # Set output directory
 set_target_properties(micmap PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# Copy generated app.vrmanifest into the per-config runtime dir so it sits
+# beside micmap.exe (Plan 03-02 acceptance criterion + schema test path).
+add_custom_command(TARGET micmap POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_BINARY_DIR}/app.vrmanifest"
+        "$<TARGET_FILE_DIR:micmap>/app.vrmanifest"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_BINARY_DIR}/app.vrmanifest.A2test_array"
+        "$<TARGET_FILE_DIR:micmap>/app.vrmanifest.A2test_array"
+    COMMAND ${CMAKE_COMMAND} -E echo "Generated app.vrmanifest at $<TARGET_FILE_DIR:micmap>/app.vrmanifest"
+    COMMENT "Staging app.vrmanifest beside micmap.exe"
+    VERBATIM
 )
 
 # Copy config files to output directory
