@@ -375,7 +375,12 @@ var
 begin
   AppDataDir := ExpandConstant('{userappdata}\MicMap');
   if not DirExists(AppDataDir) then
-    Exit;  // Nothing to prompt about.
+  begin
+    // IN-02: log the skip so uninstall troubleshooting can unambiguously confirm
+    // "no user data was present" vs. "data was present and removed/kept".
+    Log('PromptAndMaybeRemoveUserData: ' + AppDataDir + ' does not exist, nothing to prompt.');
+    Exit;
+  end;
 
   // HR-01: /SILENT and /VERYSILENT suppress Inno wizard dialogs but NOT direct
   // MsgBox() calls in Pascal Script. Without this guard the uninstaller would
