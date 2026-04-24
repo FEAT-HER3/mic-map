@@ -541,11 +541,25 @@ void MicMapApp::renderUI() {
             audioCapture->selectDeviceById(devices[selectedDeviceIndex].id);
             auto dev = audioCapture->getCurrentDevice();
             if (dev.sampleRate > 0) {
-                detector = detection::createFFTDetector(dev.sampleRate);
-                detector->setMinDetectionDuration(detectionTimeMs);
-                if (configManager) detector->loadTrainingData(configManager->getTrainingDataPath());
+                // WR-03: guard detector reassignment under audioMutex so the
+                // WASAPI callback (which takes the same mutex before
+                // dereferencing `detector`) cannot race with the swap and
+                // have the old detector destroyed out from under it.
+                {
+                    std::lock_guard<std::mutex> lock(audioMutex);
+                    detector = detection::createFFTDetector(dev.sampleRate);
+                    detector->setMinDetectionDuration(detectionTimeMs);
+                    if (configManager) detector->loadTrainingData(configManager->getTrainingDataPath());
+                }
+                // WR-04: only restart capture after the detector has been
+                // rebuilt for the new device's sample rate. If sampleRate == 0
+                // the rebuild is skipped, so the previous detector (configured
+                // for a different rate) would otherwise produce bogus
+                // confidence values against the new stream.
+                audioCapture->startCapture();
+            } else {
+                MICMAP_LOG_WARNING("Device switch: new device reported sampleRate=0; capture NOT restarted");
             }
-            audioCapture->startCapture();
             if (configManager) configManager->getConfig().audio.deviceId = devices[selectedDeviceIndex].id;
         }
     }
@@ -599,6 +613,12 @@ void MicMapApp::renderUI() {
         if (ImGui::Button("Clear", ImVec2(60, 30)) && detector) {
             auto dev = audioCapture->getCurrentDevice();
             if (dev.sampleRate > 0) {
+                // WR-03: detector reassignment must be serialized with the
+                // WASAPI callback. Without this lock the callback can be
+                // mid-`detector->analyze(...)` when the unique_ptr reset
+                // destroys the old detector, which is a classic data race
+                // on a non-atomic unique_ptr.
+                std::lock_guard<std::mutex> lock(audioMutex);
                 detector = detection::createFFTDetector(dev.sampleRate);
                 detector->setMinDetectionDuration(detectionTimeMs);
             }
