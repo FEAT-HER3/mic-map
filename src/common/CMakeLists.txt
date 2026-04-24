@@ -3,6 +3,7 @@
 
 add_library(micmap_common STATIC
     src/logger.cpp
+    src/cli_flags.cpp
 )
 
 target_include_directories(micmap_common
