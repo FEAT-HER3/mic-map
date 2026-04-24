@@ -57,6 +57,7 @@ struct AppConfig {
     DetectionConfig detection;          ///< Detection settings
     SteamVRConfig steamvr;              ///< SteamVR settings
     TrainingConfig training;            ///< Training settings
+    bool shownTrayNotification = false; ///< Set once after first silent-launch tray balloon fires (Phase 3 D-09)
 };
 
 /**

@@ -151,6 +151,78 @@ int main() {
         MM_CHECK(count == 5);
     }
 
+    // ---- Test 6: shownTrayNotification round-trip (Plan 03-03, closes Q4) ----
+    // Empirically validates that Phase 2's writer + defensive reader handle
+    // newly-added top-level bool fields without refactor.
+    {
+        // Case 1: default-constructed value is false.
+        std::cout << "[shownTrayNotification case 1] default value is false\n";
+        fs::remove_all(tmpDir);
+        fs::create_directories(tmpDir);
+        auto mgr = mc::createConfigManager();
+        MM_CHECK(mgr->getConfig().shownTrayNotification == false);
+
+        // Case 2: write true -> reload -> reads true (Q4 empirical closure).
+        std::cout << "[shownTrayNotification case 2] write true; reload; reads true\n";
+        mgr->getConfig().shownTrayNotification = true;
+        MM_CHECK(mgr->save(cfgPath));
+        auto mgr2 = mc::createConfigManager();
+        MM_CHECK(mgr2->load(cfgPath));
+        MM_CHECK(mgr2->getConfig().shownTrayNotification == true);
+    }
+
+    // Case 3: missing key in otherwise-valid config -> defensive default false.
+    {
+        std::cout << "[shownTrayNotification case 3] missing key -> default false\n";
+        fs::remove_all(tmpDir);
+        fs::create_directories(tmpDir);
+        std::ofstream f(cfgPath);
+        f << R"({
+            "version": 1,
+            "audio":     {"bufferSizeMs": 20},
+            "detection": {"sensitivity": 0.5, "minDurationMs": 200,
+                          "cooldownMs": 200, "fftSize": 2048},
+            "steamvr":   {"dashboardClickEnabled": true},
+            "training":  {"dataFile": "training.bin"}
+        })";
+        f.close();
+        auto mgr = mc::createConfigManager();
+        MM_CHECK(mgr->load(cfgPath));
+        MM_CHECK(mgr->getConfig().shownTrayNotification == false);
+    }
+
+    // Case 4: wrong type (string instead of bool) -> readBool fallback to default false.
+    {
+        std::cout << "[shownTrayNotification case 4] wrong type (string) -> default false\n";
+        fs::remove_all(tmpDir);
+        fs::create_directories(tmpDir);
+        std::ofstream f(cfgPath);
+        f << R"({
+            "version": 1,
+            "shownTrayNotification": "yes"
+        })";
+        f.close();
+        auto mgr = mc::createConfigManager();
+        MM_CHECK(mgr->load(cfgPath));
+        MM_CHECK(mgr->getConfig().shownTrayNotification == false);
+    }
+
+    // Case 5: seeded with true -> reads true.
+    {
+        std::cout << "[shownTrayNotification case 5] seeded true -> reads true\n";
+        fs::remove_all(tmpDir);
+        fs::create_directories(tmpDir);
+        std::ofstream f(cfgPath);
+        f << R"({
+            "version": 1,
+            "shownTrayNotification": true
+        })";
+        f.close();
+        auto mgr = mc::createConfigManager();
+        MM_CHECK(mgr->load(cfgPath));
+        MM_CHECK(mgr->getConfig().shownTrayNotification == true);
+    }
+
     std::cout << "all tests passed\n";
     return 0;
 }
