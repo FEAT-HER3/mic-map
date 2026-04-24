@@ -77,11 +77,57 @@ Source: "{#STAGE_DIR}\bin\app.vrmanifest"; \
 
 [Code]
 // ---------------------------------------------------------------
-// Plan 04 stub -- replaced by Plan 05 with HKCU\Software\Valve\Steam
-// registry resolution (D-02) and Plan 06 (WMI SteamVR-running gate).
+// Plan 05: SteamVR registry resolution (D-02) + D-04 no-Steam abort
+// Module-level g_SteamVRDir is populated by InitializeSetup and
+// reused by Plans 06 (WMI gate), 07 (vrpathreg), and 08 (teardown).
 // ---------------------------------------------------------------
+var
+  g_SteamVRDir: String;  // Resolved once in InitializeSetup. Reused by Plans 06/07/08.
+
+function GetSteamPath(): String;
+var
+  SteamPath: String;
+begin
+  Result := '';
+  if RegQueryStringValue(HKEY_CURRENT_USER, 'Software\Valve\Steam',
+                         'SteamPath', SteamPath) then
+  begin
+    // HKCU SteamPath uses forward slashes (e.g. "C:/Program Files (x86)/Steam").
+    // Normalize to backslashes for [Files] Source path composition.
+    StringChangeEx(SteamPath, '/', '\', True);
+    Result := SteamPath;
+  end;
+end;
+
+function InitializeSetup(): Boolean;
+var
+  SteamPath: String;
+begin
+  Result := False;
+  SteamPath := GetSteamPath();
+  if SteamPath = '' then
+  begin
+    MsgBox('SteamVR was not detected via HKCU\Software\Valve\Steam\SteamPath.' +
+           Chr(13) + Chr(10) + Chr(13) + Chr(10) +
+           'Please install Steam and SteamVR, then re-run this installer.',
+           mbError, MB_OK);
+    Exit;
+  end;
+  g_SteamVRDir := SteamPath + '\steamapps\common\SteamVR';
+  if not DirExists(g_SteamVRDir) then
+  begin
+    MsgBox('Steam is installed, but SteamVR was not found at:' + Chr(13) + Chr(10) +
+           g_SteamVRDir + Chr(13) + Chr(10) + Chr(13) + Chr(10) +
+           'Please install SteamVR via Steam, then re-run this installer.',
+           mbError, MB_OK);
+    Exit;
+  end;
+  Result := True;  // proceed -- g_SteamVRDir now available for the rest of the run
+end;
+
 function GetMicMapInstallDir(Param: String): String;
 begin
-  // Placeholder -- Plan 05 overwrites with real implementation.
-  Result := ExpandConstant('{autopf}\MicMap');
+  // D-01: nested layout {SteamVR}\drivers\micmap.
+  // Relies on g_SteamVRDir being populated by InitializeSetup.
+  Result := g_SteamVRDir + '\drivers\micmap';
 end;
