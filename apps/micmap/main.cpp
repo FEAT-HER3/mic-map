@@ -109,6 +109,17 @@ struct MicMapApp {
     std::thread                                   manifestRetryThread;
     std::atomic<bool>                             manifestRetryCancel{false};
 
+    // WR-05: reconnect futures tracked on the app so shutdown() can wait on
+    // them BEFORE tearing down driverClient / vrInput. Previously these were
+    // function-local `static std::future<void>` in WinMain's message loop,
+    // which meant shutdown() destroyed driverClient while an in-flight
+    // connect() / initialize() was still touching it. Unlike the retry
+    // thread, these use std::async — their destructors block anyway — but
+    // waiting explicitly before teardown avoids operating on half-destroyed
+    // state.
+    std::future<void> driverConnectFuture;
+    std::future<void> vrInitFuture;
+
     bool initialize();
     void shutdown();
     void onTrigger();
@@ -427,6 +438,17 @@ void MicMapApp::shutdown() {
     //    worst-case thanks to the 1s-tick cancel-responsive sleep loop.
     manifestRetryCancel.store(true);
     if (manifestRetryThread.joinable()) manifestRetryThread.join();
+
+    // WR-05: wait for any in-flight reconnect futures (driverClient->connect
+    // and vrInput->initialize launched via std::async from the main loop)
+    // BEFORE the teardown below touches those objects. Without this wait,
+    // shutdown() could call driverClient->disconnect() / vrInput->shutdown()
+    // while the background connect/initialize is still reading those members.
+    // std::async's future destructor blocks anyway; waiting explicitly here
+    // makes the ordering intent readable and prevents touching half-destroyed
+    // state if the wait were deferred to future dtors after teardown.
+    if (driverConnectFuture.valid()) driverConnectFuture.wait();
+    if (vrInitFuture.valid())         vrInitFuture.wait();
 
     // D-12 ordered teardown (reverse-init):
     // 1. Stop audio capture
@@ -800,9 +822,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
             g_app.vrInput->pollEvents();
         }
 
-        // Async reconnection attempts using futures to avoid blocking
-        static std::future<void> driverConnectFuture;
-        static std::future<void> vrInitFuture;
+        // Async reconnection attempts using futures to avoid blocking.
+        // WR-05: futures live on g_app (see MicMapApp::driverConnectFuture /
+        // vrInitFuture) so shutdown() can wait on them before teardown.
         static int reconnectCounter = 0;
         int reconnectInterval = g_app.minimizedToTray ? 100 : 40;
 
@@ -811,9 +833,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
 
             // Check if driver needs reconnection (async)
             if (g_app.driverClient && !g_app.driverClient->isConnected()) {
-                if (!driverConnectFuture.valid() ||
-                    driverConnectFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-                    driverConnectFuture = std::async(std::launch::async, []() {
+                if (!g_app.driverConnectFuture.valid() ||
+                    g_app.driverConnectFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                    g_app.driverConnectFuture = std::async(std::launch::async, []() {
                         g_app.driverClient->connect();
                     });
                 }
@@ -821,9 +843,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
 
             // Check if VR needs initialization (async)
             if (g_app.vrInput && !g_app.vrInput->isInitialized()) {
-                if (!vrInitFuture.valid() ||
-                    vrInitFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-                    vrInitFuture = std::async(std::launch::async, []() {
+                if (!g_app.vrInitFuture.valid() ||
+                    g_app.vrInitFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                    g_app.vrInitFuture = std::async(std::launch::async, []() {
                         g_app.vrInput->initialize();
                     });
                 }
