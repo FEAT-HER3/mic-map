@@ -111,6 +111,14 @@ struct MicMapApp {
     std::thread                                   manifestRetryThread;
     std::atomic<bool>                             manifestRetryCancel{false};
 
+    // WR-01: initial first-boot async init thread. Previously detached, which
+    // left no way for shutdown() to wait on in-flight driverClient->connect()
+    // / vrInput->initialize() calls before step 3 (disconnect) destroyed the
+    // objects they were touching. Tracked and joined in shutdown() like the
+    // manifest retry thread.
+    std::thread                                   initialConnectThread;
+    std::atomic<bool>                             initialConnectCancel{false};
+
     // WR-05: reconnect futures tracked on the app so shutdown() can wait on
     // them BEFORE tearing down driverClient / vrInput. Previously these were
     // function-local `static std::future<void>` in WinMain's message loop,
@@ -448,6 +456,13 @@ void MicMapApp::shutdown() {
     //    worst-case thanks to the 1s-tick cancel-responsive sleep loop.
     manifestRetryCancel.store(true);
     if (manifestRetryThread.joinable()) manifestRetryThread.join();
+
+    // WR-01: signal cancel + join the first-boot async init thread BEFORE
+    // step 3 (driverClient->disconnect) / step 4 (vrInput->shutdown) tear
+    // down the objects it's calling into. Previously this thread was
+    // detached, leaving no join handle and a latent race on fast-quit.
+    initialConnectCancel.store(true);
+    if (initialConnectThread.joinable()) initialConnectThread.join();
 
     // WR-05: wait for any in-flight reconnect futures (driverClient->connect
     // and vrInput->initialize launched via std::async from the main loop)
@@ -822,16 +837,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
     }
     SetupSystemTray(g_app.hwnd);
 
-    // Start async initialization of VR and driver
-    std::thread initThread([]() {
+    // Start async initialization of VR and driver.
+    // WR-01: tracked on g_app (not detached) so shutdown() can join before
+    // step 3 (driverClient->disconnect). The cancel flag short-circuits the
+    // remaining work if the user quits during first-boot init.
+    g_app.initialConnectThread = std::thread([]() {
+        if (g_app.initialConnectCancel.load()) return;
         if (g_app.driverClient) {
             g_app.driverClient->connect();
         }
+        if (g_app.initialConnectCancel.load()) return;
         if (g_app.vrInput) {
             g_app.vrInput->initialize();
         }
     });
-    initThread.detach();
 
     // D-06: silent-mode window policy — never ShowWindow when auto-launched
     // by SteamVR. The legacy command-line substring check on lpCmdLine has
