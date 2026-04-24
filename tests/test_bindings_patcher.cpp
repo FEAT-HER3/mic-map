@@ -29,6 +29,18 @@
 
 #include <nlohmann/json.hpp>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#else
+#include <unistd.h>
+#endif
+
 #define MM_CHECK(expr) do { if (!(expr)) { \
     std::cerr << "FAIL: " << #expr << " at line " << __LINE__ << "\n"; \
     return 1; } } while(0)
@@ -44,8 +56,20 @@ using micmap::bindings::UnpatchGenericHmdBindingsFile;
 
 static LogSink noopLog = [](const char*){};
 
+// IN-07: prior implementation used a fixed directory name
+// ("micmap_test_bindings") which races under `ctest -jN` when
+// test_bindings_patcher and bindings_patcher_idempotent (registered separately
+// in tests/CMakeLists.txt) run concurrently — each resetTmpDir() call's
+// remove_all would clobber the sibling test's in-progress scenario files.
+// Append the PID so every concurrent process gets its own tmp tree.
 static fs::path resetTmpDir() {
-    auto tmp = fs::temp_directory_path() / "micmap_test_bindings";
+#ifdef _WIN32
+    const unsigned long pid = static_cast<unsigned long>(GetCurrentProcessId());
+#else
+    const unsigned long pid = static_cast<unsigned long>(getpid());
+#endif
+    auto tmp = fs::temp_directory_path()
+             / ("micmap_test_bindings_" + std::to_string(pid));
     std::error_code ec;
     fs::remove_all(tmp, ec);
     fs::create_directories(tmp, ec);
