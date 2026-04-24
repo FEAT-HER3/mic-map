@@ -233,6 +233,11 @@ bool AtomicWriteJson(const fs::path& target, const json& j, LogSink log) {
     std::error_code ec;
     try {
         std::ofstream out(tmp, std::ios::trunc | std::ios::binary);
+        // IN-01: enable exceptions for failbit/badbit so a silent partial
+        // write (disk full, perm change mid-write, etc.) is caught here
+        // instead of allowing the subsequent fs::rename to swap a truncated
+        // tmp over the real target.
+        out.exceptions(std::ios::failbit | std::ios::badbit);
         out << j.dump(4);
         out.close();
     } catch (const std::exception& e) {
