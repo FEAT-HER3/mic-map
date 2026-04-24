@@ -344,11 +344,18 @@ begin
   if FindFirst(InputDir + '\micmap_*.json', FindRec) then
   try
     repeat
-      FilePath := InputDir + '\' + FindRec.Name;
-      if DeleteFile(FilePath) then
-        Log('SweepLegacyBindings: removed ' + FilePath)
-      else
-        Log('SweepLegacyBindings: FAILED to remove ' + FilePath);
+      // LR-01: FindFirst with a wildcard can match directories whose NAME ends in
+      // .json (unusual but possible). DeleteFile on a directory silently fails
+      // and logs 'FAILED to remove' -- harmless but noisy. Skip dirs explicitly.
+      // FILE_ATTRIBUTE_DIRECTORY = 16 (Windows API constant, usable in IS Pascal).
+      if (FindRec.Attributes and 16) = 0 then
+      begin
+        FilePath := InputDir + '\' + FindRec.Name;
+        if DeleteFile(FilePath) then
+          Log('SweepLegacyBindings: removed ' + FilePath)
+        else
+          Log('SweepLegacyBindings: FAILED to remove ' + FilePath);
+      end;
     until not FindNext(FindRec);
   finally
     FindClose(FindRec);
