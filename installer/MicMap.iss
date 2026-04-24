@@ -282,45 +282,32 @@ begin
     Result := 'micmap.exe --patch-bindings (rc=' + IntToStr(ResultCode) + ')';
 end;
 
+procedure TryStep(Failed: TStringList; StepResult: String);
+begin
+  // Append non-empty failure descriptions to the aggregator.
+  if StepResult <> '' then
+    Failed.Add(StepResult);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Failed: TStringList;
-  AppDir: String;
-  MicMapExe: String;
-  StepResult: String;
-  CRLF: String;
+  AppDir, MicMapExe, CRLF: String;
 begin
-  if CurStep <> ssPostInstall then
-    Exit;
-
+  if CurStep <> ssPostInstall then Exit;
   CRLF := Chr(13) + Chr(10);
   AppDir := ExpandConstant('{app}');
   MicMapExe := AppDir + '\bin\micmap.exe';
   Failed := TStringList.Create;
   try
-    // Step 1: removedriver (unconditional, rc ignored -- Pitfall 3).
-    RunVrpathregRemove(AppDir);
-
-    // Step 2: adddriver (rc captured).
-    StepResult := RunVrpathregAdd(AppDir);
-    if StepResult <> '' then
-      Failed.Add(StepResult);
-
-    // Step 3: --register-vrmanifest (rc captured -- INST-04).
-    StepResult := RunRegisterVrmanifest(MicMapExe);
-    if StepResult <> '' then
-      Failed.Add(StepResult);
-
-    // Step 4: --patch-bindings (rc captured -- INST-08).
-    StepResult := RunPatchBindings(MicMapExe);
-    if StepResult <> '' then
-      Failed.Add(StepResult);
-
-    // Technique B continue-with-warning: aggregated MsgBox, installer does NOT abort.
+    RunVrpathregRemove(AppDir);                        // Step 1: rc ignored (Pitfall 3)
+    TryStep(Failed, RunVrpathregAdd(AppDir));          // Step 2: INST-03
+    TryStep(Failed, RunRegisterVrmanifest(MicMapExe)); // Step 3: INST-04
+    TryStep(Failed, RunPatchBindings(MicMapExe));      // Step 4: INST-08
     if Failed.Count > 0 then
       MsgBox('MicMap installed, but some post-install steps failed:' + CRLF + CRLF +
-             Failed.Text +
-             CRLF + 'MicMap will still work for basic dashboard toggling. ' +
+             Failed.Text + CRLF +
+             'MicMap will still work for basic dashboard toggling. ' +
              'If problems persist, see %APPDATA%\MicMap\micmap.log and re-run the installer.',
              mbInformation, MB_OK);
   finally
