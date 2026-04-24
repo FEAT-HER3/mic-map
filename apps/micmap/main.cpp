@@ -247,6 +247,22 @@ bool MicMapApp::initialize() {
     manifestRegistrar = steamvr::createManifestRegistrar();
     manifestRetryThread = std::thread([this]() {
 #ifdef MICMAP_HAS_OPENVR
+        // WR-01 mitigation: narrow the startup-window race between this thread's
+        // VR_Init(Utility) and the detached initThread's VR_Init(Background) by
+        // deferring the FIRST utility init until the background vrInput has
+        // either finished its VR_Init OR clearly isn't coming up (no SteamVR).
+        // Teardown ordering is already handled by the cancel+join at the top of
+        // shutdown() (D-14). We poll isInitialized() on 100ms ticks for up to
+        // 3 seconds; after that we fall through to the normal retry loop so a
+        // SteamVR-started-mid-session still gets the manifest registered.
+        // NOTE: this does not eliminate the race entirely — if vrInput's
+        // VR_Init is in-flight exactly when our first VR_Init runs, both calls
+        // still race. The cancel+join on shutdown prevents the teardown race
+        // (see shutdown() step 0); the window narrowed here is startup-only.
+        for (int i = 0; i < 30 && !manifestRetryCancel.load(); ++i) {
+            if (vrInput && vrInput->isInitialized()) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
         while (!manifestRetryCancel.load()) {
             vr::EVRInitError err = vr::VRInitError_None;
             vr::VR_Init(&err, vr::VRApplication_Utility);
