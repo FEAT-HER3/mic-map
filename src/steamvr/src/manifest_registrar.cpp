@@ -167,6 +167,13 @@ public:
 // if the UTF-8 form contains '/' — see <critical_pitfall> in 03-04-PLAN.md).
 // ----------------------------------------------------------------------------
 std::wstring resolveManifestAbsolutePath() {
+    // IN-04: 32768 WCHARs = 65,536 bytes on the stack. Safe on the default
+    // 1 MB Windows thread stack (main thread and the manifest retry thread
+    // both use the default size). If this function is ever called from a
+    // thread with a reduced stack (e.g., a UI-framework worker pool), move
+    // the buffer to the heap via std::unique_ptr<WCHAR[]>. PATHCCH_MAX_CCH
+    // (32767) is the canonical long-path bound; stack-allocating is
+    // documented as acceptable in the PathCch* reference.
     WCHAR buf[32768];  // long-path safe per Pitfall 9
     const DWORD n = GetModuleFileNameW(nullptr, buf, static_cast<DWORD>(_countof(buf)));
     if (n == 0 || n == _countof(buf)) {
