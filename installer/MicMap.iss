@@ -314,3 +314,132 @@ begin
     Failed.Free;
   end;
 end;
+
+// ---------------------------------------------------------------
+// Plan 08: Uninstall teardown orchestrator (INST-05, INST-06)
+// Runs in CurUninstallStepChanged(usUninstall) BEFORE unins000.exe
+// deletes files. Teardown order REVERSED from install (D-09 mirror-
+// image contract): --unpatch-bindings -> --unregister-vrmanifest ->
+// vrpathreg removedriver. No [UninstallRun] block (Pitfall 17 -- same
+// silent-rc hazard as [Run]). Reuses Plan 07's GetVrpathreg +
+// VrpathregExists helpers verbatim -- MUST NOT redeclare.
+// ---------------------------------------------------------------
+procedure SweepLegacyBindings();
+// Defense-in-depth sweep. D-07 voids INST-06 as a literal ghost-cleanup
+// requirement (no 0.x ever shipped), but this scan codifies the invariant
+// that %LOCALAPPDATA%\openvr\input\micmap_*.json is never MicMap's
+// territory. Safe + idempotent on every real machine: v1.0 does NOT write
+// to this directory (the bindings patch targets
+// {SteamVR}\resources\config\ via --patch-bindings). If the sweep ever
+// finds a match, it logs and removes it -- documenting the boundary for
+// future maintainers.
+var
+  InputDir: String;
+  FindRec: TFindRec;
+  FilePath: String;
+begin
+  InputDir := ExpandConstant('{localappdata}\openvr\input');
+  if not DirExists(InputDir) then
+    Exit;
+  if FindFirst(InputDir + '\micmap_*.json', FindRec) then
+  try
+    repeat
+      FilePath := InputDir + '\' + FindRec.Name;
+      if DeleteFile(FilePath) then
+        Log('SweepLegacyBindings: removed ' + FilePath)
+      else
+        Log('SweepLegacyBindings: FAILED to remove ' + FilePath);
+    until not FindNext(FindRec);
+  finally
+    FindClose(FindRec);
+  end;
+end;
+
+procedure PromptAndMaybeRemoveUserData();
+// D-13: ask user whether to keep or remove %APPDATA%\MicMap\ (config.json,
+// training_data.bin, micmap.log). Resolved path: userappdata/MicMap (Inno
+// constant {userappdata} expands at runtime). Default = Keep (training data
+// is expensive to regenerate -- ~150 real mic samples). MB_DEFBUTTON2 focuses
+// the No button so accidental Enter preserves data.
+var
+  AppDataDir: String;
+  Response: Integer;
+  CRLF: String;
+begin
+  AppDataDir := ExpandConstant('{userappdata}\MicMap');
+  if not DirExists(AppDataDir) then
+    Exit;  // Nothing to prompt about.
+
+  CRLF := Chr(13) + Chr(10);
+  Response := MsgBox(
+    'Remove MicMap settings and training data?' + CRLF + CRLF +
+    'MicMap stores your trained microphone profile and configuration in:' + CRLF +
+    AppDataDir + CRLF + CRLF +
+    'Training data represents real microphone samples that take time to ' +
+    'regenerate. Keep them if you plan to reinstall MicMap later.' + CRLF + CRLF +
+    'Yes = remove all data.' + CRLF +
+    'No = keep everything (default).',
+    mbConfirmation, MB_YESNO or MB_DEFBUTTON2);
+  if Response = IDYES then
+  begin
+    if DelTree(AppDataDir, True, True, True) then
+      Log('Removed user data at ' + AppDataDir)
+    else
+      Log('Failed to remove user data at ' + AppDataDir);
+  end else
+    Log('User chose to keep data at ' + AppDataDir);
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ResultCode: Integer;
+  Failed: TStringList;
+  AppDir: String;
+  MicMapExe: String;
+begin
+  if CurUninstallStep <> usUninstall then
+    Exit;
+
+  AppDir := ExpandConstant('{app}');
+  MicMapExe := AppDir + '\bin\micmap.exe';
+  Failed := TStringList.Create;
+  try
+    // Step 1 (reverse of Plan 07 Step 4): --unpatch-bindings.
+    // Skip gracefully if micmap.exe no longer exists (defensive; shouldn't happen
+    // because [UninstallDelete] has not run yet at usUninstall).
+    if FileExists(MicMapExe) then
+    begin
+      if (not Exec(MicMapExe, '--unpatch-bindings', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+        Failed.Add('micmap.exe --unpatch-bindings (rc=' + IntToStr(ResultCode) + ')');
+    end;
+
+    // Step 2 (reverse of Plan 07 Step 3): --unregister-vrmanifest.
+    if FileExists(MicMapExe) then
+    begin
+      if (not Exec(MicMapExe, '--unregister-vrmanifest', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+        Failed.Add('micmap.exe --unregister-vrmanifest (rc=' + IntToStr(ResultCode) + ')');
+    end;
+
+    // Step 3 (reverse of Plan 07 Steps 1/2 combined -- install does remove-then-add,
+    // uninstall only removes). Pitfall 10 gate via VrpathregExists (Plan 07 helper).
+    if VrpathregExists() then
+    begin
+      if (not Exec(GetVrpathreg(''), 'removedriver "' + AppDir + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+        Failed.Add('vrpathreg removedriver (rc=' + IntToStr(ResultCode) + ')');
+    end;
+
+    // Step 4: Defense-in-depth legacy-bindings sweep. D-07 voids INST-06 as a
+    // literal ghost-cleanup requirement (0.x was never shipped), but the sweep
+    // is an idempotent no-op on every real machine and codifies the invariant
+    // that %LOCALAPPDATA%\openvr\input\micmap_*.json is never MicMap's territory.
+    SweepLegacyBindings();
+
+    // Step 5: D-13 data-retention prompt.
+    PromptAndMaybeRemoveUserData();
+
+    if Failed.Count > 0 then
+      Log('MicMap uninstall completed with non-fatal issues:' + Chr(13) + Chr(10) + Failed.Text);
+  finally
+    Failed.Free;
+  end;
+end;
