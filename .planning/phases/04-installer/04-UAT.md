@@ -1,14 +1,14 @@
 ---
-status: partial
+status: complete
 phase: 04-installer
 source: 04-01-SUMMARY.md, 04-02-SUMMARY.md, 04-03-SUMMARY.md, 04-04-SUMMARY.md, 04-05-SUMMARY.md, 04-06-SUMMARY.md, 04-07-SUMMARY.md, 04-08-SUMMARY.md, 04-09-SUMMARY.md
 started: 2026-04-24T00:00:00Z
-updated: 2026-04-24T06:00:00Z
+updated: 2026-04-24T06:30:00Z
 ---
 
 ## Current Test
 
-[testing complete — 8 pass, 1 issue (micmap.exe runtime crash, out-of-scope for Phase 4 installer), 1 blocked (depends on crash)]
+[testing complete]
 
 ## Tests
 
@@ -39,16 +39,16 @@ verified: "vrpathreg show: single `micmap : c:\\program files (x86)\\steam\\stea
 
 ### 6. Auto-Launch + Driver Loads in SteamVR (INST-04)
 expected: Start SteamVR fresh. MicMap driver loads without errors (check vrserver.txt for "driver_micmap" load lines, no red errors). Tray icon appears. HMD has /input/system/click component registered (no laser pointer / no virtual controller visible in SteamVR status).
-result: issue
-reported: "Partial fail — driver side OK, app side broken. (1) Driver-side PASS: vrserver.txt shows clean driver load — `micmap: MicMap driver initializing (sidecar mode)`, `MicMap[patch]: generic_hmd bindings already patched`, `MicMap: /input/system/click created (handle=7)`, `Loaded server driver micmap (IServerTrackedDeviceProvider_004)`. HTTP server bound to 127.0.0.1:27015. No laser beam / no stray virtual controller. (2) App-side FAIL: No tray icon. vrserver.txt shows SteamVR auto-launched micmap.exe --minimized at 05:42:03.419 → process disconnected 974ms later (05:42:04.393). Manual reproduction via bash confirms: `micmap.exe --minimized` crashes (SEGV / exit 139) ~150ms after logging `OpenVR initialized successfully`, so after initialize() returns but before or during SetupSystemTray / packaged_task thread launch / first_launch_balloon / main-loop entry. Crash reproduces identically with no args and on both installed + dev-built micmap.exe. Bisected to 5d59e0b~1 (= bb8879b) — pre-dates the Plan 4 packaged-task hardening. Out of scope for Phase 4 installer UAT; needs /gsd-debug session on micmap.exe startup."
-severity: blocker
-scope_note: "Installer/Phase-4 semantics are SATISFIED (driver loads, vrmanifest registration triggers auto-launch, WMI gate works, install/upgrade/uninstall layout correct). Bug is in micmap.exe runtime startup, not in installer orchestration."
+result: pass
+retest_notes: "PASS on retest after double-VR_Init fix (commit 3187fbb, `fix(04): eliminate double-VR_Init in manifest retry thread`; debug session `.planning/debug/micmap-startup-segv.md`). SteamVR auto-launches micmap.exe --minimized; tray icon appears and persists across the SteamVR session; driver load clean in vrserver.txt; /input/system/click component registered; no laser beam / no stray virtual controller. Installer rebuilt as build/installer/MicMap-Setup-v0.1.0.exe (SHA256 f2a62d662b833264e588ddb1544a8af3461597ca0c2c766f65dab55917451651)."
+prior_reported: "Partial fail — driver side OK, app side broken. (1) Driver-side PASS: vrserver.txt shows clean driver load — `micmap: MicMap driver initializing (sidecar mode)`, `MicMap[patch]: generic_hmd bindings already patched`, `MicMap: /input/system/click created (handle=7)`, `Loaded server driver micmap (IServerTrackedDeviceProvider_004)`. HTTP server bound to 127.0.0.1:27015. No laser beam / no stray virtual controller. (2) App-side FAIL: No tray icon. vrserver.txt shows SteamVR auto-launched micmap.exe --minimized at 05:42:03.419 → process disconnected 974ms later (05:42:04.393). Manual reproduction via bash confirms: `micmap.exe --minimized` crashes (SEGV / exit 139) ~150ms after logging `OpenVR initialized successfully`, so after initialize() returns but before or during SetupSystemTray / packaged_task thread launch / first_launch_balloon / main-loop entry. Crash reproduces identically with no args and on both installed + dev-built micmap.exe. Bisected to 5d59e0b~1 (= bb8879b) — pre-dates the Plan 4 packaged-task hardening. Out of scope for Phase 4 installer UAT; needs /gsd-debug session on micmap.exe startup."
+prior_severity: blocker
 
 ### 7. Detection Triggers System Button
 expected: Cover the mic (or trigger the trained noise pattern). SteamVR dashboard opens/closes as if the HMD system button was pressed. Repeated triggers toggle the dashboard — hands-free, no physical controller needed.
-result: blocked
-blocked_by: prior-phase
-reason: "micmap.exe crash from Test 6 means mic capture + HTTP-to-driver detection pipeline never runs. Driver is alive and exposes /input/system/click (verified via vrserver.txt handle=7), so the final system-button press would work if the app-side detection delivered it. Cannot be exercised until Test 6 crash is fixed."
+result: pass
+retest_notes: "PASS on retest after double-VR_Init fix (commit 3187fbb). Mic cover triggers trained-noise detection; driver client POSTs to 127.0.0.1:27015; driver asserts /input/system/click and SteamVR dashboard toggles hands-free. Repeated covers toggle the dashboard open/close as expected."
+prior_blocked_by: "test 6 micmap.exe startup SEGV"
 
 ### 8. Upgrade-In-Place (INST-01 / AppId Frozen)
 expected: Run MicMap-Setup-v0.1.0.exe a SECOND time on the same machine. Installer detects existing install via frozen AppId GUID, offers upgrade. After second install: Add/Remove Programs shows ONE MicMap entry (not two); `vrpathreg show` still lists MicMap driver EXACTLY ONCE.
@@ -69,11 +69,11 @@ verified: "drivers\\micmap\\ absent; HKLM uninstall regkey absent; vrpathreg sho
 ## Summary
 
 total: 10
-passed: 8
-issues: 1
+passed: 10
+issues: 0
 pending: 0
 skipped: 0
-blocked: 1
+blocked: 0
 
 ## Gaps
 
@@ -90,7 +90,7 @@ blocked: 1
   debug_session: ""
 
 - truth: "micmap.exe runs to the main message loop when launched by SteamVR auto-launch (or manually with --minimized / no args)"
-  status: root-cause-identified
+  status: fixed
   reason: "User reported: no tray icon appeared after SteamVR auto-launched MicMap. Independently confirmed via bash: micmap.exe --minimized (and no-args) exit with SEGV (bash exit 139) within ~150ms of logging `OpenVR initialized successfully`. Reproduces on both installed and dev-built exe. vrserver.txt corroborates: auto-launched process disconnected 974ms after start, with `VR_Init a second time without an intervening VR_Shutdown` logged on exit."
   severity: blocker
   test: 6
@@ -107,7 +107,8 @@ blocked: 1
   artifacts:
     - path: "apps/micmap/main.cpp"
       issue: "manifestRetryThread body called vr::VR_Init(VRApplication_Utility) while vrInput's VRApplication_Background session was still active"
-  missing: ["Empirical confirmation on a live HMD: tray icon persists AND mic detection toggles SteamVR dashboard (UAT tests 6 and 7)."]
+  missing: []
+  verified: "Empirical confirmation on live HMD 2026-04-24: tray icon persists across SteamVR session; mic cover toggles SteamVR dashboard hands-free; repeated covers re-toggle. UAT tests 6 and 7 both PASS."
   debug_session: ".planning/debug/micmap-startup-segv.md"
 
 - truth: "EnsureControllerTypeFiles returns true when target files already carry the current marker (idempotent no-op is success, not failure)"
