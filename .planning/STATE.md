@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Phase 03 Plan 05 complete — processVREventImpl extracted with ack-first ordering; OpenVRInput delegates via nested adapters; test_vr_input_quit_ordering GREEN; AUTO-05 ack mechanics closed at unit level
-last_updated: "2026-04-24T03:55:57.244Z"
+stopped_at: Phase 03 Plan 06 complete — CLI fork + silent-boot policy + first-launch balloon integrated into WinMain; AUTO-02/AUTO-03/AUTO-06 closed at integration level; 8/8 ctest GREEN
+last_updated: "2026-04-24T04:05:38.675Z"
 last_activity: 2026-04-24
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 15
-  completed_plans: 13
-  percent: 87
+  completed_plans: 14
+  percent: 93
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-04-22)
 ## Current Position
 
 Phase: 03 (auto-start) — EXECUTING
-Plan: 6 of 7
+Plan: 7 of 7
 Next: Plan 03-05 (Wave 1) — extract processVREvent to vr_input_events.{hpp,cpp}; inject AcknowledgeQuit_Exiting() BEFORE notifyEvent(Quit) for AUTO-05 / OpenVR #1425. Plan 03-06 (Wave 2) and 03-07 (Wave 3) follow.
 Last activity: 2026-04-24
 
-Progress: [█████████░] 87%
+Progress: [█████████░] 93%
 
 ## Performance Metrics
 
@@ -59,6 +59,7 @@ Progress: [█████████░] 87%
 | Phase 03-auto-start P03 | 34 | 1 tasks | 3 files |
 | Phase 03-auto-start P04 | 1200 | 2 tasks | 3 files |
 | Phase 03-auto-start P05 | 133 | 2 tasks | 5 files |
+| Phase 03-auto-start P06 | 900 | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -86,6 +87,7 @@ Recent decisions affecting current work:
 - Plan 03-04 — IVRApplicationsSurface seam uses vr::EVRApplicationError return types (plan proposed uint32_t; test contract from Plan 03-01 required native enum). GetApplicationsErrorNameFromEnum non-pure (has default impl) so the test stub that overrides only 4 methods can be instantiated. OpenVR linkage on micmap_steamvr elevated from PRIVATE to PUBLIC; Pathcch linked PRIVATE on WIN32.
 - Plan 03-05 — free function named processVREventImpl (not processVREvent) to keep OpenVRInput::processVREvent member's delegation call-site unambiguous; Plan 01 RED test renamed in same commit (62fe4a5)
 - Plan 03-05 — OpenVRInput uses nested private adapter classes (VRSystemAdapter + EventSinkAdapter) to bridge production vr::IVRSystem + member notifyEvent to the OpenVR-free seam in vr_input_events.hpp; AUTO-05 / D-11 ack-before-notify invariant locked at unit level
+- Plan 03-06 — namespace aligned to Plan 01 RED test (micmap::apps plural, not micmap::app singular as plan prose suggested). Plan 01's working tree had an uncommitted src/common/src/cli_flags.cpp; committed under 03-06 Task 1 tag so per-task commit chain stays clean. Grep-gate-aware comments: forbidden tokens (AllocConsole, strstr(lpCmdLine) paraphrased so regex gates stay clean.
 
 ### Pending Todos
 
@@ -109,8 +111,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-04-24T03:55:57.240Z
-Stopped at: Phase 03 Plan 05 complete — processVREventImpl extracted with ack-first ordering; OpenVRInput delegates via nested adapters; test_vr_input_quit_ordering GREEN; AUTO-05 ack mechanics closed at unit level
+Last session: 2026-04-24T04:05:38.670Z
+Stopped at: Phase 03 Plan 06 complete — CLI fork + silent-boot policy + first-launch balloon integrated into WinMain; AUTO-02/AUTO-03/AUTO-06 closed at integration level; 8/8 ctest GREEN
 Resume file: None
 
 **Planned Phase:** 03 (auto-start) — 7 plans — 2026-04-24T02:46:02.744Z
