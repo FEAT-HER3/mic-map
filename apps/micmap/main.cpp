@@ -904,16 +904,37 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
     // WR-01: tracked on g_app (not detached) so shutdown() can join before
     // step 3 (driverClient->disconnect). The cancel flag short-circuits the
     // remaining work if the user quits during first-boot init.
-    g_app.initialConnectThread = std::thread([]() {
+    //
+    // WR-08: seed driverConnectFuture / vrInitFuture from the initial thread's
+    // packaged_task futures so the main-loop reconnect guard (which checks
+    // `driverConnectFuture.valid() && wait_for(0) != ready`) naturally
+    // serializes against the initial thread's in-flight
+    // driverClient->connect() / vrInput->initialize() calls. Without this
+    // seeding, the main loop's reconnect branch would fire ~2s into boot
+    // while the initial thread's connect() was still running, launching a
+    // *second* concurrent connect() on the same IDriverClient instance.
+    std::packaged_task<void()> connectTask([]() {
         if (g_app.initialConnectCancel.load()) return;
         if (g_app.driverClient) {
             g_app.driverClient->connect();
         }
+    });
+    std::packaged_task<void()> vrInitTask([]() {
         if (g_app.initialConnectCancel.load()) return;
         if (g_app.vrInput) {
             g_app.vrInput->initialize();
         }
     });
+    g_app.driverConnectFuture = connectTask.get_future();
+    g_app.vrInitFuture = vrInitTask.get_future();
+    g_app.initialConnectThread = std::thread(
+        [connectTask = std::move(connectTask),
+         vrInitTask  = std::move(vrInitTask)]() mutable {
+            if (g_app.initialConnectCancel.load()) return;
+            connectTask();
+            if (g_app.initialConnectCancel.load()) return;
+            vrInitTask();
+        });
 
     // D-06: silent-mode window policy — never ShowWindow when auto-launched
     // by SteamVR. The legacy command-line substring check on lpCmdLine has
