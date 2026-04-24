@@ -184,7 +184,14 @@ void SetupSystemTray(HWND hwnd) {
     g_app.nid.uCallbackMessage = WM_TRAYICON;
     g_app.nid.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
     wcscpy_s(g_app.nid.szTip, L"MicMap");
-    Shell_NotifyIconW(NIM_ADD, &g_app.nid);
+    // IN-03: Shell_NotifyIconW can return FALSE if the shell is not ready
+    // (per-user context still loading at auto-launch) or taskbar is unhappy.
+    // Log the failure so the absent-tray + never-fired-balloon case is
+    // visible in the log instead of silently misattributed.
+    if (!Shell_NotifyIconW(NIM_ADD, &g_app.nid)) {
+        MICMAP_LOG_WARNING("Shell_NotifyIconW(NIM_ADD) failed; tray icon may be missing (GetLastError=",
+                           GetLastError(), ")");
+    }
 }
 
 // IN-02: legacy RemoveSystemTray() helper deleted — shutdown() inlines the
