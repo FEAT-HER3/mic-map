@@ -90,21 +90,25 @@ blocked: 1
   debug_session: ""
 
 - truth: "micmap.exe runs to the main message loop when launched by SteamVR auto-launch (or manually with --minimized / no args)"
-  status: open
+  status: root-cause-identified
   reason: "User reported: no tray icon appeared after SteamVR auto-launched MicMap. Independently confirmed via bash: micmap.exe --minimized (and no-args) exit with SEGV (bash exit 139) within ~150ms of logging `OpenVR initialized successfully`. Reproduces on both installed and dev-built exe. vrserver.txt corroborates: auto-launched process disconnected 974ms after start, with `VR_Init a second time without an intervening VR_Shutdown` logged on exit."
   severity: blocker
   test: 6
   scope: "Out-of-scope for Phase 4 installer. Installer + driver + registration work correctly; bug is in micmap.exe runtime startup code."
-  bisect: "Crash reproduces at 5d59e0b~1 (= bb8879b), pre-dates Plan 4. Further bisect deferred."
+  bisect: "Crash reproduces at 5d59e0b~1 (= bb8879b), pre-dates Plan 4."
   suspect_sites:
-    - "apps/micmap/main.cpp :: SetupSystemTray(g_app.hwnd) (line 929) — Shell_NotifyIcon NIM_ADD call"
-    - "apps/micmap/main.cpp :: packaged_task setup + initialConnectThread launch (lines 944-968)"
-    - "apps/micmap/main.cpp :: fireBalloonIfFirstSilentLaunch (lines 983-987) — D-09 first-launch balloon"
-    - "apps/micmap/main.cpp :: main message loop entry (line 989+) — ImGui / D3D11 first render"
-  recommended_action: "/gsd-debug session on micmap.exe startup with WER crash dumps enabled, or attach debugger (procdump --pid <pid> -ma once crash triggers) and capture minidump for stack walk. Alternative: instrument main.cpp with MICMAP_LOG_INFO between the log line and each candidate call site to narrow further."
-  artifacts: []
-  missing: []
-  debug_session: ""
+    - "apps/micmap/main.cpp :: manifestRetryThread body (lines 287-333): root-caused. The WR-01 mitigation thread was calling vr::VR_Init(VRApplication_Utility) while vrInput's VRApplication_Background session was still active."
+    - "apps/micmap/main.cpp :: SetupSystemTray(g_app.hwnd) (line 929): ELIMINATED (Shell_NotifyIcon NIM_ADD succeeds; crash is post-OpenVR init, not tray-registration)."
+    - "apps/micmap/main.cpp :: packaged_task + initialConnectThread (lines 944-968): ELIMINATED (bisect places crash at 5d59e0b~1, pre-dates Plan 4 packaged-task hardening)."
+    - "apps/micmap/main.cpp :: fireBalloonIfFirstSilentLaunch (lines 983-987): ELIMINATED (crash also reproduces with no-args, where flags.minimized=false skips this branch entirely)."
+    - "apps/micmap/main.cpp :: main message loop first frame (line 989+): ELIMINATED (crash also reproduces on the minimized-to-tray path which short-circuits ImGui rendering)."
+  root_cause: "In-process second VR_Init without an intervening VR_Shutdown. The WR-01 mitigation manifest retry thread (apps/micmap/main.cpp:287-333, introduced at d5e8a49) polls vrInput->isInitialized() on 100ms ticks; the moment vrInput's VR_Init(VRApplication_Background) completes inside the sidecar, the retry thread issues its own VR_Init(VRApplication_Utility) while the Background session is still active. OpenVR rejects the second init, logs 'VR_Init a second time without an intervening VR_Shutdown' in vrserver.txt, and leaves the process in an inconsistent state that SEGVs ~150ms later. The two VR_Init calls are architecturally redundant: vr::VRApplications() is a process-global accessor, so the manifest registrar can AddApplicationManifest / IsApplicationInstalled / SetApplicationAutoLaunch against the already-initialized Background session without any VR_Init of its own (confirmed by manifest_registrar.cpp:325-326 comment)."
+  fix_summary: "apps/micmap/main.cpp :: manifestRetryThread body rewritten. Removed the thread's own VR_Init(VRApplication_Utility) and paired VR_Shutdown(). The thread now polls vrInput->isInitialized() on 100ms cancel-responsive ticks for up to 3s and, when Background is ready, calls manifestRegistrar->ensureRegistered() directly (the registrar reuses the in-process Background session via vr::VRApplications()). On any non-Success outcome the thread falls through to the existing 30s cancel-responsive retry sleep. The offline path (SteamVR not running at startup) is unchanged: the main-loop reconnect branch retries vrInput->initialize() on reconnectInterval ticks, and this thread's poll observes the flip whenever that happens. Teardown ordering unchanged (cancel+join at shutdown() step 0, D-14). Rebuild: cmake --build build --config Release --target micmap clean. Headless smoke test: micmap.exe --minimized stays alive past the 2-second observation window (previously died ~150ms into startup)."
+  artifacts:
+    - path: "apps/micmap/main.cpp"
+      issue: "manifestRetryThread body called vr::VR_Init(VRApplication_Utility) while vrInput's VRApplication_Background session was still active"
+  missing: ["Empirical confirmation on a live HMD: tray icon persists AND mic detection toggles SteamVR dashboard (UAT tests 6 and 7)."]
+  debug_session: ".planning/debug/micmap-startup-segv.md"
 
 - truth: "EnsureControllerTypeFiles returns true when target files already carry the current marker (idempotent no-op is success, not failure)"
   status: fixed

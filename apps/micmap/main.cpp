@@ -286,28 +286,32 @@ bool MicMapApp::initialize() {
     manifestRegistrar = steamvr::createManifestRegistrar();
     manifestRetryThread = std::thread([this]() {
 #ifdef MICMAP_HAS_OPENVR
-        // WR-01 mitigation: narrow the startup-window race between this thread's
-        // VR_Init(Utility) and the detached initThread's VR_Init(Background) by
-        // deferring the FIRST utility init until the background vrInput has
-        // either finished its VR_Init OR clearly isn't coming up (no SteamVR).
-        // Teardown ordering is already handled by the cancel+join at the top of
-        // shutdown() (D-14). We poll isInitialized() on 100ms ticks for up to
-        // 3 seconds; after that we fall through to the normal retry loop so a
-        // SteamVR-started-mid-session still gets the manifest registered.
-        // NOTE: this does not eliminate the race entirely — if vrInput's
-        // VR_Init is in-flight exactly when our first VR_Init runs, both calls
-        // still race. The cancel+join on shutdown prevents the teardown race
-        // (see shutdown() step 0); the window narrowed here is startup-only.
-        for (int i = 0; i < 30 && !manifestRetryCancel.load(); ++i) {
-            if (vrInput && vrInput->isInitialized()) break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
+        // Fix (Phase 4 UAT): the sidecar owns a single in-process VR session
+        // via vrInput (VRApplication_Background). vr::VRApplications() is a
+        // process-global accessor, so manifestRegistrar->ensureRegistered() can
+        // operate against that existing session without its own VR_Init. Calling
+        // VR_Init a second time here while the Background session was still
+        // active caused OpenVR to log
+        //   "VR_Init a second time without an intervening VR_Shutdown"
+        // and the process SEGV'd ~150ms into startup (see
+        // .planning/debug/micmap-startup-segv.md).
+        //
+        // Teardown ordering is unchanged: the cancel+join at shutdown() step 0
+        // (D-14) pre-empts any in-flight ensureRegistered call. The offline
+        // case (SteamVR not running at startup) is handled by the main-loop
+        // reconnect branch which retries vrInput->initialize(); this thread's
+        // poll will observe isInitialized() == true whenever that happens.
         while (!manifestRetryCancel.load()) {
-            vr::EVRInitError err = vr::VRInitError_None;
-            vr::VR_Init(&err, vr::VRApplication_Utility);
-            if (err == vr::VRInitError_None) {
+            // Wait up to 3s for vrInput to finish its VR_Init(Background).
+            // Cancel-responsive on 100ms ticks.
+            bool ready = false;
+            for (int i = 0; i < 30 && !manifestRetryCancel.load(); ++i) {
+                if (vrInput && vrInput->isInitialized()) { ready = true; break; }
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            if (manifestRetryCancel.load()) break;
+            if (ready) {
                 const auto r = manifestRegistrar->ensureRegistered();
-                vr::VR_Shutdown();
                 if (r == steamvr::RegisterResult::Success) {
                     // D-18: state-change-only logging. ensureRegistered already
                     // logs INFO on not-installed -> installed transition; no-op
@@ -316,14 +320,8 @@ bool MicMapApp::initialize() {
                 }
                 // ensureRegistered logs its own WARNINGs on failure paths;
                 // do not spam here (D-16 / D-18).
-            } else if (err == vr::VRInitError_Init_HmdNotFound ||
-                       err == vr::VRInitError_Init_NoServerForBackgroundApp) {
-                // D-16: SteamVR not running — silent retry, no log spam.
-            } else {
-                // D-16: unexpected VRInitError — one WARNING with enum name.
-                MICMAP_LOG_WARNING("manifest retry VR_Init unexpected error: ",
-                                   vr::VR_GetVRInitErrorAsEnglishDescription(err));
             }
+            // D-16: SteamVR not running (or registrar failure): silent retry.
             // 30s sleep in 1s cancel-responsive ticks so shutdown is prompt.
             for (int i = 0; i < 30 && !manifestRetryCancel.load(); ++i) {
                 std::this_thread::sleep_for(std::chrono::seconds(1));
