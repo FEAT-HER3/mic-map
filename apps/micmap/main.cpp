@@ -187,7 +187,8 @@ void SetupSystemTray(HWND hwnd) {
     Shell_NotifyIconW(NIM_ADD, &g_app.nid);
 }
 
-void RemoveSystemTray() { Shell_NotifyIconW(NIM_DELETE, &g_app.nid); }
+// IN-02: legacy RemoveSystemTray() helper deleted — shutdown() inlines the
+// Shell_NotifyIconW(NIM_DELETE, ...) call and guards re-entry via nid.cbSize.
 
 bool MicMapApp::initialize() {
     configManager = core::createConfigManager();
@@ -466,7 +467,7 @@ void MicMapApp::shutdown() {
     // 6. Remove tray icon
     if (nid.cbSize != 0) {
         Shell_NotifyIconW(NIM_DELETE, &nid);
-        nid.cbSize = 0;  // mark removed so RemoveSystemTray is a no-op
+        nid.cbSize = 0;  // mark removed so re-entry into shutdown is a no-op
     }
     // Steps 7-8 (ImGui shutdown, D3D/window cleanup, UnregisterClassW) are
     // handled by WinMain's tail after shutdown() returns — preserves the
