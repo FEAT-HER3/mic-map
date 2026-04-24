@@ -52,7 +52,7 @@ created: 2026-04-23
 - [ ] `apps/micmap/app.vrmanifest.in` — CMake `configure_file` input template with `@MICMAP_VERSION@` and `@MICMAP_APP_KEY@` substitution points
 - [ ] `src/steamvr/include/micmap/steamvr/manifest_registrar.hpp` — `IManifestRegistrar` interface + `createManifestRegistrar()` factory (header stub so downstream tasks compile)
 - [ ] `src/steamvr/src/manifest_registrar.cpp` — empty implementation stubs returning error (to be filled per plan)
-- [ ] Empirical resolution of **A2 (arguments field format)** — write both `["--minimized"]` (array) and `"--minimized"` (string) manifests, register each, observe SteamVR auto-launch invocation on test machine. Lock result into `app.vrmanifest.in`.
+- [x] Empirical resolution of **A2 (arguments field format)** — RESOLVED 2026-04-23 in Plan 03-02 Task 2: STRING form wins. SteamVR auto-launched `micmap.exe --minimized` from `"arguments": "--minimized"` on Bigscreen Beyond + Windows 11. Array variant deleted. See `.planning/phases/03-auto-start/03-02-A2-RESULT.md`.
 - [ ] Empirical resolution of **Q4 (Phase 2 JSON writer round-trip)** — add `shownTrayNotification: true`, save/reload config, assert persistence via existing `config_manager` test path.
 - [ ] Linking `Pathcch.lib` in `apps/micmap/CMakeLists.txt` (for `PathCchRemoveFileSpec`).
 

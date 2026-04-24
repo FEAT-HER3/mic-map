@@ -2,15 +2,16 @@
 //
 // NOT shipped in the installer (warning 2 resolution — option (a)). Registers
 // the passed-in absolute manifest path with SteamVR via
-// IVRApplications::AddApplicationManifest(path, temporary=false), then exits.
-// Throwaway target — delete after Phase 03 exit.
+// IVRApplications::AddApplicationManifest(path, temporary=false), then enables
+// auto-launch for the bigscreen.micmap app key, then exits. Throwaway target —
+// delete after Phase 03 exit.
 //
 // Usage:
 //   register_manifest.exe <absolute-path-to.vrmanifest>
 //
 // Exit codes:
-//   0 — manifest registered successfully
-//   1 — VR_Init or AddApplicationManifest failed (see stderr log)
+//   0 — manifest registered + autolaunch enabled successfully
+//   1 — VR_Init / AddApplicationManifest / SetApplicationAutoLaunch failed
 //   2 — usage error
 //
 // Logging routes through micmap::common::Logger (default ConsoleLogger;
@@ -49,6 +50,19 @@ int main(int argc, char** argv) {
     }
 
     MICMAP_LOG_INFO("Registered manifest: ", argv[1]);
+
+    constexpr const char* kAppKey = "bigscreen.micmap";
+    vr::EVRApplicationError alErr =
+        vr::VRApplications()->SetApplicationAutoLaunch(kAppKey, true);
+    if (alErr != vr::VRApplicationError_None) {
+        MICMAP_LOG_ERROR(
+            "SetApplicationAutoLaunch failed: ",
+            vr::VRApplications()->GetApplicationsErrorNameFromEnum(alErr));
+        vr::VR_Shutdown();
+        return 1;
+    }
+    MICMAP_LOG_INFO("Auto-launch enabled for app key: ", kAppKey);
+
     vr::VR_Shutdown();
     return 0;
 }

@@ -1,30 +1,23 @@
 /**
  * @file test_vrmanifest_schema.cpp
- * @brief RED schema test for app.vrmanifest (AUTO-01 + Open-item A2).
+ * @brief Schema test for app.vrmanifest (AUTO-01, A2 LOCKED).
  *
- * Phase 3 Plan 01 Task 2 (Wave 0 test scaffold). Parses the generated
- * `app.vrmanifest` (built next to micmap.exe by CMake configure_file in
- * Plan 03-02) and asserts the exact key/value contract the SteamVR
- * runtime requires for auto-launch:
+ * Parses the generated `app.vrmanifest` (built next to micmap.exe by CMake
+ * configure_file in Plan 03-02) and asserts the exact key/value contract
+ * the SteamVR runtime requires for auto-launch:
  *
  *   - top-level "source"                   == "builtin"
  *   - applications[0].app_key              == "bigscreen.micmap"
  *   - applications[0].launch_type          == "binary"
  *   - applications[0].binary_path_windows  == "micmap.exe"
  *   - applications[0].is_dashboard_overlay == true
- *   - applications[0].arguments            EITHER == "--minimized" (string)
- *                                          OR == ["--minimized"]   (1-elem array)
+ *   - applications[0].arguments            == "--minimized" (string, A2-LOCKED)
  *
- * The arguments-field branch encodes Open-item A2 (Plan 03 RESEARCH §A2):
- * SteamVR's accepted form is empirically verified during Wave 1; Plan 03-02
- * locks the working form into app.vrmanifest.in and tightens this test to
- * the single accepted shape.
- *
- * RED state: until Plan 03-02 lands the configure_file rule that emits
- * `${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/<cfg>/app.vrmanifest`, this test
- * fails at runtime with "manifest file not found at <path>". CMake-side
- * `add_dependencies(test_vrmanifest_schema micmap)` enforces the build
- * ordering for downstream Plans.
+ * A2 RESOLUTION (Plan 03-02 Task 2, 2026-04-23): empirical SteamVR test on
+ * Bigscreen Beyond + Windows 11 confirmed STRING form wins. SteamVR launched
+ * `micmap.exe --minimized` from the string-form manifest. The 1-element
+ * array fallback was deleted from the codebase. See:
+ *   .planning/phases/03-auto-start/03-02-A2-RESULT.md
  *
  * Convention: plain-main, exit 0 = pass, 1 = fail.
  */
@@ -95,19 +88,14 @@ int main() {
     MM_CHECK(app["is_dashboard_overlay"].is_boolean());
     MM_CHECK(app["is_dashboard_overlay"].get<bool>() == true);
 
-    // arguments — Open-item A2: accept EITHER string OR 1-element array.
+    // arguments — A2 LOCKED to string form per empirical SteamVR test
+    // (Plan 03-02 Task 2, 2026-04-23). Array form was rejected; only the
+    // string form survives in the canonical template.
     MM_CHECK(app.contains("arguments"));
-    if (app["arguments"].is_string()) {
-        MM_CHECK(app["arguments"].get<std::string>() == "--minimized");
-    } else if (app["arguments"].is_array()) {
-        MM_CHECK(app["arguments"].size() == 1);
-        MM_CHECK(app["arguments"][0].is_string());
-        MM_CHECK(app["arguments"][0].get<std::string>() == "--minimized");
-    } else {
-        std::cerr << "FAIL: applications[0].arguments must be string or array\n";
-        return 1;
-    }
+    MM_CHECK(app["arguments"].is_string());
+    MM_CHECK(app["arguments"].get<std::string>() == "--minimized");
 
+    std::cout << "PASS: arguments field locked to string form per A2\n";
     std::cout << "PASS: app.vrmanifest schema valid\n";
     return 0;
 }

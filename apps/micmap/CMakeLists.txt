@@ -26,12 +26,10 @@ configure_file(
     "${CMAKE_CURRENT_BINARY_DIR}/app.vrmanifest"
     @ONLY
 )
-# A2 empirical test variant — REMOVED by Plan 03-02 Task 3 once A2 resolves.
-configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/app.vrmanifest.A2test_array.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/app.vrmanifest.A2test_array"
-    @ONLY
-)
+# A2 RESOLVED 2026-04-23: STRING form wins. SteamVR launched
+# `micmap.exe --minimized` from the string-form manifest on Bigscreen Beyond +
+# Windows 11. See .planning/phases/03-auto-start/03-02-A2-RESULT.md for the
+# empirical evidence; the array-form variant template has been deleted.
 
 add_executable(micmap WIN32
     ${MICMAP_SOURCES}
@@ -67,9 +65,6 @@ add_custom_command(TARGET micmap POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_BINARY_DIR}/app.vrmanifest"
         "$<TARGET_FILE_DIR:micmap>/app.vrmanifest"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_BINARY_DIR}/app.vrmanifest.A2test_array"
-        "$<TARGET_FILE_DIR:micmap>/app.vrmanifest.A2test_array"
     COMMAND ${CMAKE_COMMAND} -E echo "Generated app.vrmanifest at $<TARGET_FILE_DIR:micmap>/app.vrmanifest"
     COMMENT "Staging app.vrmanifest beside micmap.exe"
     VERBATIM
