@@ -706,7 +706,29 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
     RegisterClassExW(&wc);
     g_app.hwnd = CreateWindowW(L"MicMapMain", L"MicMap", WS_OVERLAPPEDWINDOW, 100, 100, 500, 620, nullptr, nullptr, hInstance, nullptr);
 
-    if (!CreateDeviceD3D(g_app.hwnd)) { CleanupDeviceD3D(); UnregisterClassW(wc.lpszClassName, wc.hInstance); return 1; }
+    // WR-04: CreateWindowW can fail (rare — typically GDI object exhaustion
+    // or high-DPI quirks on locked-down systems). If hwnd is null, the
+    // D3D11CreateDeviceAndSwapChain below would receive OutputWindow=nullptr,
+    // which is UB on older Windows builds. Bail out cleanly and release the
+    // initial-owner mutex so the next launch is not stuck seeing
+    // ERROR_ALREADY_EXISTS during crash-restart cycles.
+    if (!g_app.hwnd) {
+        MICMAP_LOG_ERROR("CreateWindowW failed: ", GetLastError());
+        UnregisterClassW(wc.lpszClassName, wc.hInstance);
+        CloseHandle(hMutex);
+        return 1;
+    }
+
+    // WR-04: on D3D init failure also destroy the window and close the
+    // single-instance mutex — the original code only unregistered the
+    // window class and relied on OS process-exit cleanup for the rest.
+    if (!CreateDeviceD3D(g_app.hwnd)) {
+        CleanupDeviceD3D();
+        DestroyWindow(g_app.hwnd);
+        UnregisterClassW(wc.lpszClassName, wc.hInstance);
+        CloseHandle(hMutex);
+        return 1;
+    }
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
