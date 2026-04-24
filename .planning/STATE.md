@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-stopped_at: Phase 4 context gathered
-last_updated: "2026-04-24T09:32:14.189Z"
-last_activity: 2026-04-24 -- Phase 04 execution started
+status: complete
+stopped_at: Milestone concluded — released as v1.5
+last_updated: "2026-04-24T07:00:00.000Z"
+last_activity: 2026-04-24 -- Phase 04 UAT closed (10/10 pass); milestone released as v1.5; Phase 05 (Documentation) deferred to next milestone
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 24
-  completed_plans: 22
-  percent: 92
+  completed_plans: 24
+  percent: 80
 ---
 
 # Project State
@@ -21,14 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-22)
 
 **Core value:** Covering the microphone reliably toggles the SteamVR dashboard, invisibly to the rest of VR — no controller beam, no extra hardware, no focus loss.
-**Current focus:** Phase 04 — installer
+**Current focus:** Milestone concluded — released as v1.5 (previous pre-GSD release was v1.0.0). Phase 05 (Documentation) deferred.
 
 ## Current Position
 
-Phase: 04 (installer) — EXECUTING
-Plan: 1 of 9
-Next: `/gsd-code-review 3` → `/gsd-verify-work 3` → `/gsd-transition` to Phase 4 (Installer).
-Last activity: 2026-04-24 -- Phase 04 execution started
+Phase: 04 (installer) — CLOSED (UAT 10/10 pass after double-VR_Init fix commit 3187fbb + UAT closeout commit 53f0da7)
+Plan: all 9 plans closed
+Release: v1.5 tagged at 53f0da7; installer artifact build/installer/MicMap-Setup-v0.1.0.exe (SHA256 f2a62d662b833264e588ddb1544a8af3461597ca0c2c766f65dab55917451651) published as GitHub release.
+Deferred: Phase 05 (Documentation) carried forward to next milestone (README + architecture docs to match shipped reality).
+Last activity: 2026-04-24 -- Milestone v1.0 released as v1.5
 
 Progress: [██████████] 100% (Phase 3 plans)
 
