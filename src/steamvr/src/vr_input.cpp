@@ -109,8 +109,8 @@ public:
         , startPort_(startPort)
         , endPort_(endPort)
     {
-        MICMAP_LOG_DEBUG("DriverClient created (host: {}, ports: {}-{})",
-                         host_, startPort_, endPort_);
+        MICMAP_LOG_DEBUG("DriverClient created (host: ", host_,
+                         ", ports: ", startPort_, "-", endPort_, ")");
     }
 
     ~DriverClient() override {
@@ -126,7 +126,7 @@ public:
 
         // Try each port in the range
         for (int port = startPort_; port <= endPort_; ++port) {
-            MICMAP_LOG_DEBUG("Trying port {}...", port);
+            MICMAP_LOG_DEBUG("Trying port ", port, "...");
             
             httplib::Client client(host_, port);
             client.set_connection_timeout(1);  // 1 second timeout
@@ -137,7 +137,7 @@ public:
             if (res && res->status == 200) {
                 port_ = port;
                 connected_ = true;
-                MICMAP_LOG_INFO("Connected to MicMap driver on port {}", port_);
+                MICMAP_LOG_INFO("Connected to MicMap driver on port ", port_);
                 return true;
             }
         }
@@ -162,11 +162,11 @@ public:
     bool tap() override {
         if (!ensureConnected()) {
             lastError_ = "Not connected to driver";
-            MICMAP_LOG_ERROR("DriverClient::tap() failed: {}", lastError_);
+            MICMAP_LOG_ERROR("DriverClient::tap() failed: ", lastError_);
             return false;
         }
 
-        MICMAP_LOG_DEBUG("Sending tap (POST /button {{\"kind\":\"tap\"}})");
+        MICMAP_LOG_DEBUG("Sending tap (POST /button {\"kind\":\"tap\"})");
 
         httplib::Client client(host_, port_);
         client.set_connection_timeout(2);
@@ -176,14 +176,14 @@ public:
 
         if (!res) {
             lastError_ = "HTTP request failed";
-            MICMAP_LOG_ERROR("DriverClient::tap() failed: {}", lastError_);
+            MICMAP_LOG_ERROR("DriverClient::tap() failed: ", lastError_);
             connected_ = false;  // Mark as disconnected to retry
             return false;
         }
 
         if (res->status != 200) {
             lastError_ = "Server returned status " + std::to_string(res->status);
-            MICMAP_LOG_ERROR("DriverClient::tap() failed: {}", lastError_);
+            MICMAP_LOG_ERROR("DriverClient::tap() failed: ", lastError_);
             return false;
         }
 
