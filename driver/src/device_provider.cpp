@@ -12,7 +12,7 @@
  */
 
 #include "device_provider.hpp"
-#include "bindings_patcher.hpp"
+#include "micmap/bindings/bindings_patcher.hpp"
 #include "command_queue.hpp"
 #include "http_server.hpp"
 #include "driver_log.hpp"
@@ -22,6 +22,12 @@
 
 using namespace vr;
 using micmap::driver::VRInputErrorName;
+
+// Phase 4 D-10: wrap DriverLog into the shared-lib LogSink shape. Keeps
+// driver-side vrserver.txt output byte-identical to the pre-lift behavior.
+static void driverLogSink(const char* msg) {
+    DriverLog("%s", msg);
+}
 
 #ifndef MICMAP_DRIVER_VERSION
 #define MICMAP_DRIVER_VERSION "0.0.0"
@@ -52,7 +58,7 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
     // dashboard + lasermouse leftclick. Best-effort; logs its own outcome.
     // Takes effect on the NEXT SteamVR start (vrcompositor caches bindings
     // at connect time — already happened before our Init runs).
-    (void)PatchGenericHmdBindings();
+    (void)micmap::bindings::PatchGenericHmdBindings(driverLogSink);
 
     commandQueue_ = std::make_unique<CommandQueue>();
     httpServer_ = std::make_unique<HttpServer>(*commandQueue_);
