@@ -30,9 +30,15 @@ target_compile_features(micmap_steamvr PUBLIC cxx_std_17)
 
 # OpenVR SDK - Required for full SteamVR integration
 # If not found, the library will use a stub implementation
+#
+# Linkage is PUBLIC because manifest_registrar.hpp exposes vr::EVRApplicationError
+# in the IVRApplicationsSurface seam (so test doubles can override the methods
+# with their native OpenVR return types). Consumers transitively get the OpenVR
+# include dirs — and, being a STATIC lib, this is a no-op at link time for
+# implementations that don't actually reference OpenVR symbols.
 if(TARGET OpenVR::openvr_api)
-    target_link_libraries(micmap_steamvr PRIVATE OpenVR::openvr_api)
-    target_compile_definitions(micmap_steamvr PRIVATE MICMAP_HAS_OPENVR)
+    target_link_libraries(micmap_steamvr PUBLIC OpenVR::openvr_api)
+    target_compile_definitions(micmap_steamvr PUBLIC MICMAP_HAS_OPENVR)
     message(STATUS "micmap_steamvr: OpenVR support enabled")
 else()
     message(STATUS "micmap_steamvr: OpenVR not found - using stub implementation")
