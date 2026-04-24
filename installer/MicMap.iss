@@ -370,6 +370,16 @@ begin
   if not DirExists(AppDataDir) then
     Exit;  // Nothing to prompt about.
 
+  // HR-01: /SILENT and /VERYSILENT suppress Inno wizard dialogs but NOT direct
+  // MsgBox() calls in Pascal Script. Without this guard the uninstaller would
+  // hang waiting for keyboard input that cannot arrive (breaks CI/scripted
+  // teardown). Default in silent mode = keep user data (D-13 default).
+  if WizardSilent() then
+  begin
+    Log('Silent uninstall: keeping user data at ' + AppDataDir);
+    Exit;
+  end;
+
   CRLF := Chr(13) + Chr(10);
   Response := MsgBox(
     'Remove MicMap settings and training data?' + CRLF + CRLF +
