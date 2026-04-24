@@ -330,8 +330,17 @@ bool PatchGenericHmdBindingsFile(const fs::path& configDir, LogSink log) {
 bool EnsureControllerTypeFiles(const fs::path& configDir,
                                const std::string& controllerType,
                                LogSink log) {
+    // Return semantics: true = success (files are in the desired state,
+    // whether we wrote them or they were already correct). false = a
+    // required write failed OR a non-MicMap file occupies the target
+    // filename. Idempotent no-op on an already-current file is success.
+    //
+    // UAT-GAP-FIX 2026-04-24: prior implementation returned `anyWritten`,
+    // so a clean re-run (files already marked current) made the CLI
+    // --patch-bindings return rc=1 and fire the post-install aggregator
+    // MsgBox even though the state was correct.
     std::error_code ec;
-    bool anyWritten = false;
+    bool ok = true;
 
     const fs::path bindingsPath = configDir / ("vrcompositor_bindings_" + controllerType + ".json");
     const fs::path profilePath  = configDir / (controllerType + "_profile.json");
@@ -341,7 +350,8 @@ bool EnsureControllerTypeFiles(const fs::path& configDir,
         if (AtomicWriteJson(bindingsPath, BuildControllerTypeBindings(controllerType), log)) {
             LogFmt(log, "MicMap[patch]: wrote %s (dashboard+lasermouse for %s)\n",
                    bindingsPath.string().c_str(), controllerType.c_str());
-            anyWritten = true;
+        } else {
+            ok = false;
         }
     } else {
         // Replace a file only if marker identifies it as ours (current or
@@ -358,17 +368,21 @@ bool EnsureControllerTypeFiles(const fs::path& configDir,
             mine = false;
         }
         if (mine && !currentMarker) {
-            if (AtomicWriteJson(bindingsPath, BuildControllerTypeBindings(controllerType), log)) {
+            if (!AtomicWriteJson(bindingsPath, BuildControllerTypeBindings(controllerType), log)) {
+                ok = false;
+            } else {
                 LogFmt(log, "MicMap[patch]: upgraded %s to current marker\n",
                        bindingsPath.string().c_str());
-                anyWritten = true;
             }
         } else if (currentMarker) {
             LogFmt(log, "MicMap[patch]: %s already current\n",
                    bindingsPath.string().c_str());
         } else {
+            // Non-MicMap file occupies our target name. Refuse to overwrite;
+            // return failure so the caller can surface it.
             LogFmt(log, "MicMap[patch]: %s exists and is not ours -- leaving alone\n",
                    bindingsPath.string().c_str());
+            ok = false;
         }
     }
 
@@ -377,7 +391,8 @@ bool EnsureControllerTypeFiles(const fs::path& configDir,
         if (AtomicWriteJson(profilePath, BuildControllerTypeProfile(controllerType), log)) {
             LogFmt(log, "MicMap[patch]: wrote %s (input profile for %s)\n",
                    profilePath.string().c_str(), controllerType.c_str());
-            anyWritten = true;
+        } else {
+            ok = false;
         }
     } else {
         json existing;
@@ -392,10 +407,11 @@ bool EnsureControllerTypeFiles(const fs::path& configDir,
             mine = false;
         }
         if (mine && !currentMarker) {
-            if (AtomicWriteJson(profilePath, BuildControllerTypeProfile(controllerType), log)) {
+            if (!AtomicWriteJson(profilePath, BuildControllerTypeProfile(controllerType), log)) {
+                ok = false;
+            } else {
                 LogFmt(log, "MicMap[patch]: upgraded %s to current marker\n",
                        profilePath.string().c_str());
-                anyWritten = true;
             }
         } else if (currentMarker) {
             LogFmt(log, "MicMap[patch]: %s already current\n",
@@ -403,10 +419,11 @@ bool EnsureControllerTypeFiles(const fs::path& configDir,
         } else {
             LogFmt(log, "MicMap[patch]: %s exists and is not ours -- leaving alone\n",
                    profilePath.string().c_str());
+            ok = false;
         }
     }
 
-    return anyWritten;
+    return ok;
 }
 
 bool PatchGenericHmdBindings(LogSink log) {

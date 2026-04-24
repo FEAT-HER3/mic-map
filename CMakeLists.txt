@@ -169,6 +169,39 @@ install(TARGETS micmap
     ARCHIVE DESTINATION lib
 )
 
+# Ship OpenVR and MSVC runtime DLLs beside micmap.exe (Plan 4 UAT gap-fix).
+# Without these, micmap.exe crashes at launch on any non-dev target with
+# 0xC0000142 (STATUS_DLL_INIT_FAILED) — missing openvr_api.dll — or with
+# 0xC00004BC (STATUS_SXS_IDENTITIES_DIFFERENT) — missing VC++ runtime.
+# Sister project bey-closer-t1 (CMakeLists.txt:148-156, beyond_spike_monitor)
+# POST_BUILD-copies openvr_api.dll beside its standalone exe for the same reason.
+if(WIN32 AND TARGET OpenVR::openvr_api)
+    get_target_property(_OPENVR_LOC OpenVR::openvr_api IMPORTED_LOCATION)
+    if(_OPENVR_LOC)
+        get_filename_component(_OPENVR_DIR "${_OPENVR_LOC}" DIRECTORY)
+        find_file(MICMAP_OPENVR_DLL
+            NAMES openvr_api.dll
+            PATHS "${_OPENVR_DIR}"
+                  "${_OPENVR_DIR}/../../bin/win64"
+                  "${_OPENVR_DIR}/../bin/win64"
+            NO_DEFAULT_PATH
+        )
+        if(MICMAP_OPENVR_DLL)
+            install(FILES "${MICMAP_OPENVR_DLL}" DESTINATION bin)
+        else()
+            message(WARNING "openvr_api.dll not found beside ${_OPENVR_LOC}; installer will be broken")
+        endif()
+    endif()
+endif()
+
+# MSVC runtime (msvcp140.dll, vcruntime140.dll, vcruntime140_1.dll).
+# CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION must be set BEFORE
+# InstallRequiredSystemLibraries is included (module reads it at inclusion time).
+if(WIN32 AND MSVC)
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION bin)
+    include(InstallRequiredSystemLibraries)
+endif()
+
 # Install configuration files
 install(FILES config/default_config.json
     DESTINATION share/micmap

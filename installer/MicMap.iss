@@ -69,6 +69,15 @@ Source: "{#STAGE_DIR}\bin\app.vrmanifest"; \
   DestDir: "{app}\bin"; \
   Flags: ignoreversion
 
+; UAT-GAP-FIX (2026-04-24): ship openvr_api.dll + MSVC runtime DLLs
+; (msvcp140*.dll, vcruntime140*.dll, concrt140.dll) beside micmap.exe.
+; Without these, micmap.exe crashes at launch on any machine that does
+; not happen to have the matching VC++ redist installed AND openvr_api.dll
+; is not app-local. See .planning/phases/04-installer/04-UAT.md test 3.
+Source: "{#STAGE_DIR}\bin\*.dll"; \
+  DestDir: "{app}\bin"; \
+  Flags: ignoreversion
+
 ; ---------------------------------------------------------------
 ; [Run] / [UninstallRun] intentionally OMITTED.
 ; Plan 07 adds orchestration via CurStepChanged(ssPostInstall) + Exec()
@@ -139,16 +148,24 @@ end;
 // the exact running processes; no force-kill anywhere (D-05 anti-kill policy).
 // Defense-in-depth: `restartreplace` on driver_micmap.dll (Plan 04).
 // ---------------------------------------------------------------
+function IsProcessRunningTasklist(const ExeName: String): Boolean; forward;
+
 function IsProcessRunning(const ExeName: String): Boolean;
 var
   Locator, Service, ProcSet: Variant;
   Query: String;
+  WmiOk: Boolean;
 begin
   Result := False;
+  WmiOk := False;
   try
     Locator := CreateOleObject('WbemScripting.SWbemLocator');
     Service := Locator.ConnectServer('.', 'root\CIMV2');
-    Query := Format('SELECT Name FROM Win32_Process WHERE Name = "%s"', [ExeName]);
+    // UAT-GAP-FIX (2026-04-24): WQL string literals MUST use single quotes.
+    // The prior '"%s"' form compiled but silently returned empty result sets
+    // on some Windows builds, which combined with the fail-open try/except
+    // caused the SteamVR-running gate to miss running processes entirely.
+    Query := Format('SELECT Name FROM Win32_Process WHERE Name = ''%s''', [ExeName]);
     ProcSet := Service.ExecQuery(Query, 'WQL', 48);
       // 48 = wbemFlagForwardOnly (32) | wbemFlagReturnImmediately (16)
     // SWbemObjectSet.Count -- community-proven variant property supported by
@@ -157,12 +174,45 @@ begin
     // from 04-RESEARCH.md verbatim). Semantically identical for the True/False
     // "is a matching process present" question: Count > 0 iff at least one row.
     Result := (ProcSet.Count > 0);
+    WmiOk := True;
   except
-    // Pitfall 16 #3: WMI service down / permission denied / OLE create failed --
-    // fail OPEN (treat as "not running"). A broken WMI stack MUST NOT block the
-    // installer. A user with SteamVR actually running will hit file-copy
-    // conflicts later -- restartreplace on the DLL handles that race.
+    // Pitfall 16 #3: WMI service down / permission denied / OLE create failed.
+    // Log the exception so install logs are diagnosable, then fall back to
+    // tasklist-based detection below instead of silently failing open.
+    Log('IsProcessRunning: WMI failed for "' + ExeName + '": ' + GetExceptionMessage);
   end;
+  if not WmiOk then
+    Result := IsProcessRunningTasklist(ExeName);
+end;
+
+function IsProcessRunningTasklist(const ExeName: String): Boolean;
+var
+  TmpFile: String;
+  Cmd: String;
+  ResultCode: Integer;
+  Lines: TArrayOfString;
+  i: Integer;
+  LowerExe: String;
+begin
+  // Belt-and-braces fallback when WMI is unavailable. Runs:
+  //   cmd.exe /C tasklist /FI "IMAGENAME eq <exe>" /NH > <tmp>
+  // Then scans the output for the exe name. /NH suppresses the header line so
+  // the "INFO: No tasks are running" message is the only non-match output.
+  Result := False;
+  TmpFile := ExpandConstant('{tmp}\micmap_procscan.txt');
+  Cmd := '/C tasklist /FI "IMAGENAME eq ' + ExeName + '" /NH > "' + TmpFile + '"';
+  if not Exec(ExpandConstant('{cmd}'), Cmd, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Exit;
+  if not LoadStringsFromFile(TmpFile, Lines) then
+    Exit;
+  LowerExe := Lowercase(ExeName);
+  for i := 0 to GetArrayLength(Lines) - 1 do
+    if Pos(LowerExe, Lowercase(Lines[i])) > 0 then
+    begin
+      Result := True;
+      Break;
+    end;
+  DeleteFile(TmpFile);
 end;
 
 function GetRunningSteamVrProcesses(): String;
@@ -406,7 +456,13 @@ begin
   // MsgBox() calls in Pascal Script. Without this guard the uninstaller would
   // hang waiting for keyboard input that cannot arrive (breaks CI/scripted
   // teardown). Default in silent mode = keep user data (D-13 default).
-  if WizardSilent() then
+  //
+  // UAT-GAP-FIX (2026-04-24): use UninstallSilent(), not WizardSilent().
+  // WizardSilent() throws `Cannot call "WizardSilent" function during
+  // Uninstall` at runtime because the wizard-page state machine does not
+  // exist during uninstall. UninstallSilent() is the uninstall-time
+  // equivalent and returns True for /SILENT or /VERYSILENT.
+  if UninstallSilent() then
   begin
     Log('Silent uninstall: keeping user data at ' + AppDataDir);
     Exit;
