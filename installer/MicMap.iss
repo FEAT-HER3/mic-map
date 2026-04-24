@@ -214,3 +214,103 @@ begin
     Running := GetRunningSteamVrProcesses();
   end;
 end;
+
+// ---------------------------------------------------------------
+// Plan 07: Post-install orchestrator (INST-03, INST-04, INST-08)
+// Runs in CurStepChanged(ssPostInstall) AFTER [Files] copy completes,
+// BEFORE the wizard's Finished page. Four Exec() steps in fixed order
+// with ResultCode inspection (Technique B per 04-RESEARCH.md Open
+// Question 9) -- [Run] silently ignores non-zero exit codes (Pitfall 17).
+// Every vrpathreg.exe call gated by VrpathregExists (Pitfall 10).
+// Shared helpers GetVrpathreg + VrpathregExists reused by Plan 08.
+// ---------------------------------------------------------------
+function GetVrpathreg(Param: String): String;
+begin
+  // Pitfall 15: vrpathreg.exe lives under {SteamVR}\bin\win64 (NOT {app}\bin\win64).
+  // g_SteamVRDir populated by InitializeSetup (Plan 05).
+  Result := g_SteamVRDir + '\bin\win64\vrpathreg.exe';
+end;
+
+function VrpathregExists(): Boolean;
+begin
+  // Pitfall 10: Steam uninstalled independently -> vrpathreg missing -> skip cleanly.
+  Result := FileExists(GetVrpathreg(''));
+end;
+
+procedure RunVrpathregRemove(AppDir: String);
+var
+  ResultCode: Integer;
+begin
+  // Pitfall 3: unconditional removedriver BEFORE adddriver prevents OpenVR #1653
+  // duplicate-entry bug. rc is INTENTIONALLY ignored -- removedriver on an
+  // unregistered path is a no-op (rc=0 or 1, either is fine).
+  if VrpathregExists() then
+    Exec(GetVrpathreg(''), 'removedriver "' + AppDir + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+function RunVrpathregAdd(AppDir: String): String;
+var
+  ResultCode: Integer;
+begin
+  // Pitfall 15: pass "{app}" which IS the manifest dir (contains
+  // driver.vrdrivermanifest), NOT {app}\bin\win64 which is the DLL dir.
+  Result := '';
+  if not VrpathregExists() then
+    Exit;
+  if (not Exec(GetVrpathreg(''), 'adddriver "' + AppDir + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+    Result := 'vrpathreg adddriver (rc=' + IntToStr(ResultCode) + ')';
+end;
+
+function RunRegisterVrmanifest(MicMapExe: String): String;
+var
+  ResultCode: Integer;
+begin
+  // Phase 3 D-03 exit contract: 0=success, 1=failure.
+  Result := '';
+  if (not Exec(MicMapExe, '--register-vrmanifest', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+    Result := 'micmap.exe --register-vrmanifest (rc=' + IntToStr(ResultCode) + ')';
+end;
+
+function RunPatchBindings(MicMapExe: String): String;
+var
+  ResultCode: Integer;
+begin
+  // Plan 02 CLI exit contract: 0=success, 1=failure. NOT catastrophic --
+  // driver-side patcher re-runs on every driver init as defensive fallback.
+  Result := '';
+  if (not Exec(MicMapExe, '--patch-bindings', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+    Result := 'micmap.exe --patch-bindings (rc=' + IntToStr(ResultCode) + ')';
+end;
+
+procedure TryStep(Failed: TStringList; StepResult: String);
+begin
+  // Append non-empty failure descriptions to the aggregator.
+  if StepResult <> '' then
+    Failed.Add(StepResult);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Failed: TStringList;
+  AppDir, MicMapExe, CRLF: String;
+begin
+  if CurStep <> ssPostInstall then Exit;
+  CRLF := Chr(13) + Chr(10);
+  AppDir := ExpandConstant('{app}');
+  MicMapExe := AppDir + '\bin\micmap.exe';
+  Failed := TStringList.Create;
+  try
+    RunVrpathregRemove(AppDir);                        // Step 1: rc ignored (Pitfall 3)
+    TryStep(Failed, RunVrpathregAdd(AppDir));          // Step 2: INST-03
+    TryStep(Failed, RunRegisterVrmanifest(MicMapExe)); // Step 3: INST-04
+    TryStep(Failed, RunPatchBindings(MicMapExe));      // Step 4: INST-08
+    if Failed.Count > 0 then
+      MsgBox('MicMap installed, but some post-install steps failed:' + CRLF + CRLF +
+             Failed.Text + CRLF +
+             'MicMap will still work for basic dashboard toggling. ' +
+             'If problems persist, see %APPDATA%\MicMap\micmap.log and re-run the installer.',
+             mbInformation, MB_OK);
+  finally
+    Failed.Free;
+  end;
+end;
