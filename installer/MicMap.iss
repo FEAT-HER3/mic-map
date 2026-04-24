@@ -429,18 +429,19 @@ begin
   end;
   Failed := TStringList.Create;
   try
-    // Step 1 (reverse of Plan 07 Step 4): --unpatch-bindings.
-    // Skip gracefully if micmap.exe no longer exists (defensive; shouldn't happen
-    // because [UninstallDelete] has not run yet at usUninstall).
+    // Steps 1 + 2 (reverse of Plan 07 Steps 4 + 3): micmap.exe-driven teardown.
+    // MR-02: single FileExists gate -- Inno Setup does not delete files until
+    // usDeleteAppFiles/usPostUninstall (after usUninstall), so micmap.exe cannot
+    // vanish between steps. Double-checking opened a latent TOCTOU window where
+    // step 2 would silently skip (no Failed.Add) if something deleted the exe
+    // mid-teardown.
     if FileExists(MicMapExe) then
     begin
+      // Step 1: --unpatch-bindings
       if (not Exec(MicMapExe, '--unpatch-bindings', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
         Failed.Add('micmap.exe --unpatch-bindings (rc=' + IntToStr(ResultCode) + ')');
-    end;
 
-    // Step 2 (reverse of Plan 07 Step 3): --unregister-vrmanifest.
-    if FileExists(MicMapExe) then
-    begin
+      // Step 2: --unregister-vrmanifest
       if (not Exec(MicMapExe, '--unregister-vrmanifest', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
         Failed.Add('micmap.exe --unregister-vrmanifest (rc=' + IntToStr(ResultCode) + ')');
     end;
