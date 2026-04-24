@@ -406,12 +406,27 @@ var
   Failed: TStringList;
   AppDir: String;
   MicMapExe: String;
+  SteamVRParent: String;
 begin
   if CurUninstallStep <> usUninstall then
     Exit;
 
   AppDir := ExpandConstant('{app}');
   MicMapExe := AppDir + '\bin\micmap.exe';
+
+  // MR-01: InitializeSetup only runs during INSTALL -- at uninstall time
+  // g_SteamVRDir is empty, so GetVrpathreg('') returns '\bin\win64\vrpathreg.exe'
+  // (no root) and VrpathregExists() is silently False, skipping removedriver.
+  // Re-derive g_SteamVRDir from {app} (which is {SteamVR}\drivers\micmap per D-01):
+  //   ExtractFilePath strips trailing segment + leaves a trailing backslash, so
+  //   apply twice and then strip the final backslash. Two parents up from
+  //   {SteamVR}\drivers\micmap == {SteamVR}.
+  if g_SteamVRDir = '' then
+  begin
+    SteamVRParent := ExtractFilePath(ExtractFilePath(AppDir));
+    g_SteamVRDir := RemoveBackslashUnlessRoot(SteamVRParent);
+    Log('Uninstall: resolved g_SteamVRDir from {app} = ' + g_SteamVRDir);
+  end;
   Failed := TStringList.Create;
   try
     // Step 1 (reverse of Plan 07 Step 4): --unpatch-bindings.
