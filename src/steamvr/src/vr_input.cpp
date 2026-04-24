@@ -77,6 +77,12 @@ public:
     }
     
 protected:
+    // IN-07: intentional test injection seam. StubVRInput::pollEvents is a
+    // no-op (the stub has no SteamVR runtime to pull events from), so this
+    // method is unreachable from StubVRInput itself. Kept `protected` so
+    // test subclasses can inject synthetic VREvents (see
+    // tests/test_vr_input_quit_ordering.cpp for the parallel pattern on
+    // OpenVRInput's ack-before-notify path).
     void notifyEvent(VREventType type) {
         std::lock_guard<std::mutex> lock(callbackMutex_);
         if (eventCallback_) {
@@ -88,7 +94,7 @@ protected:
             eventCallback_(event);
         }
     }
-    
+
     bool initialized_ = false;
     std::string lastError_;
     VREventCallback eventCallback_;
