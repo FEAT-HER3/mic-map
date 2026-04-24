@@ -29,6 +29,8 @@ struct CliFlags {
     bool registerManifest   = false;  ///< --register-vrmanifest
     bool unregisterManifest = false;  ///< --unregister-vrmanifest
     bool minimized          = false;  ///< --minimized (silent auto-launch)
+    bool patchBindings      = false;  ///< --patch-bindings (Phase 4 INST-08)
+    bool unpatchBindings    = false;  ///< --unpatch-bindings (Phase 4 INST-08)
 };
 
 /**

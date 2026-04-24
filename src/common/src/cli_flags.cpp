@@ -29,6 +29,10 @@ CliFlags parseCliArgs(int argc, const wchar_t* const* argv) {
             flags.unregisterManifest = true;
         } else if (std::wcscmp(argv[i], L"--minimized") == 0) {
             flags.minimized = true;
+        } else if (std::wcscmp(argv[i], L"--patch-bindings") == 0) {
+            flags.patchBindings = true;
+        } else if (std::wcscmp(argv[i], L"--unpatch-bindings") == 0) {
+            flags.unpatchBindings = true;
         }
         // Unknown flags are silently ignored (D-01).
     }
