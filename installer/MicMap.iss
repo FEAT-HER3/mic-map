@@ -450,13 +450,14 @@ begin
   // g_SteamVRDir is empty, so GetVrpathreg('') returns '\bin\win64\vrpathreg.exe'
   // (no root) and VrpathregExists() is silently False, skipping removedriver.
   // Re-derive g_SteamVRDir from {app} (which is {SteamVR}\drivers\micmap per D-01):
-  //   ExtractFilePath strips trailing segment + leaves a trailing backslash, so
-  //   apply twice and then strip the final backslash. Two parents up from
-  //   {SteamVR}\drivers\micmap == {SteamVR}.
+  //   WR-09 iter-3: use ExtractFileDir (no trailing backslash) for iterative
+  //   parent-walk. ExtractFilePath is identity on a path ending in '\', so
+  //   ExtractFilePath(ExtractFilePath(...)) stops at drivers\ -- off by one.
+  //   Two parents up from {SteamVR}\drivers\micmap == {SteamVR}.
   if g_SteamVRDir = '' then
   begin
-    SteamVRParent := ExtractFilePath(ExtractFilePath(AppDir));
-    g_SteamVRDir := RemoveBackslashUnlessRoot(SteamVRParent);
+    SteamVRParent := ExtractFileDir(ExtractFileDir(AppDir));
+    g_SteamVRDir := SteamVRParent;
     Log('Uninstall: resolved g_SteamVRDir from {app} = ' + g_SteamVRDir);
     // IN-09: the two-parents-up derivation assumes {app} == {SteamVR}\drivers\micmap.
     // DisableDirPage=yes + DefaultDirName=GetMicMapInstallDir ensure this for fresh
