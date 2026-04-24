@@ -678,27 +678,31 @@ void processVREvent(const vr::VREvent_t& event) {
 | A5 | `VR_Init(VRApplication_Utility)` works on a machine with SteamVR runtime installed but `vrserver.exe` NOT currently running — needed for installer-invoked `--register-vrmanifest` to succeed before the user launches SteamVR. | Don't Hand-Roll, Open Q #2 | If false, installer post-install `--register-vrmanifest` fails. Graceful degrade: GUI fire-and-forget retry loop (D-15) re-registers on first GUI launch. Phase 4 treats CLI failure as non-fatal. Empirical test at Wave 0. |
 | A6 | `configure_file(app.vrmanifest.in app.vrmanifest @ONLY)` correctly substitutes `@MICMAP_VERSION@` from `PROJECT_VERSION`. | Pattern 3, Pitfall 10 | If substitution fails → literal `@MICMAP_VERSION@` in generated manifest → SteamVR may reject or display garbage. Mitigation: explicit `set(MICMAP_VERSION ${PROJECT_VERSION})` before the configure_file call; post-build cat verification. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does linked OpenVR 2.5.1 exhibit `SetApplicationAutoLaunch` #1547 persistence drift?**
    - Known: Method signatures identical to 2.15.6; #1547 filed against OpenVR 1.16.8.
    - Unclear: Whether Valve silently fixed between 2.5.1 and 2.15.6.
    - Recommendation: Treat as UAT-discoverable; re-registration loop handles either case. Optional ROADMAP follow-up to bump SDK if symptoms observed.
+   - **RESOLVED:** UAT-discoverable in Plan 07 Procedure D; the D-15 retry thread re-applies SetApplicationAutoLaunch unconditionally on every boot, so the app self-heals regardless of drift frequency. Characterization logged to 03-UAT.md.
 
 2. **Does installer-invoked `micmap.exe --register-vrmanifest` (Phase 4) succeed when SteamVR has never been launched since install (i.e., `vrserver.exe` not running)?**
    - Known: `VR_Init(Utility)` is HMD-independent; works without HMD.
    - Unclear: Whether the registration call requires `vrserver` to be started at least once, or whether the write goes directly to `appconfig.json`.
    - Recommendation: Phase 4 Wave 0 empirical test on clean VM (Steam installed, SteamVR never launched). If fails, installer `[Run]` treats as non-fatal; GUI's D-15 retry closes the loop on first user-launched SteamVR.
+   - **RESOLVED:** deferred to Phase 4 Wave 0 empirical test (installer scope). Phase 3's CLI mode is invoked by the installer, not validated inside it.
 
 3. **Is there a stable `micmap.png` asset for `image_path`?**
    - Known: `apps/micmap/micmap.rc` comments "Icon is loaded from system resources at runtime"; no `.ico` / `.png` in repo.
    - Unclear: Whether to ship placeholder or omit field.
    - Recommendation: Omit `image_path` in Phase 3. SteamVR falls back to generic overlay glyph. Add as polish when a brand asset exists.
+   - **RESOLVED:** omit image_path from app.vrmanifest.in. No icon asset in repo; SteamVR falls back to default. Can be added later without manifest schema break.
 
 4. **Does Phase 2's defensive reader preserve unknown fields on round-trip, so `shownTrayNotification` persists after a save?**
    - Known: `.value(key, default)` pattern is forward-compat for **reads**.
    - Unclear: Whether Phase 2 writer round-trips unknown fields (unlikely — writers usually serialize a known struct).
    - Recommendation: Wave 0 test — write a config with `shownTrayNotification: true`, mutate an unrelated field, save, reload, confirm the new field persists. One-unit-test scope. Side effect: confirms D-09's persistence claim.
+   - **RESOLVED:** closed empirically by Plan 03 Task 1 — adds shownTrayNotification field + round-trip test through existing config_manager. Must-have #3 on Plan 03.
 
 ## Environment Availability
 
