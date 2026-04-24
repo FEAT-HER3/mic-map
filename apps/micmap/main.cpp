@@ -831,6 +831,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
     }
 
     HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"MicMapSingleInstance");
+    // IN-08: CreateMutexW can return NULL on failure (rare — security
+    // descriptor errors, kernel object exhaustion). If it did, hMutex is
+    // NULL, GetLastError() will not be ERROR_ALREADY_EXISTS (so the
+    // single-instance gate below falls through), and we would boot a second
+    // instance without a guard. Bail explicitly.
+    if (!hMutex) {
+        MICMAP_LOG_ERROR("CreateMutexW failed: ", GetLastError());
+        return 1;
+    }
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         // D-08: --minimized second instance = SteamVR re-launching while the
         // first instance is already alive. Silent exit; do NOT steal focus.
