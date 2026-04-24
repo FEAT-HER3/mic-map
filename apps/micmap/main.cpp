@@ -526,11 +526,20 @@ void MicMapApp::renderUI() {
     if (!devices.empty()) {
         std::vector<std::string> names;
         for (auto& d : devices) {
-            // Convert wstring to string properly
-            std::string name(d.name.length(), '\0');
-            WideCharToMultiByte(CP_UTF8, 0, d.name.c_str(), -1, &name[0], (int)name.size() + 1, nullptr, nullptr);
-            name.resize(strlen(name.c_str()));
-            names.push_back(name);
+            // WR-05: size the UTF-8 buffer via a probing call first. The
+            // original code allocated one byte per wide-char code unit, which
+            // underflows for non-ASCII names (UTF-8 needs up to 3 bytes per
+            // BMP code unit, 4 for non-BMP pairs). First call returns the
+            // required byte count including the NUL terminator.
+            std::string name;
+            int needed = WideCharToMultiByte(CP_UTF8, 0, d.name.c_str(), -1,
+                                             nullptr, 0, nullptr, nullptr);
+            if (needed > 0) {
+                name.resize(static_cast<size_t>(needed - 1));  // drop NUL
+                WideCharToMultiByte(CP_UTF8, 0, d.name.c_str(), -1,
+                                    name.data(), needed, nullptr, nullptr);
+            }
+            names.push_back(std::move(name));
         }
         std::vector<const char*> ptrs;
         for (auto& n : names) ptrs.push_back(n.c_str());
