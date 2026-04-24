@@ -80,3 +80,9 @@ add_custom_command(TARGET micmap POST_BUILD
         "$<TARGET_FILE_DIR:micmap>/config/default_config.json"
     COMMENT "Copying config files..."
 )
+
+# Phase 4 INST-07 / D-19: install app.vrmanifest alongside micmap.exe so
+# the installer stage dir (cmake --install ... --prefix build/stage) has
+# both files in {stage}/bin/ for Inno Setup's [Files] to consume.
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/app.vrmanifest"
+        DESTINATION bin)

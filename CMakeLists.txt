@@ -101,42 +101,60 @@ if(MICMAP_BUILD_DRIVER)
     endif()
 endif()
 
-# Copy scripts to build output directory
-file(GLOB SCRIPT_FILES "${CMAKE_SOURCE_DIR}/scripts/*.bat")
-foreach(SCRIPT_FILE ${SCRIPT_FILES})
-    get_filename_component(SCRIPT_NAME ${SCRIPT_FILE} NAME)
-    configure_file(${SCRIPT_FILE} ${CMAKE_BINARY_DIR}/bin/${SCRIPT_NAME} COPYONLY)
-endforeach()
-
-# Custom target to copy all distributable files to build/bin
-# This includes scripts and the driver folder
-add_custom_target(copy_distributable_files ALL
-    # Create directories
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/bin"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/bin/driver"
-    
-    # Copy scripts
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/scripts/install_driver.bat"
-        "${CMAKE_BINARY_DIR}/bin/install_driver.bat"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/scripts/uninstall_driver.bat"
-        "${CMAKE_BINARY_DIR}/bin/uninstall_driver.bat"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/scripts/test_driver.bat"
-        "${CMAKE_BINARY_DIR}/bin/test_driver.bat"
-    
-    # Copy the entire driver folder to bin/driver/micmap
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_BINARY_DIR}/driver/micmap"
-        "${CMAKE_BINARY_DIR}/bin/driver/micmap"
-    
-    COMMENT "Copying distributable files (scripts and driver) to build/bin directory"
+# ---------------------------------------------------------------------
+# Phase 4 INST-07: CMake `package` target (D-18 / D-19 / D-20 / D-21)
+# `cmake --build build --target package --config Release` produces
+# ${CMAKE_BINARY_DIR}/installer/MicMap-Setup-v${PROJECT_VERSION}.exe
+# via: cmake --install (into build/stage) -> ISCC.exe with /D defines.
+# ---------------------------------------------------------------------
+find_program(ISCC_EXECUTABLE ISCC
+    PATHS
+        "$ENV{ProgramFiles\(x86\)}/Inno Setup 6"
+        "$ENV{ProgramFiles}/Inno Setup 6"
+    DOC "Inno Setup 6 command-line compiler (ISCC.exe)"
 )
+if(NOT ISCC_EXECUTABLE)
+    message(WARNING
+        "ISCC.exe not found -- 'package' target will NOT be available. "
+        "Install Inno Setup 6.7.1+ from https://jrsoftware.org/isdl.php "
+        "and either add it to PATH or configure with "
+        "-DISCC_EXECUTABLE=<path-to-ISCC.exe>.")
+else()
+    set(MICMAP_STAGE_DIR     "${CMAKE_BINARY_DIR}/stage")
+    set(MICMAP_INSTALLER_DIR "${CMAKE_BINARY_DIR}/installer")
+    set(MICMAP_ISS_FILE      "${CMAKE_SOURCE_DIR}/installer/MicMap.iss")
 
-# Ensure the driver is built before copying
-if(MICMAP_BUILD_DRIVER AND OpenVR_FOUND)
-    add_dependencies(copy_distributable_files driver_micmap)
+    add_custom_target(package
+        # Step 1: clean stage dir so removed files don't linger
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${MICMAP_STAGE_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory   "${MICMAP_STAGE_DIR}"
+
+        # Step 2: run all install() rules into the stage
+        COMMAND ${CMAKE_COMMAND}
+            --install "${CMAKE_BINARY_DIR}"
+            --prefix  "${MICMAP_STAGE_DIR}"
+            --config  $<CONFIG>
+
+        # Step 3: compile the .iss -> MicMap-Setup-v${VERSION}.exe
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${MICMAP_INSTALLER_DIR}"
+        COMMAND "${ISCC_EXECUTABLE}"
+                "/DMICMAP_VERSION=${PROJECT_VERSION}"
+                "/DSTAGE_DIR=${MICMAP_STAGE_DIR}"
+                "/DOUTPUT_DIR=${MICMAP_INSTALLER_DIR}"
+                "${MICMAP_ISS_FILE}"
+
+        # Step 4: echo the output path
+        COMMAND ${CMAKE_COMMAND} -E echo
+            "Installer built: ${MICMAP_INSTALLER_DIR}/MicMap-Setup-v${PROJECT_VERSION}.exe"
+
+        DEPENDS micmap
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+        COMMENT "Building MicMap-Setup-v${PROJECT_VERSION}.exe"
+        VERBATIM
+    )
+    if(MICMAP_BUILD_DRIVER AND OpenVR_FOUND)
+        add_dependencies(package driver_micmap)
+    endif()
 endif()
 
 # Installation rules
