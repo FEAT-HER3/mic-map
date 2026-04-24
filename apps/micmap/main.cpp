@@ -204,9 +204,6 @@ void SetupSystemTray(HWND hwnd) {
     }
 }
 
-// IN-02: legacy RemoveSystemTray() helper deleted — shutdown() inlines the
-// Shell_NotifyIconW(NIM_DELETE, ...) call and guards re-entry via nid.cbSize.
-
 bool MicMapApp::initialize() {
     configManager = core::createConfigManager();
     configManager->loadDefault();
