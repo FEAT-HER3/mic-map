@@ -301,6 +301,12 @@ void backupAndRotate(const std::filesystem::path& configPath) {
             backups.push_back(entry.path());
         }
     }
+    // IN-06: lexicographic descending sort yields newest-first ONLY because
+    // makeCorruptedSuffix() emits a zero-padded %Y%m%d-%H%M%S timestamp, for
+    // which lexicographic order == chronological order. If this format ever
+    // changes (e.g., RFC 3339 ISO-8601 with a 'T' separator), update this
+    // sort to parse the timestamp explicitly — otherwise backup pruning will
+    // silently keep the wrong five files.
     std::sort(backups.begin(), backups.end(), std::greater<>());
     for (size_t i = 5; i < backups.size(); ++i) {
         std::error_code remEc;
