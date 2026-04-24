@@ -33,6 +33,12 @@
 #include "micmap/core/state_machine.hpp"
 #include "micmap/core/config_manager.hpp"
 #include "micmap/common/logger.hpp"
+#include "micmap/common/cli_flags.hpp"
+#include "micmap/steamvr/manifest_registrar.hpp"
+#include "first_launch_balloon.hpp"
+#ifdef MICMAP_HAS_OPENVR
+#include <openvr.h>
+#endif
 
 #include <memory>
 #include <atomic>
@@ -559,11 +565,50 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow) {
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, int nCmdShow) {
+    // Phase 3 D-01: parse CLI flags FIRST, before anything else. Use the
+    // wide-char argv from CommandLineToArgvW (Pitfall 8: free it the moment
+    // CliFlags is populated — no argv pointers stored).
+    int argc = 0;
+    LPWSTR* argvW = CommandLineToArgvW(GetCommandLineW(), &argc);
+    micmap::common::CliFlags flags = micmap::common::parseCliArgs(argc, argvW);
+    if (argvW) { LocalFree(argvW); argvW = nullptr; }
+    // argvW is now INVALID; use only `flags` below.
+
+    // D-02 / D-03 / D-04: CLI fork — headless register/unregister BEFORE
+    // any GUI init (no RegisterClassExW, no CreateWindowW, no D3D, no
+    // ImGui). D-04: no console allocation — the default ConsoleLogger's
+    // stdout writes are dropped on the floor in headless CLI mode; exit
+    // code carries the result (0 success, 1 failure).
+    if (flags.registerManifest || flags.unregisterManifest) {
+#ifdef MICMAP_HAS_OPENVR
+        vr::EVRInitError initErr = vr::VRInitError_None;
+        vr::VR_Init(&initErr, vr::VRApplication_Utility);
+        if (initErr != vr::VRInitError_None) {
+            MICMAP_LOG_ERROR("CLI VR_Init(Utility) failed: ",
+                             vr::VR_GetVRInitErrorAsEnglishDescription(initErr));
+            return 1;  // D-03
+        }
+        auto registrar = micmap::steamvr::createManifestRegistrar();
+        micmap::steamvr::RegisterResult r = flags.registerManifest
+            ? registrar->registerApp()
+            : registrar->unregisterApp();
+        vr::VR_Shutdown();
+        return (r == micmap::steamvr::RegisterResult::Success) ? 0 : 1;
+#else
+        MICMAP_LOG_ERROR("OpenVR not available in this build; cannot register manifest");
+        return 1;
+#endif
+    }
+
     HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"MicMapSingleInstance");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        HWND w = FindWindowW(L"MicMapMain", nullptr);
-        if (w) { PostMessageW(w, WM_COMMAND, IDM_SHOW, 0); SetForegroundWindow(w); }
+        // D-08: --minimized second instance = SteamVR re-launching while the
+        // first instance is already alive. Silent exit; do NOT steal focus.
+        if (!flags.minimized) {
+            HWND w = FindWindowW(L"MicMapMain", nullptr);
+            if (w) { PostMessageW(w, WM_COMMAND, IDM_SHOW, 0); SetForegroundWindow(w); }
+        }
         return 0;
     }
 
@@ -593,8 +638,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
     });
     initThread.detach();
 
-    bool startMin = lpCmdLine && strstr(lpCmdLine, "--minimized");
-    if (startMin) { g_app.minimizedToTray = true; } else { ShowWindow(g_app.hwnd, nCmdShow); UpdateWindow(g_app.hwnd); }
+    // D-06: silent-mode window policy — never ShowWindow when auto-launched
+    // by SteamVR. The legacy command-line substring check on lpCmdLine has
+    // been replaced by flags.minimized parsed at WinMain entry.
+    if (flags.minimized) {
+        g_app.minimizedToTray = true;
+    } else {
+        ShowWindow(g_app.hwnd, nCmdShow);
+        UpdateWindow(g_app.hwnd);
+    }
+
+    // D-09: first-silent-launch balloon — fires once per install, persisted
+    // via AppConfig.shownTrayNotification. Gated on flags.minimized so a
+    // user-clicked boot never consumes the one-shot.
+    if (flags.minimized && g_app.configManager) {
+        micmap::apps::ProductionShellNotifySeam shellAdapter(g_app.nid);
+        micmap::apps::fireBalloonIfFirstSilentLaunch(
+            shellAdapter, *g_app.configManager, flags.minimized);
+    }
 
     ImVec4 clear_color(0.1f, 0.1f, 0.1f, 1.0f);
     while (g_app.running) {
