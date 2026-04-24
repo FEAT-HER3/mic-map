@@ -242,6 +242,19 @@ begin
   Result := FileExists(GetVrpathreg(''));
 end;
 
+// IN-10: defense-in-depth quoting helper. {app} is presently derived from
+// GetMicMapInstallDir with DisableDirPage=yes, so it cannot contain '"'
+// (Windows file-system paths forbid it). But if a future refactor ever
+// lets user input reach {app} (e.g. re-enabling the dir page, or a task
+// that influences path resolution), the raw AppDir interpolation below
+// becomes a vrpathreg CLI-injection sink. Doubling embedded quotes closes
+// the door preemptively; on today's code path this is a no-op.
+function QuoteExecArg(Arg: String): String;
+begin
+  StringChangeEx(Arg, '"', '""', True);
+  Result := Arg;
+end;
+
 procedure RunVrpathregRemove(AppDir: String);
 var
   IgnoredRC: Integer;
@@ -252,7 +265,7 @@ begin
   // IN-04: variable renamed IgnoredRC to make the "don't read this" intent
   // load-bearing in the signature; Exec() requires an out-parameter here.
   if VrpathregExists() then
-    Exec(GetVrpathreg(''), 'removedriver "' + AppDir + '"', '', SW_HIDE, ewWaitUntilTerminated, IgnoredRC);
+    Exec(GetVrpathreg(''), 'removedriver "' + QuoteExecArg(AppDir) + '"', '', SW_HIDE, ewWaitUntilTerminated, IgnoredRC);
 end;
 
 function RunVrpathregAdd(AppDir: String): String;
@@ -264,7 +277,7 @@ begin
   Result := '';
   if not VrpathregExists() then
     Exit;
-  if (not Exec(GetVrpathreg(''), 'adddriver "' + AppDir + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+  if (not Exec(GetVrpathreg(''), 'adddriver "' + QuoteExecArg(AppDir) + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
     Result := 'vrpathreg adddriver (rc=' + IntToStr(ResultCode) + ')';
 end;
 
@@ -477,7 +490,8 @@ begin
     // uninstall only removes). Pitfall 10 gate via VrpathregExists (Plan 07 helper).
     if VrpathregExists() then
     begin
-      if (not Exec(GetVrpathreg(''), 'removedriver "' + AppDir + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+      // IN-10: apply the same defense-in-depth quote escaping as RunVrpathregRemove.
+      if (not Exec(GetVrpathreg(''), 'removedriver "' + QuoteExecArg(AppDir) + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
         Failed.Add('vrpathreg removedriver (rc=' + IntToStr(ResultCode) + ')');
     end;
 
