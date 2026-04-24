@@ -1,9 +1,9 @@
 ---
 phase: 04-installer
-reviewed: 2026-04-24T14:30:00Z
+reviewed: 2026-04-24T16:00:00Z
 depth: standard
-iteration: 2
-files_reviewed: 17
+iteration: 3
+files_reviewed: 16
 files_reviewed_list:
   - CMakeLists.txt
   - apps/micmap/CMakeLists.txt
@@ -12,7 +12,6 @@ files_reviewed_list:
   - driver/CMakeLists.txt
   - driver/src/device_provider.cpp
   - installer/MicMap.iss
-  - installer/micmap.ico
   - src/CMakeLists.txt
   - src/bindings/CMakeLists.txt
   - src/bindings/include/micmap/bindings/bindings_patcher.hpp
@@ -24,319 +23,248 @@ files_reviewed_list:
   - tests/test_cli_flags_parse.cpp
 findings:
   critical: 0
-  warning: 2
-  info: 5
-  total: 7
+  warning: 1
+  info: 3
+  total: 4
 status: issues_found
 ---
 
-# Phase 04: Code Review Report (Iteration 2)
+# Phase 04: Code Review Report (Iteration 3)
 
-**Reviewed:** 2026-04-24T14:30:00Z
+**Reviewed:** 2026-04-24T16:00:00Z
 **Depth:** standard
-**Iteration:** 2 (first pass: 11 findings, all fixed per 04-REVIEW-FIX.md)
-**Files Reviewed:** 17 (16 source + 1 binary icon asset skipped)
+**Iteration:** 3 (iterations 1 + 2 findings all closed per 04-REVIEW-FIX.md commits)
+**Files Reviewed:** 16 source files
 **Status:** issues_found
 
 ## Summary
 
-Second-pass review of Phase 04 after iteration-1's 11 findings were fixed
-(per 04-REVIEW-FIX.md, commits 1885bb8 / 871246a / ce91a3a / 2cd64c7 /
-c6c808a / 26c8413 / 680ffd3 / fb9c1ea / eb1e172 / 8079e6e). All prior fixes
-are verified in place and correctly applied:
+Third-pass review of Phase 04 after iteration-2's seven findings were fixed
+(427c898 WR-07, bb3010a WR-08, a09763e IN-06, 7f7b761 IN-07, bb8879b IN-08,
+ba4bd24 IN-09, d6c7af4 IN-10). All prior fixes are verified in place:
 
-- **WR-01 verified:** `MicMapApp::initialConnectThread` + `initialConnectCancel`
-  declared (main.cpp:119-120), `std::thread` assignment replaces detach at
-  WinMain (main.cpp:876-885), cancel+join ordered before step 3 in
-  `shutdown()` (main.cpp:457-462).
-- **WR-02 verified:** `CloseHandle(hMutex)` before `return 0` on the
-  `ERROR_ALREADY_EXISTS` branch (main.cpp:815).
-- **WR-03 verified:** Both device-switch Combo (main.cpp:554-559) and Clear
-  button (main.cpp:627-630) now wrap detector reassignment in
-  `std::lock_guard<std::mutex> lock(audioMutex)`.
-- **WR-04 verified:** `audioCapture->startCapture()` moved inside the
-  `dev.sampleRate > 0` branch with a logged-warning else arm (main.cpp:565,
-  567).
-- **WR-05 verified:** Probing `WideCharToMultiByte(..., nullptr, 0, ...)` call
-  sizes the UTF-8 buffer correctly (main.cpp:531-538).
-- **WR-06 verified:** `add_dependencies(package micmap)` at CMakeLists.txt:159;
-  `DEPENDS micmap` removed from `add_custom_target` body.
-- **IN-01 verified:** `out.exceptions(std::ios::failbit | std::ios::badbit)`
-  at bindings_patcher.cpp:240; tmp-cleanup in catch block.
-- **IN-02 verified:** Dangling `// IN-02: legacy RemoveSystemTray() helper
-  deleted ...` comment removed above `MicMapApp::initialize()`.
-- **IN-03 verified:** `Sleep(500)` between `IDCANCEL` guard and next WMI
-  poll (MicMap.iss:218).
-- **IN-04 verified:** `ResultCode` renamed to `IgnoredRC` (MicMap.iss:247).
-- **IN-05 verified:** six-line assumption comment above `k_InterfaceVersions[]`
-  (device_provider.cpp:41-46).
+- **WR-07 verified:** `main.cpp:584-587, 602-616, 619-635, 639-648` wrap every
+  remaining UI-thread `detector->*` mutation under `audioMutex` (slider,
+  auto-stop training, Stop Training button, Train Pattern button).
+- **WR-08 verified:** `main.cpp:925-946` now uses two `std::packaged_task`s
+  whose futures are seeded into `g_app.driverConnectFuture` /
+  `g_app.vrInitFuture` before the thread is launched, so the main-loop
+  reconnect guard recognizes in-flight initial work.
+- **IN-06 verified:** `bindings_patcher.cpp:201-212` uses
+  `GetEnvironmentVariableW` + `fs::path(wchar_t*)`; line 240-241 uses
+  `fs::u8path(runtime)`.
+- **IN-07 verified:** `test_bindings_patcher.cpp:65-77` appends PID to tmp dir.
+- **IN-08 verified:** `main.cpp:839-842` null-checks `hMutex` before
+  `GetLastError`.
+- **IN-09 verified:** `MicMap.iss:467-468` logs a WARNING when derived
+  `g_SteamVRDir` lacks `bin\win64`.
+- **IN-10 verified:** `MicMap.iss:252-256` `QuoteExecArg` helper wired at
+  the three vrpathreg `Exec` call-sites (lines 268, 280, 494).
 
-Iteration 2 surfaces a small number of **new** issues that were out of scope
-or missed during iteration 1. The most material is WR-07 — the WR-03 fix
-covered two detector reassignment sites but left five other UI-thread
-`detector->*` call-sites still racing the audio callback. This is the same
-data-race class flagged by WR-03, just at different sites. The rest of the
-new findings are defense-in-depth nits in the shared bindings library
-(Unicode path handling via `std::getenv` + `fs::path(std::string)` on
-Windows), a fragile first-boot reconnect overlap, and a `ctest -j` hazard
-in `test_bindings_patcher`.
-
-Binary asset `installer/micmap.ico` is skipped per review policy.
+This iteration surfaces a small number of **new** issues missed by iterations
+1 and 2. The material finding (WR-09) is an actual bug in the MR-01 uninstall
+`g_SteamVRDir` re-derivation: `ExtractFilePath` applied twice does NOT walk
+two parents up the way the surrounding comment claims, because
+`ExtractFilePath` on a string that already ends in a backslash is an
+identity-return. The failure mode is silent: uninstall skips
+`vrpathreg removedriver` (via the `VrpathregExists()` gate added in IN-09),
+leaving the driver registered in `steamvr.vrpaths` after the files are
+deleted — a cosmetic leftover, not a correctness regression, but inconsistent
+with the stated MR-01 intent. Rest of the findings are defense-in-depth
+nits around the new WR-08 packaged-task pattern and a pair of unchecked
+Win32 return values whose failure modes are currently benign.
 
 ## Warnings
 
-### WR-07: Five UI-thread `detector->*` call-sites still race the audio callback
+### WR-09: MR-01 `ExtractFilePath(ExtractFilePath(AppDir))` does NOT walk two parents up
 
-**File:** `apps/micmap/main.cpp:579`, `588-594`, `600-608`, `613-616`, `628-629`
-**Issue:** Iteration 1 WR-03 correctly identified that the audio callback
-(main.cpp:342-433) dereferences `detector` under `audioMutex`, and wrapped
-the two *reassignment* sites in `renderUI()` under the same lock. However,
-the WR-03 fix did **not** cover the other UI-thread `detector->*` calls that
-mutate detector state concurrently with the audio thread's in-flight
-`detector->analyze(...)` / `detector->addTrainingSample(...)`:
-
-- `detector->setMinDetectionDuration(detectionTimeMs)` (line 579, slider)
-- auto-stop training: `detector->finishTraining()` +
-  `detector->saveTrainingData(...)` (lines 590-594)
-- Stop Training button: `detector->finishTraining()` +
-  `detector->saveTrainingData(...)` (lines 600-608)
-- Train Pattern button: `detector->startTraining()` (line 614)
-- Clear button (lock covers reassignment but not the state read at line 619's
-  `&& detector` gate — acceptable; main concern is the four above)
-
-These are the same data-race class as WR-03: the audio callback holds
-`audioMutex` before touching `detector`, but these UI-thread sites do not,
-so in-flight `addTrainingSample` / `analyze` on the audio thread can race
-`finishTraining` / `startTraining` / `setMinDetectionDuration` on the UI
-thread. Concrete failure mode: user clicks Stop Training mid-`analyze()` →
-`finishTraining()` mutates the FFT detector's internal pattern while the
-callback is computing a confidence score against it → UB (torn reads on
-`std::vector` / FFT scratch buffers).
-**Fix:** Wrap each remaining UI-thread `detector->*` access in the same
-`std::lock_guard<std::mutex> lock(audioMutex)` pattern used for WR-03. The
-audio callback holds the lock for the duration of one `analyze()` (sub-ms),
-so UI-thread contention is negligible:
-```cpp
-// line 579 (slider)
-if (ImGui::SliderInt("##Time", &detectionTimeMs, 100, 1000, "")) {
-    if (detector) {
-        std::lock_guard<std::mutex> lock(audioMutex);
-        detector->setMinDetectionDuration(detectionTimeMs);
-    }
-    if (configManager) configManager->getConfig().detection.minDurationMs = detectionTimeMs;
-}
-
-// lines 588-596 (auto-stop training)
-if (isTraining && trainingSampleCount >= MIN_TRAINING_SAMPLES * 3) {
-    if (detector) {
-        bool success;
-        {
-            std::lock_guard<std::mutex> lock(audioMutex);
-            success = detector->finishTraining();
-        }
-        isTraining = false;
-        if (success) {
-            hasProfile = true;
-            if (configManager) {
-                std::lock_guard<std::mutex> lock(audioMutex);
-                detector->saveTrainingData(configManager->getTrainingDataPath());
-            }
-        }
-    }
-}
-
-// lines 613-616 (Train Pattern button)
-if (ImGui::Button("Train Pattern", ImVec2(120, 30)) && detector) {
-    {
-        std::lock_guard<std::mutex> lock(audioMutex);
-        detector->startTraining();
-    }
-    isTraining = true;
-    trainingSampleCount = 0;
-}
+**File:** `installer/MicMap.iss:458`
+**Issue:** MR-01's iteration-1 fix re-derives `g_SteamVRDir` at uninstall time
+via:
+```pascal
+SteamVRParent := ExtractFilePath(ExtractFilePath(AppDir));
+g_SteamVRDir := RemoveBackslashUnlessRoot(SteamVRParent);
 ```
-(Same pattern for the Stop Training button at 600-608.)
-Structurally identical to WR-03; skipping these leaves the fix incomplete.
+The accompanying comment at line 454 claims this walks "two parents up" from
+`{SteamVR}\drivers\micmap` to `{SteamVR}`. It does not. Inno Setup /
+Delphi's `ExtractFilePath` finds the last path delimiter (`\` or `:`) and
+returns everything up to and including it. Applied twice:
 
-### WR-08: First-boot reconnect overlap — `initialConnectThread` and main-loop `std::async` can run `driverClient->connect()` concurrently
+1. `ExtractFilePath('C:\SteamVR\drivers\micmap')` → `'C:\SteamVR\drivers\'`
+2. `ExtractFilePath('C:\SteamVR\drivers\')` → `'C:\SteamVR\drivers\'`
+   (the last delimiter is the trailing backslash, so the function returns
+   the input unchanged)
 
-**File:** `apps/micmap/main.cpp:876-885` (initial thread) + `931-938` (main-loop async)
-**Issue:** After the WR-01 fix, `initialConnectThread` calls
-`driverClient->connect()` (line 879) and `vrInput->initialize()` (line 883)
-in sequence. Meanwhile the main message loop at line 927 enters a reconnect
-check every `reconnectInterval` ticks (40 ticks = ~2 s normally) and
-launches `std::async(std::launch::async, []() { g_app.driverClient->connect(); })`
-whenever `driverClient->isConnected()` returns false. On first boot:
+Final `RemoveBackslashUnlessRoot` strips the trailing backslash, yielding
+`g_SteamVRDir = 'C:\SteamVR\drivers'` instead of the intended `'C:\SteamVR'`.
 
-1. `initialConnectThread` starts `driverClient->connect()` (several seconds
-   if the driver HTTP server is not yet listening).
-2. After ~2 s of main-loop ticks, the reconnect guard fires. It only checks
-   `driverConnectFuture.valid()` (which is still default-constructed = not
-   valid on first entry) and `driverClient->isConnected()` (which is false
-   because the initial thread hasn't finished yet).
-3. The main loop launches a *second* concurrent `driverClient->connect()`
-   call on a new async thread.
+Observable failure mode:
+- The IN-09 sanity check at line 467 (`DirExists(g_SteamVRDir + '\bin\win64')`)
+  correctly logs the WARNING line "derived g_SteamVRDir lacks bin\win64".
+- `GetVrpathreg('')` at line 236 returns
+  `'C:\SteamVR\drivers\bin\win64\vrpathreg.exe'` — which doesn't exist.
+- `VrpathregExists()` at line 491 returns false → `Exec(GetVrpathreg(...),
+  'removedriver ...')` is silently skipped.
+- Uninstaller deletes the driver files at `{app}` but leaves the driver
+  registered in `steamvr.vrpaths` (a dangling entry SteamVR will probe on
+  every subsequent start and ignore with a file-missing log line).
 
-Two simultaneous `connect()` calls on the same `IDriverClient` instance.
-Whether this is safe depends on the implementation's internal locking (not
-visible in this review's file set), but the ambiguity is a hazard — the
-existing code only guards against overlap of main-loop-initiated connects,
-not against the initial thread's in-flight work.
-**Fix:** Gate the reconnect branch on the initial thread having completed,
-or seed `driverConnectFuture` / `vrInitFuture` from the initial thread so
-the main-loop guard naturally serializes. Minimal approach — wrap the
-initial thread's work in a `std::packaged_task` and assign its future to
-`driverConnectFuture` before launching, so the main loop's
-`driverConnectFuture.valid() && wait_for(0) != ready` guard
-already recognizes it as in-flight:
-```cpp
-// WinMain, replacing the detached-thread-replacement block:
-std::packaged_task<void()> initTask([]() {
-    if (g_app.initialConnectCancel.load()) return;
-    if (g_app.driverClient) g_app.driverClient->connect();
-    if (g_app.initialConnectCancel.load()) return;
-    if (g_app.vrInput) g_app.vrInput->initialize();
-});
-g_app.driverConnectFuture = initTask.get_future();  // reuse main-loop guard
-g_app.initialConnectThread = std::thread(std::move(initTask));
+Not a correctness regression (the skip is clean; no crash, no data loss),
+but the MR-01 fix advertises "removedriver now runs" and in practice it
+never runs for the standard install layout because the parent-walk is
+off-by-one. Severity Warning because this is an actual bug in previously-
+committed fix code.
+**Fix:** Use `ExtractFileDir` (which returns the directory *without*
+trailing backslash, allowing iterative parent-walk) instead of
+`ExtractFilePath`:
+```pascal
+// {app} == {SteamVR}\drivers\micmap, walk two parents up -> {SteamVR}
+SteamVRParent := ExtractFileDir(ExtractFileDir(AppDir));
+g_SteamVRDir := SteamVRParent;  // ExtractFileDir does not add a trailing slash
+Log('Uninstall: resolved g_SteamVRDir from {app} = ' + g_SteamVRDir);
 ```
-Lower-effort mitigation: skip the main-loop reconnect for the first
-`reconnectInterval * 3` ticks (~6 s grace window) — but that's a timing
-hack, not a structural fix.
+Behaves correctly:
+- `ExtractFileDir('C:\SteamVR\drivers\micmap')` → `'C:\SteamVR\drivers'`
+- `ExtractFileDir('C:\SteamVR\drivers')` → `'C:\SteamVR'`  ✓
+
+The `RemoveBackslashUnlessRoot` call becomes unnecessary because
+`ExtractFileDir` already omits the trailing backslash. Verify by visual
+uninstall test: after uninstall, `vrpathreg.exe show` (run manually) should
+no longer list the MicMap driver path; currently it does.
 
 ## Info
 
-### IN-06: `std::getenv("LOCALAPPDATA")` + `fs::path(std::string)` munges non-ASCII user profile paths
+### IN-11: WR-08 packaged-task lambda leaks an uninvoked task on early-cancel path
 
-**File:** `src/bindings/src/bindings_patcher.cpp:192`, `221-222`
-**Issue:** On Windows, `std::getenv` returns an *ANSI* (active code page) copy
-of the environment variable, not UTF-8 / UTF-16. If the user's
-`%LOCALAPPDATA%` contains characters outside the current ACP (e.g. a Windows
-user profile with accented or CJK characters: `C:\Users\Jörg\AppData\Local`),
-those characters are replaced with `?` or similar in the returned string.
-The subsequent `fs::path(localAppData) / "openvr" / "openvrpaths.vrpath"`
-then points at a nonexistent path, `fs::exists` returns false, and the
-installer silently fails to resolve the SteamVR config dir — with the
-misleading log line `openvrpaths.vrpath not found at <mangled path>`.
-
-Same issue at line 221: `j["runtime"][0].get<std::string>()` extracts a
-UTF-8 string from the JSON (nlohmann/json is UTF-8 natively), then passes
-it to `fs::path(const std::string&)` which on Windows interprets it as
-ACP — mojibake for any SteamVR runtime path under a non-ASCII user profile.
-**Fix:** Use `GetEnvironmentVariableW` + `fs::path(const wchar_t*)` on
-Windows, and `fs::u8path(runtime)` for the JSON string:
+**File:** `apps/micmap/main.cpp:939-946`
+**Issue:** The WR-08 fix wraps the initial-thread work in two
+`std::packaged_task<void()>` instances whose futures are seeded into
+`g_app.driverConnectFuture` / `g_app.vrInitFuture` before thread launch
+(line 937-938). The thread lambda (line 939-946) checks
+`initialConnectCancel` between task invocations:
 ```cpp
-#ifdef _WIN32
-wchar_t lad[MAX_PATH];
-DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", lad, MAX_PATH);
-if (n == 0 || n >= MAX_PATH) {
-    LogFmt(log, "MicMap[patch]: LOCALAPPDATA not set or too long\n");
-    return {};
-}
-fs::path pathsFile = fs::path(lad) / L"openvr" / L"openvrpaths.vrpath";
-#endif
-
-// line 221-222:
-const std::string runtime = j["runtime"][0].get<std::string>();
-return fs::u8path(runtime) / "resources" / "config";
+g_app.initialConnectThread = std::thread(
+    [connectTask = std::move(connectTask),
+     vrInitTask  = std::move(vrInitTask)]() mutable {
+        if (g_app.initialConnectCancel.load()) return;   // (a)
+        connectTask();
+        if (g_app.initialConnectCancel.load()) return;   // (b)
+        vrInitTask();
+    });
 ```
-Low probability (most users have ASCII profiles), but when it hits the
-failure is silent and misdiagnosable as "SteamVR not installed."
+If cancel is set at points (a) or (b), the uninvoked `packaged_task` is
+destroyed without being called. `std::packaged_task`'s destructor on an
+uninvoked task sets a `future_error(broken_promise)` into the associated
+shared state. The main-loop reconnect guard at line 993-1009 then sees the
+future as "ready" (broken_promise futures are immediately ready) and
+replaces `g_app.driverConnectFuture` with a fresh `std::async(...)` call
+— effectively double-launching `driverClient->connect()` on the quit path.
 
-### IN-07: `test_bindings_patcher` shares `micmap_test_bindings` tmp dir across ctest invocations
-
-**File:** `tests/test_bindings_patcher.cpp:47-53`
-**Issue:** `resetTmpDir()` computes `fs::temp_directory_path() /
-"micmap_test_bindings"` — a fixed name with no per-process or per-scenario
-suffix. Running `ctest -j N` with `test_bindings_patcher` and
-`bindings_patcher_idempotent` (both registered in tests/CMakeLists.txt:107-109)
-concurrently will race on the same directory: one test's `fs::remove_all`
-clobbers the other's in-progress scenario, producing spurious FAIL output.
-Current CI likely runs sequentially, but a developer running `ctest -j8`
-locally may see flake.
-**Fix:** Append the PID (or a per-scenario name) to the directory:
+On the fast-shutdown path, `shutdown()`'s cancel+join at line 461-462 runs
+BEFORE the main-loop reconnect logic, so in practice the broken_promise
+future never gets a chance to trigger the spurious reassignment. But the
+state is fragile — if a future refactor ever runs the main loop past the
+cancel point (e.g., processing one more frame of UI events before shutdown),
+the broken-promise path becomes a real double-connect hazard. Pure Info
+because today's code path converges cleanly.
+**Fix:** Invoke both packaged_tasks unconditionally (they already check
+`initialConnectCancel` internally via their lambda bodies), so the futures
+are always fulfilled with `void()` rather than broken_promise:
 ```cpp
-static fs::path resetTmpDir(const char* scenarioName = "default") {
-    auto tmp = fs::temp_directory_path()
-             / ("micmap_test_bindings_"
-                + std::to_string(
-#ifdef _WIN32
-                    GetCurrentProcessId()
-#else
-                    getpid()
-#endif
-                  )
-                + "_" + scenarioName);
-    std::error_code ec;
-    fs::remove_all(tmp, ec);
-    fs::create_directories(tmp, ec);
-    return tmp;
+g_app.initialConnectThread = std::thread(
+    [connectTask = std::move(connectTask),
+     vrInitTask  = std::move(vrInitTask)]() mutable {
+        connectTask();   // task body short-circuits on cancel
+        vrInitTask();    // task body short-circuits on cancel
+    });
+```
+The cancel short-circuits are already inside each task lambda (lines
+925-929, 931-935), so this preserves the fast-cancel intent without
+leaving the futures in the broken_promise state.
+
+### IN-12: `Shell_NotifyIconW(NIM_DELETE)` return value unchecked
+
+**File:** `apps/micmap/main.cpp:490`
+**Issue:** `shutdown()` calls `Shell_NotifyIconW(NIM_DELETE, &nid)` without
+checking the return value. `Shell_NotifyIconW` can return FALSE if the
+shell is restarting, the icon was already removed (e.g., explorer.exe crash
+recovery re-added it with a different handle), or taskbar is in an
+inconsistent state. The IN-03 iteration-2 fix added a matching failure log
+on the `NIM_ADD` side (line 201-204):
+```cpp
+if (!Shell_NotifyIconW(NIM_ADD, &g_app.nid)) {
+    MICMAP_LOG_WARNING("Shell_NotifyIconW(NIM_ADD) failed ...");
 }
 ```
-
-### IN-08: `CreateMutexW` return value not checked before `GetLastError`
-
-**File:** `apps/micmap/main.cpp:802-803`
-**Issue:** `CreateMutexW` can return `NULL` on failure (e.g. security-descriptor
-errors, though rare for an unnamed-ACL named mutex). The code reads
-`GetLastError()` unconditionally at line 803; if `hMutex == NULL`, the subsequent
-`CloseHandle(hMutex)` on every exit path is a harmless no-op on Windows, but
-the GetLastError value may not be `ERROR_ALREADY_EXISTS` and the code falls
-through to GUI init with a NULL hMutex — single-instance gate broken.
-Low-severity (real-world `CreateMutexW` rarely fails on fresh-process Win32),
-but a 2-line null-check would make the contract explicit.
-**Fix:**
+The symmetric `NIM_DELETE` failure is silent. Low-severity — a stuck zombie
+icon usually disappears on first mouse-over or the next explorer restart
+— but a matching WARNING log would make the "stuck tray icon after
+MicMap quit" bug report (should one ever appear) diagnosable from the log
+file.
+**Fix:** Mirror the IN-03 log pattern on the delete path:
 ```cpp
-HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"MicMapSingleInstance");
-if (!hMutex) {
-    MICMAP_LOG_ERROR("CreateMutexW failed: ", GetLastError());
-    return 1;  // no single-instance gate; bail rather than boot a second instance
-}
-if (GetLastError() == ERROR_ALREADY_EXISTS) {
-    ...
+if (nid.cbSize != 0) {
+    if (!Shell_NotifyIconW(NIM_DELETE, &nid)) {
+        MICMAP_LOG_WARNING("Shell_NotifyIconW(NIM_DELETE) failed; tray icon "
+                           "may persist until explorer restart (GetLastError=",
+                           GetLastError(), ")");
+    }
+    nid.cbSize = 0;
 }
 ```
 
-### IN-09: `CurUninstallStepChanged` re-derivation of `g_SteamVRDir` is fragile if user picked a non-default `{app}`
+### IN-13: `CreateRenderTarget` ignores `GetBuffer` / `CreateRenderTargetView` failures
 
-**File:** `installer/MicMap.iss:443-448`
-**Issue:** The MR-01 fix (iteration-0) re-derives `g_SteamVRDir` from `{app}`
-at uninstall time via two applications of `ExtractFilePath`. This assumes
-`{app} == {SteamVR}\drivers\micmap` — which holds for fresh installs because
-`DefaultDirName={code:GetMicMapInstallDir}` computes that path and
-`DisableDirPage=yes` prevents the user from changing it. However,
-`UsePreviousAppDir=yes` means an upgrade over a 0.x install (hypothetical —
-D-07 voids 0.x as ever-shipped, but the flag enables upgrade-over-manual-
-install scenarios) could pick up a non-standard `{app}` path, and the
-two-parents-up extraction would silently derive a wrong `g_SteamVRDir` for
-the `vrpathreg removedriver` call.
-**Fix:** Cosmetic polish — verify the derived path actually exists and
-contains `bin\win64\vrpathreg.exe` before using it, or emit a log line
-showing the derived `g_SteamVRDir` for post-mortem diagnosis (the existing
-`Log('Uninstall: resolved g_SteamVRDir ...')` at line 447 already does this,
-which is good; consider also asserting `DirExists(g_SteamVRDir + '\bin\win64')`
-and failing the vrpathreg step cleanly rather than relying on
-`VrpathregExists()` to implicitly detect the miss).
+**File:** `apps/micmap/main.cpp:178-183`
+**Issue:** `CreateRenderTarget` calls `g_pSwapChain->GetBuffer` and
+`g_pd3dDevice->CreateRenderTargetView` with no HRESULT check:
+```cpp
+void CreateRenderTarget() {
+    ID3D11Texture2D* pBackBuffer;
+    g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+    g_pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &g_mainRenderTargetView);
+    pBackBuffer->Release();
+}
+```
+Two failure paths:
+1. `GetBuffer` can fail (device lost, OOM) and leave `pBackBuffer` as
+   an uninitialized pointer — the subsequent `CreateRenderTargetView` and
+   `Release()` are then UB.
+2. `CreateRenderTargetView` can fail and leave `g_mainRenderTargetView`
+   null. The render loop at line 1018 then calls
+   `OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr)` with a null
+   RTV pointer — D3D11 will either early-bail silently or the
+   ClearRenderTargetView below it will dereference null and crash.
 
-### IN-10: `AppDir` in `Exec(..., 'adddriver "' + AppDir + '"', ...)` is not escape-sanitized
-
-**File:** `installer/MicMap.iss:255`, `267`, `472`
-**Issue:** Three `Exec` sites interpolate `AppDir` (the `{app}` path) into a
-quoted `vrpathreg` command-line argument without escaping embedded `"` or
-`\`. In practice `{app}` is a Windows file-system path resolved from
-`GetMicMapInstallDir` (`{SteamVR}\drivers\micmap`) and can only contain
-characters Windows permits in a path — which excludes `"`. So the injection
-surface is effectively empty on a real install.
-
-Flagged as defense-in-depth: if a future refactor ever lets users influence
-`{app}` through an installer task / UI field (the current `DisableDirPage=yes`
-prevents that), the raw interpolation becomes a CLI-injection sink. A
-one-liner `StringChangeEx(AppDir, '"', '""', True)` immediately before each
-`Exec` closes the door preemptively. Pure Info; no current vulnerability.
+Low probability on a working machine, but unchecked HRESULTs are a
+project-wide code-quality nit (`_CRT_SECURE_NO_WARNINGS` + `/W4` + WIN32
+SDK pattern). The surrounding WR-04 fix (iteration-1) for
+`CreateDeviceD3D` null-checks `hwnd` and `CreateDeviceD3D` result —
+`CreateRenderTarget` is the last unchecked D3D call-site.
+**Fix:** Initialize `pBackBuffer` to nullptr and check both HRESULTs:
+```cpp
+void CreateRenderTarget() {
+    ID3D11Texture2D* pBackBuffer = nullptr;
+    HRESULT hr = g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+    if (FAILED(hr) || !pBackBuffer) {
+        MICMAP_LOG_ERROR("GetBuffer failed: 0x", std::hex, hr);
+        return;
+    }
+    hr = g_pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &g_mainRenderTargetView);
+    pBackBuffer->Release();
+    if (FAILED(hr)) {
+        MICMAP_LOG_ERROR("CreateRenderTargetView failed: 0x", std::hex, hr);
+        g_mainRenderTargetView = nullptr;
+    }
+}
+```
+The `WM_SIZE` path at line 737-741 already implicitly relies on
+`CreateRenderTarget` never failing post-resize (no branching on its
+outcome); that remains a latent issue, but is out of this review's scope.
 
 ---
 
-_Reviewed: 2026-04-24T14:30:00Z_
+_Reviewed: 2026-04-24T16:00:00Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
-_Iteration: 2_
+_Iteration: 3_
