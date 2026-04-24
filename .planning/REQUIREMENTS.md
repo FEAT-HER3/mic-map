@@ -47,7 +47,8 @@ Wire up the JSON config read-path that's currently stubbed; make settings actual
 
 SteamVR-native auto-launch via `app.vrmanifest`. No Windows Run-key, no startup folder.
 
-- [ ] **AUTO-01**: Ship `app.vrmanifest` alongside `micmap.exe` — `app_key` = `"bigscreen.micmap"`, `is_dashboard_overlay` = `true`, `launch_type` = `"binary"`, `binary_path_windows` = relative filename `"micmap.exe"`
+- [x] **AUTO-01
+**: Ship `app.vrmanifest` alongside `micmap.exe` — `app_key` = `"bigscreen.micmap"`, `is_dashboard_overlay` = `true`, `launch_type` = `"binary"`, `binary_path_windows` = relative filename `"micmap.exe"`
 - [ ] **AUTO-02**: App supports `--register-vrmanifest` CLI mode — calls `IVRApplications::AddApplicationManifest(absolutePath, /*bTemporary=*/false)`, polls `IsApplicationInstalled(app_key)` up to 2 seconds, then `SetApplicationAutoLaunch(app_key, true)` — guards against OpenVR issue #1378 race
 - [ ] **AUTO-03**: App supports `--unregister-vrmanifest` CLI mode — symmetric teardown invoked by the installer uninstaller
 - [ ] **AUTO-04**: On normal startup, app runs idempotent re-registration so manifest state is self-healing across SteamVR upgrades / user-initiated removal
