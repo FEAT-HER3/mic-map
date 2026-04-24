@@ -66,13 +66,21 @@ target_link_libraries(test_vr_input_quit_ordering PRIVATE micmap::steamvr)
 add_test(NAME test_vr_input_quit_ordering COMMAND test_vr_input_quit_ordering)
 
 # AUTO-06 / D-09 / D-10: first-silent-launch tray balloon one-shot.
-# (impl + first_launch_balloon.hpp arrive in Plan 03-06; AppConfig field
-# shownTrayNotification also lands in Plan 03-06.)
-add_executable(test_tray_balloon_once test_tray_balloon_once.cpp)
+# Plan 03-06 Task 2 landed first_launch_balloon.{hpp,cpp}; the test links
+# the impl translation unit directly (single-TU link into the test exe) so
+# we don't need a dedicated app-level support library. micmap::common is
+# linked for the logger that first_launch_balloon.cpp references via
+# MICMAP_LOG_* macros.
+add_executable(test_tray_balloon_once
+    test_tray_balloon_once.cpp
+    ${CMAKE_SOURCE_DIR}/apps/micmap/first_launch_balloon.cpp)
 target_compile_features(test_tray_balloon_once PRIVATE cxx_std_17)
 target_include_directories(test_tray_balloon_once PRIVATE
     ${CMAKE_SOURCE_DIR}/apps/micmap)
-target_link_libraries(test_tray_balloon_once PRIVATE micmap::core)
+target_link_libraries(test_tray_balloon_once PRIVATE micmap::core micmap::common)
+if(WIN32)
+    target_link_libraries(test_tray_balloon_once PRIVATE shell32)
+endif()
 add_test(NAME test_tray_balloon_once COMMAND test_tray_balloon_once)
 
 # AUTO-01 + Open-item A2: app.vrmanifest schema gate.

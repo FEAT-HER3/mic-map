@@ -4,6 +4,7 @@
 # Source files
 set(MICMAP_SOURCES
     main.cpp
+    first_launch_balloon.cpp
 )
 
 # ---- app.vrmanifest generation (Plan 03-02 — D-19) -----------------------
