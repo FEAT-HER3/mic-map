@@ -55,7 +55,8 @@ SteamVR-native auto-launch via `app.vrmanifest`. No Windows Run-key, no startup 
 **: App supports `--unregister-vrmanifest` CLI mode — symmetric teardown invoked by the installer uninstaller
 - [x] **AUTO-04
 **: On normal startup, app runs idempotent re-registration so manifest state is self-healing across SteamVR upgrades / user-initiated removal
-- [ ] **AUTO-05**: App pumps `IVRSystem::PollNextEvent` in its main loop — on `VREvent_Quit`: call `AcknowledgeQuit_Exiting()`, tear down subsystems, exit. Prevents the OpenVR #1425 respawn loop.
+- [x] **AUTO-05
+**: App pumps `IVRSystem::PollNextEvent` in its main loop — on `VREvent_Quit`: call `AcknowledgeQuit_Exiting()`, tear down subsystems, exit. Prevents the OpenVR #1425 respawn loop.
 - [x] **AUTO-06
 **: Auto-launched `micmap.exe` opens silently — no console window allocation, no foreground focus, tray-icon-only behavior on background startup
 
@@ -135,7 +136,7 @@ Populated during roadmap creation. Each requirement maps to exactly one phase.
 | AUTO-02 | Phase 3 — Auto-Start | Pending |
 | AUTO-03 | Phase 3 — Auto-Start | Pending |
 | AUTO-04 | Phase 3 — Auto-Start | Pending |
-| AUTO-05 | Phase 3 — Auto-Start | Pending |
+| AUTO-05 | Phase 3 — Auto-Start | Complete (unit level — Plan 03-05) |
 | AUTO-06 | Phase 3 — Auto-Start | Pending |
 | INST-01 | Phase 4 — Installer | Pending |
 | INST-02 | Phase 4 — Installer | Pending |

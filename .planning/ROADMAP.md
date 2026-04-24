@@ -109,7 +109,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5. Phase 2 is parallel-
 |-------|----------------|--------|-----------|
 | 1. Driver Sidecar Migration | 3/5 | In progress | - |
 | 2. Config Read-Back | 3/3 | Complete | 2026-04-23 |
-| 3. Auto-Start | 4/7 | In progress | - |
+| 3. Auto-Start | 5/7 | In progress | - |
 | 4. Installer | 0/TBD | Not started | - |
 | 5. Documentation | 0/TBD | Not started | - |
 

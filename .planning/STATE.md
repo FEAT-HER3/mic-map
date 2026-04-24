@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Phase 03 Plan 04 complete — manifest_registrar shipped (header + impl + CMake); test_manifest_registrar 5/5 GREEN; AUTO-02/03/04 closed at unit level; A2 forward-slash guard live
-last_updated: "2026-04-24T03:49:41.785Z"
+stopped_at: Phase 03 Plan 05 complete — processVREventImpl extracted with ack-first ordering; OpenVRInput delegates via nested adapters; test_vr_input_quit_ordering GREEN; AUTO-05 ack mechanics closed at unit level
+last_updated: "2026-04-24T03:55:57.244Z"
 last_activity: 2026-04-24
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 15
-  completed_plans: 12
-  percent: 80
+  completed_plans: 13
+  percent: 87
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-04-22)
 ## Current Position
 
 Phase: 03 (auto-start) — EXECUTING
-Plan: 5 of 7
+Plan: 6 of 7
 Next: Plan 03-05 (Wave 1) — extract processVREvent to vr_input_events.{hpp,cpp}; inject AcknowledgeQuit_Exiting() BEFORE notifyEvent(Quit) for AUTO-05 / OpenVR #1425. Plan 03-06 (Wave 2) and 03-07 (Wave 3) follow.
-Last activity: 2026-04-24 — Phase 03 Plan 04 complete (manifest_registrar GREEN)
+Last activity: 2026-04-24
 
-Progress: [████████░░] 80%
+Progress: [█████████░] 87%
 
 ## Performance Metrics
 
@@ -58,6 +58,7 @@ Progress: [████████░░] 80%
 | Phase 03-auto-start P02 | 480 | 3 tasks | 8 files |
 | Phase 03-auto-start P03 | 34 | 1 tasks | 3 files |
 | Phase 03-auto-start P04 | 1200 | 2 tasks | 3 files |
+| Phase 03-auto-start P05 | 133 | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -83,6 +84,8 @@ Recent decisions affecting current work:
 - Plan 03-02 — A2 LOCKED to STRING form: 'arguments': '--minimized'. SteamVR auto-launched 'micmap.exe --minimized' on Bigscreen Beyond + Win11; array-form variant deleted; test_vrmanifest_schema strict-asserts string form. Forward-slash manifest path is a SILENT KILLER (vrserver treats it as working dir, skips manifest, returns no error) — surfaced as <critical_pitfall> in Plan 03-04 with mandatory runtime guard.
 - Plan 03-03 closes Q4 GREEN: Phase 2 writer requires explicit per-field wiring (j["key"] = c.field) — no struct introspection in nlohmann::json. Future AppConfig fields require 3 edits: declaration, read line, write line.
 - Plan 03-04 — IVRApplicationsSurface seam uses vr::EVRApplicationError return types (plan proposed uint32_t; test contract from Plan 03-01 required native enum). GetApplicationsErrorNameFromEnum non-pure (has default impl) so the test stub that overrides only 4 methods can be instantiated. OpenVR linkage on micmap_steamvr elevated from PRIVATE to PUBLIC; Pathcch linked PRIVATE on WIN32.
+- Plan 03-05 — free function named processVREventImpl (not processVREvent) to keep OpenVRInput::processVREvent member's delegation call-site unambiguous; Plan 01 RED test renamed in same commit (62fe4a5)
+- Plan 03-05 — OpenVRInput uses nested private adapter classes (VRSystemAdapter + EventSinkAdapter) to bridge production vr::IVRSystem + member notifyEvent to the OpenVR-free seam in vr_input_events.hpp; AUTO-05 / D-11 ack-before-notify invariant locked at unit level
 
 ### Pending Todos
 
@@ -106,8 +109,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-04-24T03:49:41.780Z
-Stopped at: Phase 03 Plan 04 complete — manifest_registrar shipped (header + impl + CMake); test_manifest_registrar 5/5 GREEN; AUTO-02/03/04 closed at unit level; A2 forward-slash guard live
+Last session: 2026-04-24T03:55:57.240Z
+Stopped at: Phase 03 Plan 05 complete — processVREventImpl extracted with ack-first ordering; OpenVRInput delegates via nested adapters; test_vr_input_quit_ordering GREEN; AUTO-05 ack mechanics closed at unit level
 Resume file: None
 
 **Planned Phase:** 03 (auto-start) — 7 plans — 2026-04-24T02:46:02.744Z
