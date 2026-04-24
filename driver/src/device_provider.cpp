@@ -38,6 +38,12 @@ namespace micmap::driver {
 // Interface versions this provider speaks. Sidecar mode: we only claim the
 // server-device-provider interface; tracked-device-server is unused because
 // no tracked device is registered.
+// IN-05: Assumes IServerTrackedDeviceProvider_Version is a string literal
+// (current OpenVR SDK contract -- it expands via #define to a bare "..."
+// literal with static storage duration, so the returned array is valid for
+// the process lifetime). If Valve ever redefines it as a constexpr
+// std::string_view or similar non-literal, this array must be rebuilt
+// per-call to avoid storing a dangling pointer.
 static const char* const k_InterfaceVersions[] = {
     IServerTrackedDeviceProvider_Version,
     nullptr
