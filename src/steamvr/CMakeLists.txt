@@ -11,6 +11,7 @@
 
 add_library(micmap_steamvr STATIC
     src/vr_input.cpp
+    src/manifest_registrar.cpp
 )
 
 target_include_directories(micmap_steamvr
@@ -25,6 +26,14 @@ target_link_libraries(micmap_steamvr
     PRIVATE
         httplib::httplib
 )
+
+# Pathcch.lib (Windows SDK): required by manifest_registrar.cpp's
+# resolveManifestAbsolutePath() for PathCchRemoveFileSpec. Built into the
+# Windows SDK since Vista; naked target name resolves via the MSVC default
+# link-library search path.
+if(WIN32)
+    target_link_libraries(micmap_steamvr PRIVATE Pathcch)
+endif()
 
 target_compile_features(micmap_steamvr PUBLIC cxx_std_17)
 
