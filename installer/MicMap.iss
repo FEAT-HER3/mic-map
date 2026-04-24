@@ -131,3 +131,86 @@ begin
   // Relies on g_SteamVRDir being populated by InitializeSetup.
   Result := g_SteamVRDir + '\drivers\micmap';
 end;
+
+// ---------------------------------------------------------------
+// Plan 06: SteamVR-running WMI gate (INST-02, D-05 + D-06)
+// Runs in PrepareToInstall AFTER the wizard's "Ready to Install"
+// page and BEFORE [Files] copy begins. Prompt-and-retry loop names
+// the exact running processes; no force-kill anywhere (D-05 anti-kill policy).
+// Defense-in-depth: `restartreplace` on driver_micmap.dll (Plan 04).
+// ---------------------------------------------------------------
+function IsProcessRunning(const ExeName: String): Boolean;
+var
+  Locator, Service, ProcSet: Variant;
+  Query: String;
+begin
+  Result := False;
+  try
+    Locator := CreateOleObject('WbemScripting.SWbemLocator');
+    Service := Locator.ConnectServer('.', 'root\CIMV2');
+    Query := Format('SELECT Name FROM Win32_Process WHERE Name = "%s"', [ExeName]);
+    ProcSet := Service.ExecQuery(Query, 'WQL', 48);
+      // 48 = wbemFlagForwardOnly (32) | wbemFlagReturnImmediately (16)
+    // SWbemObjectSet.Count -- community-proven variant property supported by
+    // Inno Setup's Pascal Script (RemObjects PascalScript does NOT declare
+    // IEnumVariant, so we cannot use the Delphi-native ._NewEnum iteration
+    // from 04-RESEARCH.md verbatim). Semantically identical for the True/False
+    // "is a matching process present" question: Count > 0 iff at least one row.
+    Result := (ProcSet.Count > 0);
+  except
+    // Pitfall 16 #3: WMI service down / permission denied / OLE create failed --
+    // fail OPEN (treat as "not running"). A broken WMI stack MUST NOT block the
+    // installer. A user with SteamVR actually running will hit file-copy
+    // conflicts later -- restartreplace on the DLL handles that race.
+  end;
+end;
+
+function GetRunningSteamVrProcesses(): String;
+var
+  Names: array of String;
+  Combined: String;
+  i: Integer;
+begin
+  SetArrayLength(Names, 5);
+  Names[0] := 'vrserver.exe';
+  Names[1] := 'vrmonitor.exe';
+  Names[2] := 'vrcompositor.exe';
+  Names[3] := 'vrdashboard.exe';
+  Names[4] := 'vrwebhelper.exe';
+  Combined := '';
+  for i := 0 to GetArrayLength(Names) - 1 do
+    if IsProcessRunning(Names[i]) then
+    begin
+      if Combined = '' then
+        Combined := Names[i]
+      else
+        Combined := Combined + ', ' + Names[i];
+    end;
+  Result := Combined;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Running: String;
+  Response: Integer;
+  CRLF: String;
+begin
+  // ISPP-safe CRLF (Chr() concat -- no #-prefix char-literals; see Plan 05 hand-off).
+  CRLF := Chr(13) + Chr(10);
+  Result := '';  // default = proceed
+  Running := GetRunningSteamVrProcesses();
+  while Running <> '' do
+  begin
+    Response := MsgBox(
+      'SteamVR is currently running (' + Running + ').' + CRLF + CRLF +
+      'Please close SteamVR completely, then click Retry.' + CRLF +
+      '(Closing your VR session is required -- MicMap will not force-quit SteamVR.)',
+      mbConfirmation, MB_RETRYCANCEL);
+    if Response = IDCANCEL then
+    begin
+      Result := 'Setup was cancelled because SteamVR is still running.';
+      Exit;
+    end;
+    Running := GetRunningSteamVrProcesses();
+  end;
+end;
