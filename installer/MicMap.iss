@@ -244,13 +244,15 @@ end;
 
 procedure RunVrpathregRemove(AppDir: String);
 var
-  ResultCode: Integer;
+  IgnoredRC: Integer;
 begin
   // Pitfall 3: unconditional removedriver BEFORE adddriver prevents OpenVR #1653
   // duplicate-entry bug. rc is INTENTIONALLY ignored -- removedriver on an
   // unregistered path is a no-op (rc=0 or 1, either is fine).
+  // IN-04: variable renamed IgnoredRC to make the "don't read this" intent
+  // load-bearing in the signature; Exec() requires an out-parameter here.
   if VrpathregExists() then
-    Exec(GetVrpathreg(''), 'removedriver "' + AppDir + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(GetVrpathreg(''), 'removedriver "' + AppDir + '"', '', SW_HIDE, ewWaitUntilTerminated, IgnoredRC);
 end;
 
 function RunVrpathregAdd(AppDir: String): String;
