@@ -781,6 +781,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
             HWND w = FindWindowW(L"MicMapMain", nullptr);
             if (w) { PostMessageW(w, WM_COMMAND, IDM_SHOW, 0); SetForegroundWindow(w); }
         }
+        // WR-02: CreateMutexW returns a valid handle even on
+        // ERROR_ALREADY_EXISTS; every other exit path in WinMain closes it,
+        // so close it here too for consistency (handle is benign at process
+        // scope, but leaking it here is a footgun relative to every sibling
+        // exit path).
+        CloseHandle(hMutex);
         return 0;
     }
 
