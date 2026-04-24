@@ -40,6 +40,7 @@ target_link_libraries(micmap
     PRIVATE
         micmap_lib
         imgui
+        micmap::bindings
 )
 
 target_compile_features(micmap PRIVATE cxx_std_17)

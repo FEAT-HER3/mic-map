@@ -35,6 +35,7 @@
 #include "micmap/common/logger.hpp"
 #include "micmap/common/cli_flags.hpp"
 #include "micmap/steamvr/manifest_registrar.hpp"
+#include "micmap/bindings/bindings_patcher.hpp"
 #include "first_launch_balloon.hpp"
 #ifdef MICMAP_HAS_OPENVR
 #include <openvr.h>
@@ -47,6 +48,7 @@
 #include <mutex>
 #include <thread>
 #include <future>
+#include <filesystem>
 
 using namespace micmap;
 
@@ -727,6 +729,33 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
         MICMAP_LOG_ERROR("OpenVR not available in this build; cannot register manifest");
         return 1;
 #endif
+    }
+
+    // Phase 4 INST-08 / D-09 / D-12: --patch-bindings / --unpatch-bindings
+    // CLI fork. MUST run BEFORE the single-instance mutex below so an
+    // installer invocation does not contend with a live GUI instance.
+    // No VR_Init: patcher resolves SteamVR config dir internally via
+    // openvrpaths.vrpath parse; we only need file-system access, not a
+    // running vrserver. Exit-code contract per Phase 3 D-03: 0 = success,
+    // 1 = failure (inspected by Inno Setup [Run] Check: clauses).
+    if (flags.patchBindings || flags.unpatchBindings) {
+        auto appLogSink = [](const char* msg) {
+            MICMAP_LOG_INFO(msg);
+        };
+        namespace fs = std::filesystem;
+        fs::path configDir = micmap::bindings::ResolveSteamVrConfigDir(appLogSink);
+        if (configDir.empty()) {
+            MICMAP_LOG_ERROR("Could not resolve SteamVR config dir from openvrpaths.vrpath");
+            return 1;
+        }
+        bool ok;
+        if (flags.patchBindings) {
+            ok = micmap::bindings::PatchGenericHmdBindingsFile(configDir, appLogSink)
+              && micmap::bindings::EnsureControllerTypeFiles(configDir, "lighthouse_hmd", appLogSink);
+        } else {
+            ok = micmap::bindings::UnpatchGenericHmdBindings(appLogSink);
+        }
+        return ok ? 0 : 1;
     }
 
     HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"MicMapSingleInstance");
