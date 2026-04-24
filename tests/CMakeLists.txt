@@ -40,3 +40,20 @@ target_compile_features(test_command_queue PRIVATE cxx_std_17)
 target_include_directories(test_command_queue PRIVATE
     ${CMAKE_SOURCE_DIR}/driver/src)
 add_test(NAME test_command_queue COMMAND test_command_queue)
+
+# ---- Phase 3 Plan 01 (Wave 0 RED scaffold) ----
+# These tests fail to build/link until Plans 04 / 05 / 06 land their impls.
+# That is the expected RED state — the Nyquist gate for Phase 3.
+
+# AUTO-06 / D-01: parseCliArgs (impl arrives in Plan 03-06).
+add_executable(test_cli_flags_parse test_cli_flags_parse.cpp)
+target_compile_features(test_cli_flags_parse PRIVATE cxx_std_17)
+target_link_libraries(test_cli_flags_parse PRIVATE micmap::common)
+add_test(NAME test_cli_flags_parse COMMAND test_cli_flags_parse)
+
+# AUTO-02 / AUTO-03 / AUTO-04 / D-15 / D-17: manifest registrar
+# (impl + manifest_registrar.hpp arrive in Plan 03-04).
+add_executable(test_manifest_registrar test_manifest_registrar.cpp)
+target_compile_features(test_manifest_registrar PRIVATE cxx_std_17)
+target_link_libraries(test_manifest_registrar PRIVATE micmap::steamvr)
+add_test(NAME test_manifest_registrar COMMAND test_manifest_registrar)
