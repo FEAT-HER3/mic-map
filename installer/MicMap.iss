@@ -445,6 +445,14 @@ begin
     SteamVRParent := ExtractFilePath(ExtractFilePath(AppDir));
     g_SteamVRDir := RemoveBackslashUnlessRoot(SteamVRParent);
     Log('Uninstall: resolved g_SteamVRDir from {app} = ' + g_SteamVRDir);
+    // IN-09: the two-parents-up derivation assumes {app} == {SteamVR}\drivers\micmap.
+    // DisableDirPage=yes + DefaultDirName=GetMicMapInstallDir ensure this for fresh
+    // installs, but UsePreviousAppDir=yes could carry over a non-standard {app} from
+    // a prior hand-edited install. Log a diagnostic if the derived path doesn't look
+    // like a SteamVR layout (missing bin\win64). VrpathregExists() already handles
+    // the skip-cleanly path for Pitfall 10; this just improves post-mortem diagnosis.
+    if not DirExists(g_SteamVRDir + '\bin\win64') then
+      Log('Uninstall: WARNING derived g_SteamVRDir lacks bin\win64 (' + g_SteamVRDir + '); vrpathreg removedriver will be skipped');
   end;
   Failed := TStringList.Create;
   try
