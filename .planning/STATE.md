@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-stopped_at: Phase 03 Plan 06 complete — CLI fork + silent-boot policy + first-launch balloon integrated into WinMain; AUTO-02/AUTO-03/AUTO-06 closed at integration level; 8/8 ctest GREEN
-last_updated: "2026-04-24T04:05:38.675Z"
-last_activity: 2026-04-24
+status: ready-for-verification
+stopped_at: Phase 03 Plan 07 complete — retry thread + ordered MicMapApp::shutdown integrated; live UAT on Bigscreen Beyond PASS (Procedures A/B/C/D/E); AUTO-01/04/05 closed at live-UAT level; Phase 3 complete and ready for /gsd-code-review 3 + /gsd-verify-work 3
+last_updated: "2026-04-23T00:00:00Z"
+last_activity: 2026-04-23
 progress:
   total_phases: 5
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 15
-  completed_plans: 14
-  percent: 93
+  completed_plans: 15
+  percent: 100
 ---
 
 # Project State
@@ -25,12 +25,14 @@ See: .planning/PROJECT.md (updated 2026-04-22)
 
 ## Current Position
 
-Phase: 03 (auto-start) — EXECUTING
-Plan: 7 of 7
-Next: Plan 03-05 (Wave 1) — extract processVREvent to vr_input_events.{hpp,cpp}; inject AcknowledgeQuit_Exiting() BEFORE notifyEvent(Quit) for AUTO-05 / OpenVR #1425. Plan 03-06 (Wave 2) and 03-07 (Wave 3) follow.
-Last activity: 2026-04-24
+Phase: 03 (auto-start) — READY FOR VERIFICATION
+Plan: 7 of 7 COMPLETE
+Next: `/gsd-code-review 3` → `/gsd-verify-work 3` → `/gsd-transition` to Phase 4 (Installer).
+Last activity: 2026-04-23
 
-Progress: [█████████░] 93%
+Progress: [██████████] 100% (Phase 3 plans)
+
+**Phase 3 closure (2026-04-23):** Live UAT on Bigscreen Beyond + Win11 rig passed all 5 procedures (A/B/C/D/E). AUTO-01 / AUTO-04 / AUTO-05 closed at live-UAT level; AUTO-02 / AUTO-03 / AUTO-06 upgraded from integration-level (Plan 06) to live-UAT. Two non-blocking UAT deviations recorded in `03-07-UAT.md`: (1) A1 rc=0 offline — VRApplication_Utility is offline-capable; plan assumption rc=1 was wrong; actual behavior is more robust and unblocks Phase 4 installer [Run] step; (2) Procedure C log-file path doesn't exist — logger is stdout-only; teardown evidence gathered via Task Manager + Plan 05 unit tests; follow-up: wire %APPDATA%\\MicMap\\micmap.log file sink in Phase 5 or a dedicated observability micro-plan.
 
 ## Performance Metrics
 
@@ -60,6 +62,7 @@ Progress: [█████████░] 93%
 | Phase 03-auto-start P04 | 1200 | 2 tasks | 3 files |
 | Phase 03-auto-start P05 | 133 | 2 tasks | 5 files |
 | Phase 03-auto-start P06 | 900 | 3 tasks | 7 files |
+| Phase 03-auto-start P07 | 600 | 2 tasks | 1 file + 2 artifacts |
 
 ## Accumulated Context
 
@@ -88,6 +91,9 @@ Recent decisions affecting current work:
 - Plan 03-05 — free function named processVREventImpl (not processVREvent) to keep OpenVRInput::processVREvent member's delegation call-site unambiguous; Plan 01 RED test renamed in same commit (62fe4a5)
 - Plan 03-05 — OpenVRInput uses nested private adapter classes (VRSystemAdapter + EventSinkAdapter) to bridge production vr::IVRSystem + member notifyEvent to the OpenVR-free seam in vr_input_events.hpp; AUTO-05 / D-11 ack-before-notify invariant locked at unit level
 - Plan 03-06 — namespace aligned to Plan 01 RED test (micmap::apps plural, not micmap::app singular as plan prose suggested). Plan 01's working tree had an uncommitted src/common/src/cli_flags.cpp; committed under 03-06 Task 1 tag so per-task commit chain stays clean. Grep-gate-aware comments: forbidden tokens (AllocConsole, strstr(lpCmdLine) paraphrased so regex gates stay clean.
+- Plan 03-07 — UAT deviation 1: Procedure A1 plan assumption rc=1 / VRInitError_Init_HmdNotFound was WRONG. VR_Init with VRApplication_Utility mode works offline — utility APIs talk directly to vrpathreg + %LOCALAPPDATA%\\openvr\\openvrpaths.vrpath + appconfig.json on disk, no running vrserver required. Actual rc=0 offline is more robust and is exactly what the Phase 4 installer [Run] post-install step needs. No code change required; plan text to be cleaned up on next touch (cosmetic).
+- Plan 03-07 — UAT deviation 2 (plan gap, observability): Procedure C assumed a file log at %APPDATA%\\MicMap\\micmap.log that does not exist. MicMap's logger is stdout-only via ConsoleLogger; WINDOWS subsystem discards stdout. Ordered-teardown evidence gathered instead from Task Manager (under-watchdog exit, no zombie, no "killed" dialog) + Plan 03-05 unit tests (ack-first invariant). Non-blocking for AUTO-05 closure. Follow-up: wire a FileLogger tee'd alongside ConsoleLogger in a dedicated observability micro-plan or folded into Phase 5 DOC-02.
+- Plan 03-07 — 5-cycle OpenVR #1547 drift characterization on Bigscreen Beyond: 0 drift observed. Informational, NOT proof that #1547 is extinct — retry-thread self-heal remains as defense-in-depth. If field reports surface drift post-ship, escalate to v1.x "Re-register" UI button (original Phase 3 research spike disposition).
 
 ### Pending Todos
 
@@ -111,8 +117,12 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-04-24T04:05:38.670Z
-Stopped at: Phase 03 Plan 06 complete — CLI fork + silent-boot policy + first-launch balloon integrated into WinMain; AUTO-02/AUTO-03/AUTO-06 closed at integration level; 8/8 ctest GREEN
+Last session: 2026-04-23T00:00:00Z
+Stopped at: Phase 03 Plan 07 complete — retry thread + ordered MicMapApp::shutdown integrated (commit a6d2372); live UAT on Bigscreen Beyond PASS (Procedures A/B/C/D/E); AUTO-01/04/05 closed at live-UAT level; Phase 3 complete — ready for /gsd-code-review 3 + /gsd-verify-work 3 → /gsd-transition to Phase 4 (Installer)
 Resume file: None
 
-**Planned Phase:** 03 (auto-start) — 7 plans — 2026-04-24T02:46:02.744Z
+**Planned Phase:** 04 (installer) — next — TBD plans
+
+**Phase 3 closure artifacts:**
+- .planning/phases/03-auto-start/03-07-UAT.md — live UAT record (Procedures A/B/C/D/E, all PASS, 2 non-blocking deviations documented)
+- .planning/phases/03-auto-start/03-07-SUMMARY.md — Plan 07 SUMMARY

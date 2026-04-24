@@ -19,7 +19,7 @@ This roadmap delivers the "Seamless SteamVR Integration" milestone: rip out the 
 
 - [x] **Phase 1: Driver Sidecar Migration** — Replace virtual-controller with pure HMD-sidecar injecting `/input/system/click` (amended by 01-06 after spike falsified the bare-sidecar assumption: bindings patcher now ships alongside, routes HMD system click to ToggleDashboard on Bigscreen Beyond / any lighthouse-non-Index HMD)
 - [x] **Phase 2: Config Read-Back** — Wire up the stubbed JSON read path so user settings persist (parallel-safe with Phase 1) — CLOSED 2026-04-23, M-1 PASSED live
-- [ ] **Phase 3: Auto-Start** — SteamVR-native auto-launch via `app.vrmanifest` with `VREvent_Quit` handling
+- [x] **Phase 3: Auto-Start** — SteamVR-native auto-launch via `app.vrmanifest` with `VREvent_Quit` handling — CLOSED 2026-04-23, all 7 plans done, live UAT PASS on Bigscreen Beyond (Procedures A/B/C/D/E); AUTO-01/02/03/04/05/06 all Complete
 - [ ] **Phase 4: Installer** — Single-click Inno Setup installer packaging driver + app + auto-start registration
 - [ ] **Phase 5: Documentation** — README + architecture docs updated to shipped reality
 
@@ -72,9 +72,9 @@ This roadmap delivers the "Seamless SteamVR Integration" milestone: rip out the 
   - [x] 03-02-PLAN.md — `app.vrmanifest.in` template + `configure_file(@ONLY)` + `Pathcch.lib` link + A2 empirical resolution: STRING form WINS (`"arguments": "--minimized"`); array variant deleted; test_vrmanifest_schema GREEN. Forward-slash-path silent-skip pitfall surfaced for Plan 03-04. (Wave 0) — see 03-02-SUMMARY.md
   - [x] 03-03-PLAN.md — `AppConfig::shownTrayNotification` top-level bool (default false) + Phase 2 defensive reader + writer round-trip; empirically closed Research Open Q #4 GREEN (writer requires explicit per-field wiring) — see 03-03-SUMMARY.md
   - [x] 03-04-PLAN.md — `manifest_registrar` module: `IManifestRegistrar` + `IVRApplicationsSurface` seam + `VRApplicationsAdapter` + `ManifestRegistrarImpl` shipped; A2 forward-slash guard live; `ctest -R test_manifest_registrar` 5/5 GREEN (2.43s including Case 2 poll-timeout). AUTO-02/03/04 closed at unit level — see 03-04-SUMMARY.md
-  - [ ] 03-05-PLAN.md — Extract `processVREvent` to testable free function in `vr_input_events.{hpp,cpp}`; inject `vr::VRSystem()->AcknowledgeQuit_Exiting()` BEFORE `notifyEvent(Quit)` — load-bearing fix for AUTO-05 / OpenVR #1425 (Wave 1)
-  - [ ] 03-06-PLAN.md — `main.cpp` CLI + silent-boot integration: `CommandLineToArgvW` parse (D-01), WinMain CLI fork early-exit (D-02, D-03, D-04), single-instance mutex `--minimized` skip (D-08), silent-mode `ShowWindow` skip (D-06), first-silent-launch tray balloon via `NIM_MODIFY + NIF_INFO + NIIF_RESPECT_QUIET_TIME` (D-09, D-10) (Wave 2)
-  - [ ] 03-07-PLAN.md — Re-registration `std::thread` + `std::atomic<bool>` retry loop (NEVER `std::async` — Pitfall 6 / amended D-15) + `MicMapApp::shutdown()` ordered teardown per D-12 + exit-path convergence (D-14); SteamVR full-restart UAT (Wave 3)
+  - [x] 03-05-PLAN.md — Extract `processVREvent` to testable free function in `vr_input_events.{hpp,cpp}`; inject `vr::VRSystem()->AcknowledgeQuit_Exiting()` BEFORE `notifyEvent(Quit)` — load-bearing fix for AUTO-05 / OpenVR #1425 (Wave 1) — see 03-05-SUMMARY.md
+  - [x] 03-06-PLAN.md — `main.cpp` CLI + silent-boot integration: `CommandLineToArgvW` parse (D-01), WinMain CLI fork early-exit (D-02, D-03, D-04), single-instance mutex `--minimized` skip (D-08), silent-mode `ShowWindow` skip (D-06), first-silent-launch tray balloon via `NIM_MODIFY + NIF_INFO + NIIF_RESPECT_QUIET_TIME` (D-09, D-10) (Wave 2) — see 03-06-SUMMARY.md
+  - [x] 03-07-PLAN.md — Re-registration `std::thread` + `std::atomic<bool>` retry loop (NEVER `std::async` — Pitfall 6 / amended D-15) + `MicMapApp::shutdown()` ordered teardown per D-12 + exit-path convergence (D-14); SteamVR full-restart UAT PASS on Bigscreen Beyond (Wave 3) — see 03-07-SUMMARY.md + 03-07-UAT.md
 **Research spike**: `SetApplicationAutoLaunch` persistence (OpenVR issue #1547) — run multiple SteamVR restart cycles during UAT to characterize frequency of the setting being forgotten. If it is meaningfully unreliable, file a v1.x "re-register" UI button as the mitigation.
 
 ### Phase 4: Installer
@@ -109,9 +109,11 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5. Phase 2 is parallel-
 |-------|----------------|--------|-----------|
 | 1. Driver Sidecar Migration | 3/5 | In progress | - |
 | 2. Config Read-Back | 3/3 | Complete | 2026-04-23 |
-| 3. Auto-Start | 5/7 | In progress | - |
+| 3. Auto-Start | 7/7 | Complete | 2026-04-23 |
 | 4. Installer | 0/TBD | Not started | - |
 | 5. Documentation | 0/TBD | Not started | - |
+
+**Phase 3 closure note (2026-04-23):** The ROADMAP "Plans 5/7" row format did not match `gsd-sdk roadmap.update-plan-progress`'s regex (the CLI returned `updated: false, reason: no matching checkbox found`); row was hand-updated to 7/7 above. Live UAT artifact: `.planning/phases/03-auto-start/03-07-UAT.md` (Procedures A/B/C/D/E all PASS on Bigscreen Beyond + Win11 Pro rig). Phase 3 ready for `/gsd-code-review 3` → `/gsd-verify-work 3` → `/gsd-transition` to Phase 4.
 
 ## Coverage
 
