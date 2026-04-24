@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Phase 02 closed (M-1 PASSED); uncommitted main.cpp bundled fixes landed as commit 73681c5; debug trail committed as 127d730. Ready to discuss Phase 03.
-last_updated: "2026-04-24T02:46:02.748Z"
-last_activity: 2026-04-23 -- Phase 03 CONTEXT.md + DISCUSSION-LOG.md landed
+stopped_at: Phase 03 Plan 01 complete — Wave 0 RED scaffold landed (5 ctest targets + cli_flags.hpp public contract). Ready for Plans 03-02 / 03-03 (parallel-safe Wave 0 followers).
+last_updated: "2026-04-24T02:56:39Z"
+last_activity: 2026-04-24 -- Phase 03 Plan 01 complete (Wave 0 RED scaffold)
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 15
-  completed_plans: 8
-  percent: 53
+  completed_plans: 9
+  percent: 60
 ---
 
 # Project State
@@ -21,15 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-22)
 
 **Core value:** Covering the microphone reliably toggles the SteamVR dashboard, invisibly to the rest of VR — no controller beam, no extra hardware, no focus loss.
-**Current focus:** Phase 03 — auto-start (SteamVR-native `app.vrmanifest` + VREvent_Quit handling)
+**Current focus:** Phase 03 — auto-start
 
 ## Current Position
 
-Phase: 03 (auto-start) — CONTEXT.md captured (2026-04-23)
-Next: Phase 03 plan (`/gsd-plan-phase 3`)
-Last activity: 2026-04-23 -- Phase 03 CONTEXT.md + DISCUSSION-LOG.md landed
+Phase: 03 (auto-start) — EXECUTING
+Plan: 2 of 7 (next: 03-02 — `app.vrmanifest.in` + configure_file + A2 empirical resolution)
+Next: Plans 03-02 / 03-03 are Wave 0 parallel-safe followers (both depend only on 03-01's RED scaffold)
+Last activity: 2026-04-24 -- Phase 03 Plan 01 complete (Wave 0 RED scaffold)
 
-Progress: [██████████] 100% of planned plans · 2/5 phases
+Progress: [████████░░] 60% · 9/15 plans · 2/5 phases
 
 ## Performance Metrics
 
@@ -53,6 +54,7 @@ Progress: [██████████] 100% of planned plans · 2/5 phases
 *Updated after each plan completion*
 | Phase 01-driver-sidecar-migration P03 | 25 | 3 tasks | 8 files |
 | Phase 01-driver-sidecar-migration P04 | 2580 | 3 tasks | 7 files |
+| Phase 03-auto-start P01 | 600 | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -72,6 +74,9 @@ Recent decisions affecting current work:
 - T-03-02 (browser Origin-check) deferred to a future driver-observability phase; default bind is loopback-only so in-scope browser CSRF is low-risk
 - Plan 01-04 stripped DashboardState/HMDButtonAction enums and the four IVRInput dashboard methods (getDashboardState/sendHMDButtonEvent/sendDashboardSelect/performDashboardAction) per Plan 01-02 SUMMARY hand-off and 01-04 Task 3 Part D; VREventType enum kept (apps consume Quit + SteamVRConnected/Disconnected)
 - hmd_button_test.exe harness now exposes Send Press / Send Release / Tap (press+150ms+release) buttons that drive IDriverClient::press()/release() directly; Open Dashboard/Send Click/Auto/Send A/Send System buttons and handlers removed (SVR-07 gate: zero forbidden-string hits across driver/src src/ apps/)
+- Plan 03-01 publishes parseCliArgs's CliFlags struct at src/common/include/micmap/common/cli_flags.hpp (D-01 left location to discretion; chose micmap::common to avoid leaking apps/micmap private code into tests)
+- Plan 03-01 vrmanifest schema test uses ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/app.vrmanifest path (multi-config-correct under MSBuild) and links against bare `nlohmann_json` target (project's external/CMakeLists.txt declares interface lib without `::` alias)
+- Plan 03-01 vr_input quit-ordering test follows OPTION 1 (free function processVREvent in vr_input_events.{hpp,cpp}) — Plan 03-05 must extract to free fn rather than refactor OpenVRInput class internals
 
 ### Pending Todos
 
@@ -95,8 +100,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-04-23T12:00:00.000Z
-Stopped at: Phase 02 closed (M-1 PASSED); uncommitted main.cpp bundled fixes landed as commit 73681c5; debug trail committed as 127d730. Ready to discuss Phase 03.
+Last session: 2026-04-24T02:56:39Z
+Stopped at: Phase 03 Plan 01 complete — Wave 0 RED scaffold committed (fb48428, a12662b). 5 ctest targets RED for documented missing-impl reasons. cli_flags.hpp public contract published. Ready to spawn Plans 03-02 / 03-03 (Wave 0 parallel-safe followers).
 Resume file: None
 
 **Planned Phase:** 03 (auto-start) — 7 plans — 2026-04-24T02:46:02.744Z
