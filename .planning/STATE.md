@@ -1,48 +1,46 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.5
-milestone_name: Seamless SteamVR Integration
-status: shipped
-stopped_at: v1.5 milestone archived 2026-04-29
-last_updated: "2026-04-29T00:00:00.000Z"
-last_activity: 2026-04-29 -- v1.5 milestone closed and archived (Phases 1-4 shipped 2026-04-24; Phase 5 deferred to next milestone)
+milestone: v1.6
+milestone_name: Feature Migration
+status: defining_requirements
+stopped_at: v1.6 milestone opened 2026-04-30 — defining requirements
+last_updated: "2026-04-30T00:00:00.000Z"
+last_activity: 2026-04-30 -- v1.6 milestone opened (relocate non-UI features from client to SteamVR driver; shared audio/detection lib; roll in v1.5 Phase 5 docs)
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 24
-  completed_plans: 24
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-29 after v1.5 milestone close)
+See: .planning/PROJECT.md (updated 2026-04-30 with v1.6 Feature Migration milestone)
 
 **Core value:** Covering the microphone reliably toggles the SteamVR dashboard, invisibly to the rest of VR — no controller beam, no extra hardware, no focus loss.
-**Current focus:** v1.5 shipped + archived — awaiting `/gsd-new-milestone` to scope vNext (lead-in is Phase 5 Documentation carryover).
+**Current focus:** v1.6 Feature Migration — relocate audio/detection/state-machine/config/trigger from `micmap.exe` into `driver_micmap.dll`; extract shared audio+detection library so the same code is buildable into driver, client, and headless test harness; client becomes settings + driver-health UI; roll in v1.5 deferred docs (DOC-01/02) updated for post-migration architecture.
 
 ## Current Position
 
-Milestone: **v1.5 Seamless SteamVR Integration** — ✅ SHIPPED 2026-04-24, ARCHIVED 2026-04-29
-- Phases 1-4: complete (24/24 plans, UAT 10/10 PASS on Bigscreen Beyond + Win11)
-- Phase 5: DEFERRED — carried forward to next milestone (DOC-01, DOC-02)
-
-Release: tag `v1.5` (also `v1.0`) at commit `8935294`; installer artifact `build/installer/MicMap-Setup-v0.1.0.exe` (SHA256 `f2a62d662b833264e588ddb1544a8af3461597ca0c2c766f65dab55917451651`) published as GitHub release.
-
-Audit: `.planning/milestones/v1.5-MILESTONE-AUDIT.md` — verdict `tech_debt` (no behavioral blockers).
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-04-30 — v1.6 milestone opened; running domain research before requirements
 
 ## Accumulated Context
 
 ### Decisions
 
-Full log lives in PROJECT.md Key Decisions table (with v1.5 outcomes recorded).
-Decisions affecting next milestone:
+Full log lives in PROJECT.md Key Decisions table.
 
-- Phase 5 (Documentation) is the lead-in for vNext: DOC-01 (README sync), DOC-02 (`docs/architecture.md`).
-- File-sink logger (`%APPDATA%\MicMap\micmap.log`) is a strong candidate for early vNext scoping — UAT C3 deviation surfaced the gap.
-- v1.5 release shipped without DOC-01/02 — README in repo still references batch scripts and crossed-out auto-start sections; first vNext priority is closing that gap before any v2 backlog work.
+Decisions affecting v1.6 (carried from v1.5):
+
+- Phase 5 (Documentation) carryover from v1.5 rolled into v1.6 — DOC-01/DOC-02 will be re-scoped against the post-migration architecture, not the pre-migration shipped reality.
+- Audio + detection code must live in a shared library so the same source compiles into the driver DLL, the client EXE, and the existing `mic_test.exe` harness — no SteamVR runtime dependency in the shared layer.
+- File-sink logger remains a backlog candidate; not yet committed to v1.6 scope.
 
 ### Pending Todos
 
@@ -50,28 +48,27 @@ None.
 
 ### Blockers/Concerns
 
-None blocking. Open items from v1.5 close (carried forward):
+None blocking. Open architectural questions to surface in research:
 
-- README + architecture docs still describe pre-shipped reality (batch scripts, virtual controller). Phase 5 DOC-01 closes this.
-- Logger is stdout-only under `/SUBSYSTEM:WINDOWS`; no file sink. Phase 5 follow-up or dedicated observability micro-plan.
+- WASAPI capture from inside a SteamVR driver process (threading, COM apartment, audio device permissions when SteamVR runs under a different user context).
+- Driver lifecycle for long-running detection thread (start/stop alignment with `IServerTrackedDeviceProvider::Init`/`Cleanup`; HMD reactivation cycles; CommandQueue boundary).
+- New IPC contract: settings push, training-sample push, health pull. Whether localhost HTTP stays or is replaced.
+- Config file ownership when both processes can read it (driver reads at boot, client writes on save) — file locking, atomic update propagation.
 
 ## Deferred Items
 
-Items acknowledged and deferred at v1.5 milestone close on 2026-04-29 (per `audit-open` report at close):
+Items carried forward from v1.5 that are NOT in v1.6 scope:
 
 | Category | Item | Status | Reason |
 |----------|------|--------|--------|
-| UAT | `02-HUMAN-UAT.md` (1 pending scenario) | partial | Pending scenario covered transitively by Phase 04 UAT 6+7 (auto-launch + persistence across sessions); formal sign-off skipped. |
-| UAT | `03-07-UAT.md` (status unknown to audit-open) | unknown | All 5 UAT procedures (A/B/C/D/E) PASS per phase artifact + STATE.md 2026-04-23 closure. |
-| Verification | `02-VERIFICATION.md` frontmatter still `status: human_needed` | stale | M-1 PASSED 2026-04-23 per `02-03-SUMMARY.md` `m1_status: PASSED`; frontmatter never refreshed. |
-| Verification | `04-VERIFICATION.md` frontmatter still `status: human_needed` | stale | Written before HR-01/MR-01/UninstallSilent fixes; UAT 10/10 PASS post-fix. |
-| Verification | `01-VERIFICATION.md` MISSING outright | procedural | SVR-01..11 verified end-to-end via Phase 03/04 live UAT; phase artifact never written. |
-| Validation (Nyquist) | `01-VALIDATION.md`, `03-VALIDATION.md`, `04-VALIDATION.md` still `status: draft` / `nyquist_compliant: false` | bookkeeping | Auto-tests + UAT pass on all three; sign-off never flipped. |
-| Phase | Phase 5 Documentation | deferred | Carried forward to next milestone (DOC-01, DOC-02). |
+| Backlog | File-sink logger (`%APPDATA%\MicMap\micmap.log`) | candidate | Not committed to v1.6; may be folded in if the driver-side logging story demands it |
+| Backlog | UX-01 (in-app auto-start toggle), UX-02 (in-VR settings overlay) | deferred | Out of v1.6 scope — settings UX work belongs to a later milestone |
+| Backlog | DIST-01/02/03 (installer launch checkbox, silent-install docs, non-default Steam path) | deferred | Out of v1.6 scope — installer touched in v1.5; further polish deferred |
+| Backlog | DET-01/02 (detection accuracy in noisy environments) | deferred | Out of v1.6 scope — orthogonal to the migration |
 
 ## Session Continuity
 
-Last session: 2026-04-29 — v1.5 archived
-Stopped at: Milestone close complete; ROADMAP/REQUIREMENTS reorganized; PROJECT.md evolved.
+Last session: 2026-04-30 — v1.6 opened
+Stopped at: PROJECT.md + STATE.md updated; phase dirs to be cleared; running research before requirements.
 
-**Next action:** `/gsd-new-milestone` to scope vNext (lead with Phase 5 Documentation carryover).
+**Next action:** Continue `/gsd-new-milestone` workflow — research → requirements → roadmap.

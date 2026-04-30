@@ -6,13 +6,18 @@
 
 What runs today: a single-click installer (`MicMap-Setup-v0.1.0.exe`) drops a pure-sidecar SteamVR driver next to the user's other drivers, registers `app.vrmanifest` for SteamVR-native auto-launch, and patches the generic_hmd bindings so covering the microphone toggles the SteamVR dashboard hands-free — no virtual controller, no laser beam, no console window. UAT 10/10 PASS on Bigscreen Beyond + Win11 Pro rig.
 
-## Next Milestone Goals
+## Current Milestone: v1.6 Feature Migration
 
-**vNext: Documentation + Polish** (not yet scoped — start with `/gsd-new-milestone`)
+**Goal:** Relocate all non-UI features from `micmap.exe` client into `driver_micmap.dll` SteamVR driver so the driver runs end-to-end without the client. Client demoted to settings + driver-health UI.
 
-Core carryover from v1.5: Phase 5 (Documentation) — DOC-01 (README sync to shipped reality, replace crossed-out auto-start sections, point install instructions at the single `.exe`) and DOC-02 (write `docs/architecture.md` covering sidecar-on-HMD technique, CommandQueue HTTP-thread → RunFrame boundary, HMD reactivation lifecycle).
+**Target features:**
+- Driver hosts WASAPI audio capture, FFT detection, state machine, config read/write, training-data persistence, and the trigger pipeline directly (no IPC hop for trigger)
+- Audio + detection code lives in a shared static library so the same source is buildable into the driver DLL, the client EXE, and headless test harnesses (`mic_test.exe` runs without SteamVR; changes flow into the driver build with no port)
+- Client retains: audio device picker, detection-time/sensitivity controls, pattern-training UI (sample collection + threshold compute), driver-health/connection indicator
+- IPC reshaped: client → driver pushes settings + training samples; client ← driver pulls health/state. Trigger no longer crosses the wire.
+- Phase 5 carryover from v1.5 rolled in: DOC-01 (README sync) + DOC-02 (`docs/architecture.md`) ship as part of v1.6 closeout, updated to reflect the post-migration architecture
 
-Backlog candidates for next-milestone scoping: file-sink logger at `%APPDATA%\MicMap\micmap.log` (UAT C3 follow-up; logger currently stdout-only under `/SUBSYSTEM:WINDOWS`), in-app auto-start toggle (UX-01), in-VR settings overlay (UX-02), installer finished-page launch checkbox (DIST-01), silent-install CLI documentation (DIST-02), non-default Steam path support via `HKCU\Software\Valve\Steam\SteamPath` (DIST-03), detection-accuracy work (DET-01/02).
+**Backlog candidates not in v1.6 scope:** file-sink logger at `%APPDATA%\MicMap\micmap.log` (UAT C3 follow-up; logger currently stdout-only under `/SUBSYSTEM:WINDOWS`), in-app auto-start toggle (UX-01), in-VR settings overlay (UX-02), installer finished-page launch checkbox (DIST-01), silent-install CLI documentation (DIST-02), non-default Steam path support via `HKCU\Software\Valve\Steam\SteamPath` (DIST-03), detection-accuracy work (DET-01/02).
 
 ---
 
@@ -47,11 +52,11 @@ Covering the microphone reliably toggles the SteamVR dashboard, invisibly to the
 
 ### Active
 
-<!-- vNext milestone (not yet scoped). Carryover + immediate follow-ups. -->
+<!-- v1.6 Feature Migration — requirements defined during this milestone's REQUIREMENTS.md phase. DOC-01/02 carry over from v1.5 and will be re-scoped against post-migration architecture. -->
 
-- [ ] **DOC-01**: README reflects the shipped v1.5 reality (sidecar HMD button, SteamVR-native auto-start, single `.exe` installer); crossed-out auto-start sections become current
-- [ ] **DOC-02**: New `docs/architecture.md` documents sidecar-on-HMD technique, CommandQueue HTTP-thread → RunFrame boundary, and HMD reactivation lifecycle — so future maintainers don't re-discover Pitfalls 1, 2, 12
-- [ ] **OBS-01** (candidate): File-sink logger writing to `%APPDATA%\MicMap\micmap.log` — v1.5 logger is stdout-only under `/SUBSYSTEM:WINDOWS` (UAT C3 deviation)
+- [ ] **DOC-01**: README reflects post-v1.6 reality (driver runs detection end-to-end; client is settings/health-only); crossed-out auto-start sections become current
+- [ ] **DOC-02**: New `docs/architecture.md` documents driver-resident detection pipeline, shared audio/detection library, sidecar-on-HMD technique, CommandQueue boundary, and HMD reactivation lifecycle
+- [ ] Remaining v1.6 requirements (MIG-*, LIB-*, IPC-*, etc.) defined in `.planning/REQUIREMENTS.md` after research
 
 ### Out of Scope
 
@@ -124,4 +129,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-29 after v1.5 milestone close (Seamless SteamVR Integration shipped 2026-04-24)*
+*Last updated: 2026-04-30 — v1.6 Feature Migration milestone opened; v1.5 closed 2026-04-29 (Seamless SteamVR Integration shipped 2026-04-24)*
