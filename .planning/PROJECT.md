@@ -1,8 +1,24 @@
 # MicMap
 
+## Current State
+
+**Shipped:** v1.5 (2026-04-24) — "Seamless SteamVR Integration". See [`MILESTONES.md`](MILESTONES.md) and [`milestones/v1.5-ROADMAP.md`](milestones/v1.5-ROADMAP.md).
+
+What runs today: a single-click installer (`MicMap-Setup-v0.1.0.exe`) drops a pure-sidecar SteamVR driver next to the user's other drivers, registers `app.vrmanifest` for SteamVR-native auto-launch, and patches the generic_hmd bindings so covering the microphone toggles the SteamVR dashboard hands-free — no virtual controller, no laser beam, no console window. UAT 10/10 PASS on Bigscreen Beyond + Win11 Pro rig.
+
+## Next Milestone Goals
+
+**vNext: Documentation + Polish** (not yet scoped — start with `/gsd-new-milestone`)
+
+Core carryover from v1.5: Phase 5 (Documentation) — DOC-01 (README sync to shipped reality, replace crossed-out auto-start sections, point install instructions at the single `.exe`) and DOC-02 (write `docs/architecture.md` covering sidecar-on-HMD technique, CommandQueue HTTP-thread → RunFrame boundary, HMD reactivation lifecycle).
+
+Backlog candidates for next-milestone scoping: file-sink logger at `%APPDATA%\MicMap\micmap.log` (UAT C3 follow-up; logger currently stdout-only under `/SUBSYSTEM:WINDOWS`), in-app auto-start toggle (UX-01), in-VR settings overlay (UX-02), installer finished-page launch checkbox (DIST-01), silent-install CLI documentation (DIST-02), non-default Steam path support via `HKCU\Software\Valve\Steam\SteamPath` (DIST-03), detection-accuracy work (DET-01/02).
+
+---
+
 ## What This Is
 
-MicMap is a Windows SteamVR addon that listens to microphone input, detects a trained noise pattern (e.g. covering the mic), and triggers the SteamVR system button — opening or selecting in the dashboard hands-free. It's for VR users who want a quiet, always-available input action without reaching for a controller.
+MicMap is a Windows SteamVR addon that listens to microphone input, detects a trained noise pattern (e.g. covering the mic), and triggers the SteamVR system button — opening or selecting in the dashboard hands-free. It's for VR users who want a quiet, always-available input action without reaching for a controller. The v1.5 release ships the seamless integration: pure-sidecar driver, SteamVR-native auto-launch, single-click installer.
 
 ## Core Value
 
@@ -23,20 +39,19 @@ Covering the microphone reliably toggles the SteamVR dashboard, invisibly to the
 - ✓ App ↔ driver IPC via localhost HTTP bridge (cpp-httplib) — existing (`src/steamvr/driver_client`)
 - ✓ Batch-script installer (`scripts/install_driver.bat`) using `vrpathreg adddriver` — existing (to be replaced this milestone)
 - ✓ Config file write path (JSON emitted to `%APPDATA%/MicMap/config.json`) — existing but read-back is stubbed
+- ✓ Driver-side pure HMD sidecar: own `/input/system/click` boolean component on HMD property container — v1.5 (no virtual controller, no laser beam; SVR-01..11)
+- ✓ Bindings patcher writing PascalCase dashboard + lasermouse routes into SteamVR's generic_hmd config with `.micmap_backup` for clean uninstall — v1.5 (Phase 1 amendment 01-06; INST-08)
+- ✓ Defensive `nlohmann/json` config read-back: UTF-8 wstring boundary, atomic `ReplaceFileW` save, corruption backup with 5-file retention, clamp/pow2-snap — v1.5 (CFG-01..05)
+- ✓ SteamVR-native auto-launch via `app.vrmanifest` + `--register-vrmanifest` / `--unregister-vrmanifest` CLI; idempotent re-registration with `IsApplicationInstalled` poll guard; `AcknowledgeQuit_Exiting` ack-first ordering for OpenVR #1425; silent boot (no console, no focus steal, one-shot tray balloon) — v1.5 (AUTO-01..06)
+- ✓ Single-click Inno Setup installer with WMI SteamVR-running gate, `vrpathreg removedriver`-before-`adddriver`, symmetric uninstall with D-13 data-retention prompt, frozen AppId for upgrade-in-place — v1.5 (INST-01..08)
 
 ### Active
 
-<!-- "Seamless SteamVR Integration" milestone. All hypotheses until shipped. -->
+<!-- vNext milestone (not yet scoped). Carryover + immediate follow-ups. -->
 
-- [ ] **SVR-01**: Driver migrates from virtual-controller architecture to a pure sidecar that creates its own `/input/system/click` boolean component on the HMD property container — no `TrackedDeviceAdded`, no virtual controller, no laser beam on trigger
-- [ ] **SVR-02**: Driver defers HMD-container component creation until `TrackedDeviceToPropertyContainer(k_unTrackedDeviceIndex_Hmd)` returns a valid handle (polling in `RunFrame`), falling back gracefully if creation ever fails
-- [ ] **SVR-03**: On detection trigger, app signals driver via the existing HTTP bridge and the driver calls `UpdateBooleanComponent` on its HMD-side `/input/system/click` handle — single code path, no dashboard-state branching
-- [ ] **SVR-04**: All virtual-controller code (device provider registration, controller device class, dashboard-state polling, "open vs. select" branching) is removed, not feature-flagged
-- [ ] **CFG-01**: JSON config is read back on startup via nlohmann/json, so user settings (device selection, detection duration, sensitivity, SteamVR options) persist across sessions
-- [ ] **AUTO-01**: MicMap auto-starts with SteamVR using the SteamVR-native mechanism (`app.vrmanifest` + auto-launch registration), so users don't need to launch `micmap.exe` manually
-- [ ] **INST-01**: Replace the batch-script installer with an Inno Setup single-click installer (patterned on bey-closer-t1's `BeyondProximity.iss`): admin-elevated, process-aware (detect running SteamVR), registers via `vrpathreg adddriver`, handles its own driver directory (MicMap is not nested under another vendor's driver), offers post-install SteamVR launch
-- [ ] **INST-02**: Installer registers the `app.vrmanifest` for auto-start (AUTO-01) as part of a single unified install step — one install covers driver + app + auto-start
-- [ ] **DOC-01**: README reflects the new architecture (sidecar HMD button, no virtual controller, auto-start default) and the new installer flow; crossed-out auto-start sections become current
+- [ ] **DOC-01**: README reflects the shipped v1.5 reality (sidecar HMD button, SteamVR-native auto-start, single `.exe` installer); crossed-out auto-start sections become current
+- [ ] **DOC-02**: New `docs/architecture.md` documents sidecar-on-HMD technique, CommandQueue HTTP-thread → RunFrame boundary, and HMD reactivation lifecycle — so future maintainers don't re-discover Pitfalls 1, 2, 12
+- [ ] **OBS-01** (candidate): File-sink logger writing to `%APPDATA%\MicMap\micmap.log` — v1.5 logger is stdout-only under `/SUBSYSTEM:WINDOWS` (UAT C3 deviation)
 
 ### Out of Scope
 
@@ -66,6 +81,8 @@ Covering the microphone reliably toggles the SteamVR dashboard, invisibly to the
 
 **Known open issues documented but out of scope this milestone:** overlay UI stubs, loud-environment detection accuracy, unencrypted localhost HTTP (mitigated by localhost-only binding).
 
+**v1.5 closure note (2026-04-29):** All 4 shipped phases verified end-to-end on real hardware (Bigscreen Beyond + Win11 Pro). Phase 5 Documentation deferred to next milestone. Audit verdict `tech_debt` — bookkeeping drift only (stale VERIFICATION.md frontmatter, never-flipped VALIDATION.md sign-offs); zero behavioral blockers. Installer artifact `MicMap-Setup-v0.1.0.exe` SHA256 `f2a62d662b833264e588ddb1544a8af3461597ca0c2c766f65dab55917451651` published as GitHub release at tag `v1.5` (also tagged `v1.0`). See `MILESTONES.md` for full delivery summary.
+
 ## Constraints
 
 - **Platform**: Windows-only — WASAPI for audio, OpenVR driver DLL, Inno Setup for installer. Non-Windows stubs remain as-is.
@@ -79,12 +96,15 @@ Covering the microphone reliably toggles the SteamVR dashboard, invisibly to the
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Rip out virtual-controller driver entirely (no fallback) | User-stated: worse UX with no benefits; HMD `/input/system/click` behaves the same way natively without the laser beam | — Pending |
-| Sidecar-on-HMD technique (create own `/input/system/click` on HMD container) for button injection | Validated in bey-closer-t1; documented in `HMD Button Stub.md` with known timing and error constraints | — Pending |
-| Use SteamVR-native auto-start (`app.vrmanifest` + auto-launch) rather than Windows Run-key or Startup folder | Most SteamVR-native UX; lifecycle is tied to SteamVR, not the OS session | — Pending |
-| Adopt Inno Setup installer pattern from bey-closer-t1 (not nested — MicMap owns its driver dir) | Better install UX than batch script; single artifact covers driver + app + auto-start | — Pending |
-| Eliminate dashboard-open-state polling and the "open → system click / open → trigger click" branch | `/input/system/click` is one native action that handles both open and in-dashboard select; old split was a virtual-controller artifact | — Pending |
-| Fix JSON config read-back (was stubbed) using already-present nlohmann/json | Settings persistence is table-stakes UX; dependency already vendored | — Pending |
+| Rip out virtual-controller driver entirely (no fallback) | User-stated: worse UX with no benefits; HMD `/input/system/click` behaves the same way natively without the laser beam | ✓ Validated v1.5 — laser beam fully eliminated; native ToggleDashboard semantics |
+| Sidecar-on-HMD technique (create own `/input/system/click` on HMD container) for button injection | Validated in bey-closer-t1; documented in `HMD Button Stub.md` with known timing and error constraints | ✓ Validated v1.5 — driver creates `handle=7` against HMD container; survives 5-cycle SteamVR restart UAT |
+| Phase 1 amendment 01-06 — bindings patcher writes PascalCase dashboard + lasermouse routes into SteamVR's generic_hmd config | Plan 01-05 spike falsified the bare-sidecar assumption: HMD click alone didn't toggle dashboard on lighthouse-non-Index HMDs | ✓ Validated v1.5 — surfaced INST-08 for the installer mirror at install time |
+| `IDriverClient::tap()` single-tap collapse (commit `10112ba`) | Driver schedules its own min-hold release; client just enqueues `TapCommand` | ✓ Validated v1.5 — wire format is `POST /button {"kind":"tap"}`; no client-side timing concerns |
+| Use SteamVR-native auto-start (`app.vrmanifest` + auto-launch) rather than Windows Run-key or Startup folder | Most SteamVR-native UX; lifecycle is tied to SteamVR, not the OS session | ✓ Validated v1.5 — appears in SteamVR "Manage Startup Overlay Apps" with `app_key=bigscreen.micmap` |
+| Manifest registrar reuses vrInput's `VRApplication_Background` session — no second `VR_Init(VRApplication_Utility)` from the retry thread (commit `3187fbb`) | OpenVR rejects in-process double-init; observed SEGV ~150 ms after startup; root-caused via debug session | ✓ Validated v1.5 — tray icon now persists across SteamVR session |
+| Adopt Inno Setup installer pattern from bey-closer-t1 (not nested — MicMap owns its driver dir) | Better install UX than batch script; single artifact covers driver + app + auto-start | ✓ Validated v1.5 — UAT 10/10 PASS including upgrade-in-place + clean uninstall |
+| Eliminate dashboard-open-state polling and the "open → system click / open → trigger click" branch | `/input/system/click` is one native action that handles both open and in-dashboard select; old split was a virtual-controller artifact | ✓ Validated v1.5 — single trigger code path, no dashboard state machine |
+| Fix JSON config read-back (was stubbed) using already-present nlohmann/json | Settings persistence is table-stakes UX; dependency already vendored | ✓ Validated v1.5 — M-1 manual cycle PASSED post startup-fix `73681c5` |
 
 ## Evolution
 
@@ -104,4 +124,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-22 after initialization (milestone: Seamless SteamVR Integration)*
+*Last updated: 2026-04-29 after v1.5 milestone close (Seamless SteamVR Integration shipped 2026-04-24)*
