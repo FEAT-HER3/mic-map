@@ -1,631 +1,620 @@
-# Architecture Research
+# Architecture Patterns — v1.6 Feature Migration
 
-**Domain:** SteamVR sidecar driver + Windows desktop app with single-installer distribution (target architecture for "Seamless SteamVR Integration" milestone)
-**Researched:** 2026-04-22
-**Confidence:** HIGH (sidecar pattern + lifecycle validated in bey-closer-t1; installer pattern reused from BeyondProximity.iss; OpenVR API semantics cross-checked with Valve docs)
+**Domain:** Migrating MicMap's audio capture, FFT detection, state machine, config, and trigger pipeline from `micmap.exe` into `driver_micmap.dll`. Extract a shared static library so client, driver, and headless test harness share one source of truth. Reshape client↔driver IPC away from "client triggers, driver injects" toward "driver detects + acts; client only configures and observes."
 
-## Standard Architecture
+**Researched:** 2026-04-30
+**Confidence:** HIGH (codebase grounded — every named symbol/path verified against the current tree on branch `hmd-button`)
 
-### System Overview — Target State
+## Pattern Overview
 
-```
-┌──────────────────────────── Windows User Session ───────────────────────────┐
-│                                                                             │
-│  ┌──────────────────────── micmap.exe (app process) ───────────────────┐   │
-│  │                                                                      │   │
-│  │  ┌──────────┐   ┌────────────┐   ┌────────────┐   ┌──────────────┐  │   │
-│  │  │ WASAPI   │──>│ Detection  │──>│ State      │──>│ DriverClient │  │   │
-│  │  │ Capture  │   │ (FFT/RMS)  │   │ Machine    │   │ (HTTP POST)  │  │   │
-│  │  └──────────┘   └────────────┘   └────────────┘   └──────┬───────┘  │   │
-│  │                                                          │          │   │
-│  │  ┌──────────────────────────────────────────────────┐    │          │   │
-│  │  │ ImGui + D3D11 UI + tray                          │    │          │   │
-│  │  └──────────────────────────────────────────────────┘    │          │   │
-│  │  ┌──────────────────────────────────────────────────┐    │          │   │
-│  │  │ ConfigManager (load+save %APPDATA%/config.json)  │    │          │   │
-│  │  └──────────────────────────────────────────────────┘    │          │   │
-│  └──────────────────────────────────────────────────────────│──────────┘   │
-│                                                             │              │
-│                                        localhost:27015      │ POST /trigger│
-│                                              HTTP           ▼              │
-│  ┌──────────────────── vrserver.exe (SteamVR) ──────────────────────────┐  │
-│  │                                                                       │  │
-│  │  ┌─────────────── driver_micmap.dll  (sidecar) ───────────────────┐  │  │
-│  │  │                                                                 │  │  │
-│  │  │  IServerTrackedDeviceProvider                                   │  │  │
-│  │  │    Init()   — VR_INIT_SERVER_DRIVER_CONTEXT, start HttpServer   │  │  │
-│  │  │    RunFrame — poll HMD container → CreateBooleanComponent once  │  │  │
-│  │  │             — drain pending-trigger queue → Update…Component    │  │  │
-│  │  │             — process scheduled releases (click duration)       │  │  │
-│  │  │    Cleanup  — stop HttpServer, release component handle         │  │  │
-│  │  │                                                                 │  │  │
-│  │  │  HttpServer thread (cpp-httplib)                                │  │  │
-│  │  │    POST /trigger → enqueue ClickRequest → (RunFrame drains)     │  │  │
-│  │  │                                                                 │  │  │
-│  │  │  NO TrackedDeviceAdded. NO VirtualController. NO laser beam.    │  │  │
-│  │  │  NO GetPose. NO controller render model. Pure sidecar.          │  │  │
-│  │  └─────────────────────────────────────────────────────────────────┘  │  │
-│  │                                                                       │  │
-│  │  lighthouse driver ── owns HMD device (index 0) ── owns its own        │  │
-│  │                      /input/system/click component (handle X)          │  │
-│  │                      coexists with our duplicate-path component        │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────────┘
+**Overall:** Layered shared-core library + driver-resident detection pipeline + thin settings/health UI client. The driver becomes the *primary* end-to-end runtime; the client demotes to a settings editor and connection indicator.
+
+**Key shifts from v1.5:**
+
+| Concern | v1.5 (today) | v1.6 (target) |
+|---------|-------------|---------------|
+| Detection runs in | `micmap.exe` (audio cb thread → FFT inline) | `driver_micmap.dll` (audio cb thread → detection thread → CommandQueue → RunFrame) |
+| Trigger crosses IPC | Yes — `POST /button {"kind":"tap"}` from client | No — internal CommandQueue push from driver detection thread |
+| Config writer | Client only | Client UI edits, but driver is sole disk writer |
+| Audio device list | Client enumerates locally | Driver enumerates; exposes via `GET /devices` |
+| Training data owner | Client (`%APPDATA%/MicMap/training_data.bin`) | **Driver** (writes after `/training/finalize`); training UI is observer-only |
+| Shared lib | None — `micmap_audio`, `micmap_detection`, `micmap_core` are linked into `micmap.exe` only; driver doesn't link them | New `micmap_core_runtime` INTERFACE target aggregates audio + detection + core, linked into both DLL and EXE |
+
+---
+
+## 1. Shared Library Boundary — `libmicmap_core` (new aggregate target)
+
+### Recommended target name and shape
+
+The repo already uses `add_library(micmap::lib INTERFACE)` in `src/CMakeLists.txt:12` as an INTERFACE umbrella. **Do not reuse that name** — it transitively pulls in `micmap_steamvr` (which depends on OpenVR + cpp-httplib). Instead introduce a **new** INTERFACE target that aggregates ONLY the headless runtime bits:
+
+```cmake
+# src/CMakeLists.txt — add after existing add_subdirectory calls
+add_library(micmap_core_runtime INTERFACE)
+target_link_libraries(micmap_core_runtime INTERFACE
+    micmap_common      # logger, types, cli_flags
+    micmap_audio       # WASAPI capture, device enumeration
+    micmap_detection   # FFT, noise detector, pattern trainer
+    micmap_core        # state machine, config schema (config persistence stays here)
+)
+add_library(micmap::core_runtime ALIAS micmap_core_runtime)
 ```
 
-### Component Responsibilities — Target State
+The four underlying STATIC libs (`micmap_common`, `micmap_audio`, `micmap_detection`, `micmap_core`) **stay as-is** — no source movement, no namespace change. The migration is purely additive at the CMake level: a new aggregate label that both the driver and the client consume.
 
-| Component | Responsibility | Notes for this milestone |
-|-----------|----------------|--------------------------|
-| `apps/micmap/main.cpp` | UI + orchestration + tray, audio callback, trigger dispatch | Remove dashboard-state branching (`getDashboardState` + "open vs select"); single path — call `driverClient->trigger()` |
-| `src/audio/` | WASAPI capture, device enum | Unchanged |
-| `src/detection/` | FFT + noise detection + training | Unchanged |
-| `src/core/state_machine` | Idle/Training/Detecting/Triggered/Cooldown | Unchanged |
-| `src/core/config_manager` | JSON read+write to `%APPDATA%/MicMap/config.json` | **Fix stubbed read path** (CFG-01); add `firstRun` flag for post-install UX |
-| `src/steamvr/vr_input` | OpenVR app-side SDK wrapper | Slim down — no longer owns dashboard-state polling; keep only what's needed for `IVRApplications` (auto-launch registration) |
-| `src/steamvr/dashboard_manager` | **Deleted or collapsed** into a thin trigger wrapper | The "unified action handler" disappears because there's only one action path |
-| `src/steamvr/driver_client` | HTTP POST to driver, port discovery | Simplify to a single `trigger(durationMs)` method; drop `button=...` variants |
-| `driver/src/device_provider` | IServerTrackedDeviceProvider impl | Removes `TrackedDeviceAdded` call; gains HMD-container component lifecycle state machine |
-| `driver/src/http_server` | Listens on 27015-27025, localhost only | Simplify endpoints to `POST /trigger` + `GET /health`/`GET /port`; remove per-button routes. Core threading model (one worker thread) unchanged |
-| `driver/src/virtual_controller` | **Deleted entirely** (SVR-04) | All ~380 lines gone, including `GetPose`, button/trigger handles, scheduled-release queue — release queue moves into DeviceProvider |
-| `driver/src/process_launcher` | **Deleted entirely** | Auto-launch moves to SteamVR's `app.vrmanifest` mechanism; driver no longer spawns app |
-| `driver/resources/micmap_controller_profile.json` | **Deleted** | Not needed — no controller |
-| `driver/driver.vrdrivermanifest` | `alwaysActivate:true`, `resourceOnly:false` | Unchanged structurally, but no `input_profile_path` references |
-| `installer/MicMap.iss` (new) | Inno Setup installer | Patterned on BeyondProximity.iss — admin elevated, WMI vrserver.exe check, `vrpathreg adddriver`, registers `app.vrmanifest` via helper |
-| `apps/micmap/app.vrmanifest` (new) | SteamVR app manifest | Declares app for `IVRApplications::SetApplicationAutoLaunch(true)` so SteamVR launches `micmap.exe` on startup |
-| `apps/micmap/manifest_registrar` (new) | Registers `app.vrmanifest` with SteamVR on first run | Runs once per user-install (not per-machine); uses IVRApplications API |
+### What is IN the shared boundary
 
-**What dies** (remove, don't feature-flag):
-- `driver/src/virtual_controller.{hpp,cpp}` — the whole file (~380 LOC)
-- `driver/src/process_launcher.{hpp,cpp}` — replaced by `app.vrmanifest` auto-launch
-- `driver/resources/micmap_controller_profile.json`
-- `src/steamvr/src/dashboard_manager.cpp` — "open vs select" branch logic (SVR-03 is a single path)
-- `getDashboardState()` calls from `main.cpp`
-- `TrackedDeviceAdded` call in `device_provider.cpp:45-51`
-- `scripts/install_driver.bat` / `uninstall_driver.bat` — superseded by installer
-- HTTP routes: `/click?button=a`, `/click?button=trigger`, `/press`, `/release` — only `/trigger` survives
+| Component | Path | Status | Notes |
+|-----------|------|--------|-------|
+| `micmap::common` (logger, Result, types, cli_flags) | `src/common/` | **unchanged** | Already linkage-clean |
+| `micmap::audio` (`IAudioCapture`, `IDeviceEnumerator`, `AudioBuffer`) | `src/audio/` | **unchanged** | WASAPI is private impl detail; public surface is platform-neutral |
+| `micmap::detection` (`INoiseDetector`, `ISpectralAnalyzer`, `IPatternTrainer`) | `src/detection/` | **unchanged** | KissFFT linkage is PRIVATE per `src/detection/CMakeLists.txt:21` — already clean |
+| `micmap::core` (`IStateMachine`, `IConfigManager`, `AppConfig`) | `src/core/` | **unchanged** | nlohmann/json is PRIVATE per `src/core/CMakeLists.txt:19` |
 
-**What's new:**
-- `CommandQueue` primitive inside driver (see Data Flow §)
-- HMD-activation-watcher state in DeviceProvider (polling in RunFrame)
-- `app.vrmanifest` file + post-install registration step
-- Inno Setup installer directory
+### What is OUT — must NOT enter the shared lib
 
-**What's reshaped:**
-- `DeviceProvider` absorbs the scheduled-release queue (was in `VirtualController::RunFrame`)
-- `DriverClient` shrinks to one endpoint
-- `HttpServer` becomes a thin command-enqueue shim (no direct controller calls)
+| Forbidden symbol | Where it lives today | Reason |
+|------------------|---------------------|--------|
+| `vr::*` (OpenVR) | `src/steamvr/`, `driver/src/` | OpenVR linked PUBLIC into `micmap_steamvr` (`src/steamvr/CMakeLists.txt:50`); shared lib must be vendor-neutral so `mic_test.exe` builds without OpenVR |
+| `httplib::*` | `driver/src/http_server.{hpp,cpp}`, `src/steamvr/src/vr_input.cpp` (DriverClient) | HTTP is an IPC concern, not a runtime concern |
+| `ImGui_*`, D3D11 | `external/imgui/`, `apps/micmap/main.cpp` | Settings UI only |
+| `DriverLog` from `openvr_driver.h` | `driver/src/driver_log.hpp` | Driver-side logging adapter; shared code uses `MICMAP_LOG_*` macros |
+| `nlohmann::json` in **public headers** | Currently private to `config_manager.cpp` | Keep PRIVATE; shared headers stay JSON-free. **Caveat:** `src/bindings/include/micmap/bindings/bindings_patcher.hpp` already exposes nlohmann::json publicly — that's a localized exception (bindings is bindings-patcher-only, doesn't go in `core_runtime`) |
+| Threading primitives that differ between processes | n/a | Standard `<thread>`/`<mutex>` is fine and works in DLL — but **no global mutable state** that would conflict on static-init order in DLL load |
+| `manifest_registrar` | `src/steamvr/include/micmap/steamvr/manifest_registrar.hpp` | Stays in `micmap_steamvr`; client-only concern (driver doesn't register vrmanifest) |
+| `bindings_patcher` | `src/bindings/` | Stays in its own `micmap_bindings` lib; driver-only at install-time, client-only at uninstall-time. Already correctly factored |
 
-## Recommended Project Structure
+### Headless test harness preservation (critical invariant)
+
+`apps/mic_test/CMakeLists.txt:8-12` already links exactly `micmap_audio + micmap_detection + micmap_common`. Switching to `micmap_core_runtime` is a one-line change. The harness must remain: build-buildable with **`-DMICMAP_BUILD_DRIVER=OFF`** and NO OpenVR SDK present. This is the regression backstop for "did the migration violate the shared lib boundary?"
+
+---
+
+## 2. Driver-Side Threading Model
+
+### OpenVR's hard constraint (verified against `driver/src/device_provider.cpp:113-204`)
+
+`IServerTrackedDeviceProvider::RunFrame()` is the only thread allowed to call `VRDriverInput()->UpdateBooleanComponent` (and `CreateBooleanComponent`, `VRProperties()->TrackedDeviceToPropertyContainer`, `PollNextEvent`). bey-closer-t1's spike notes (per `HMD Button Stub.md`) and current driver code both confirm: any driver-API call from another thread is at best a hang, at worst a SteamVR crash. **The CommandQueue at `driver/src/command_queue.hpp:14` is the load-bearing safety primitive** that makes cross-thread events safe — a mutex-guarded `std::deque<TapCommand>` with drop-oldest at depth 8.
+
+### Recommended thread map (4 owned threads + RunFrame)
 
 ```
-mic-map/
-├── apps/
-│   ├── micmap/
-│   │   ├── main.cpp
-│   │   ├── app.vrmanifest          # NEW — SteamVR app auto-launch descriptor
-│   │   └── resources/              # existing icons etc.
-│   ├── mic_test/                   # unchanged
-│   └── hmd_button_test/            # keep for manual validation of sidecar
-├── driver/
-│   ├── src/
-│   │   ├── driver_main.cpp         # HmdDriverFactory export (unchanged)
-│   │   ├── device_provider.{hpp,cpp}  # reshaped: HMD-activation watcher, no TrackedDeviceAdded
-│   │   ├── http_server.{hpp,cpp}   # simplified: /trigger only
-│   │   ├── command_queue.hpp       # NEW — HTTP→RunFrame marshalling primitive
-│   │   └── driver_log.hpp          # unchanged
-│   │   # virtual_controller.{hpp,cpp}  DELETED
-│   │   # process_launcher.{hpp,cpp}    DELETED
-│   ├── resources/
-│   │   └── default.vrsettings      # kept — driver settings (log level, port override)
-│   └── driver.vrdrivermanifest     # unchanged structurally
-├── src/
-│   ├── audio/                      # unchanged
-│   ├── common/                     # unchanged
-│   ├── core/
-│   │   └── src/config_manager.cpp  # FIX read-back path (CFG-01)
-│   ├── detection/                  # unchanged
-│   └── steamvr/
-│       ├── src/driver_client.cpp   # simplified — single trigger() method
-│       ├── src/vr_input.cpp        # kept for IVRApplications auto-launch registration
-│       └── src/manifest_registrar.cpp  # NEW — AddApplicationManifest + SetApplicationAutoLaunch
-│       # dashboard_manager.{hpp,cpp}   DELETED (or collapsed to a 20-line trigger wrapper)
-├── installer/                      # NEW DIRECTORY
-│   ├── MicMap.iss                  # Inno Setup script — patterned on BeyondProximity.iss
-│   └── assets/                     # icons, license, etc.
-└── scripts/
-    # install_driver.bat / uninstall_driver.bat  DELETED
+┌────────────────────────────────────────────────────────────────────┐
+│  driver_micmap.dll process (vrserver host)                         │
+│                                                                    │
+│  [WASAPI capture thread]    owned by: WASAPIAudioCapture           │
+│      │  src/audio/src/audio_capture.cpp:435 (existing)             │
+│      │  WaitForSingleObject(captureEvent_, 100)                    │
+│      │  invokes AudioCallback synchronously                        │
+│      ▼                                                             │
+│  [Audio sample SPSC ring]   NEW — replaces inline FFT              │
+│      │  bounded ring of (timestamp, frame_count, float[])          │
+│      │  drop-oldest if detection thread falls behind               │
+│      ▼                                                             │
+│  [Detection thread]         NEW — `DetectionRunner`                │
+│      │  pops sample frames, runs INoiseDetector::analyze           │
+│      │  pushes through IStateMachine::update                       │
+│      │  state-machine TriggerCallback fires →                      │
+│      ▼                                                             │
+│  [CommandQueue]             EXISTING — driver/src/command_queue.hpp│
+│      │  push(TapCommand{}) — already drop-oldest, depth 8          │
+│      ▼                                                             │
+│  [vrserver RunFrame]        EXISTING — RunFrame at ~100Hz          │
+│         drains queue, calls UpdateBooleanComponent                 │
+│                                                                    │
+│  [HTTP server thread]       EXISTING — HttpServer::ServerThread    │
+│      │  cpp-httplib blocking listen                                │
+│      │  routes:                                                    │
+│      │    PUT  /settings              → atomic settings swap       │
+│      │    POST /training/start        → toggles detector mode      │
+│      │    POST /training/finalize     → finishTraining + persist   │
+│      │    GET  /health, /state, /devices, /telemetry/*             │
+│      ▼                                                             │
+│  [shared settings snapshot]  NEW — std::atomic<std::shared_ptr>    │
+│         read-mostly; HTTP thread swaps; detection thread reads     │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-### Structure Rationale
+### Thread ownership and lifecycle (anchored to `DeviceProvider::Init` / `Cleanup`)
 
-- **`apps/micmap/app.vrmanifest` lives next to the exe** so the installer can copy it alongside the binary and pass an absolute path to `AddApplicationManifest`. The manifest's `"binary_path_windows"` is resolved relative to the manifest file, so colocation keeps install-time path juggling minimal.
-- **`driver/src/command_queue.hpp` is a new driver-internal header**, not a shared lib, because it's a bespoke primitive with a 3-field struct tied to driver concerns. Don't hoist it to `src/common/` — different thread-safety posture than app-side types.
-- **`installer/` at repo root** mirrors bey-closer-t1 convention and keeps Inno Setup artifacts out of `scripts/` (which is for dev-machine utilities).
-- **`manifest_registrar` goes in `src/steamvr/`** not `apps/micmap/` because it wraps OpenVR SDK calls — same layer as `vr_input`. The app calls it on startup; the installer does not (avoids needing a separate CLI tool that links OpenVR).
+| Thread | Owner | Started in | Stopped in |
+|--------|-------|-----------|-----------|
+| WASAPI capture | `WASAPIAudioCapture` (existing) | `DeviceProvider::Init` after CommandQueue + HttpServer (so capture errors don't strand other resources) | `DeviceProvider::Cleanup` BEFORE CommandQueue/HttpServer destruction |
+| Detection | `DetectionRunner` (new class in driver/src/) | `DeviceProvider::Init`, AFTER detector is created from config | `DeviceProvider::Cleanup` BEFORE `audioCapture->stopCapture()` so the ring drains cleanly |
+| HTTP server | `HttpServer` (existing) | `DeviceProvider::Init` (already does this, line 71) | `DeviceProvider::Cleanup` (already does this, line 89) |
+| RunFrame | vrserver | not owned | not owned |
 
-## Architectural Patterns
+### COM apartment caveat (verified)
 
-### Pattern 1: HMD-Container Component Lifecycle State Machine (driver-side)
+`src/audio/src/audio_capture.cpp:196` and `:521` already call `CoInitializeEx(nullptr, COINIT_MULTITHREADED)` on the WASAPI capture thread. Driver DLL load occurs in vrserver, which has its own COM init. **Do not** add `CoInitialize` to `DeviceProvider::Init` — it's the capture thread's responsibility, and that code is already correct. Verified safe in DLL host: WASAPI capture works inside vrserver because the audio API only requires MTA on the *capture thread*, not on the DLL load thread. (Cross-reference: bey-closer-t1's audio-pipeline experiments under SteamVR validated this pattern; confidence: MEDIUM-HIGH — verified once in a sister project, not yet validated in this driver. Phase 2 spike below de-risks it.)
 
-**What:** The driver cannot create its `/input/system/click` component at `Init()` time because the HMD's property container is invalid until the lighthouse driver activates it. Instead, the driver runs a small state machine on each `RunFrame()` tick:
+### CommandQueue extension (back-compat preserving)
 
-```
-[PendingCreation] ──poll TrackedDeviceToPropertyContainer──> valid?
-      │                                                         │
-      │ no (stay)                                   yes          ▼
-      └────────┐                              CreateBooleanComponent("/input/system/click")
-               │                                                 │
-               │                                    success ─────┼────── failure
-               │                                       │         │          │
-               ▼                                       ▼         ▼          ▼
-       [next RunFrame]                          [Ready]  [Failed — log, stop retrying]
-                                                   │
-                                                   │ on detection trigger
-                                                   ▼
-                                           UpdateBooleanComponent(handle, true)
-                                           schedule release @ now+durationMs
-```
+The current `TapCommand{}` (empty struct, presence-as-signal) is fine. **Do not** change its shape; introduce a discriminated union only if needed:
 
-**When to use:** Any sidecar driver creating input on devices it doesn't own. Validated in bey-closer-t1 + documented in `HMD Button Stub.md`.
-
-**Trade-offs:**
-- (+) No `TrackedDeviceAdded` call → no virtual controller → no laser beam artefact (the user-stated motivation).
-- (+) Works around `VRInputError_InvalidParam` at Init() time.
-- (-) One-shot creation (`m_bComponentAttempted` latch) doesn't handle HMD re-activation. See **Lifecycle §** for hot-swap discussion.
-
-**Example (driver/src/device_provider.cpp, target state):**
 ```cpp
-void DeviceProvider::RunFrame() {
-    // 1. HMD-container component lifecycle
-    if (!m_hmdComponentAttempted) {
-        auto hmd = VRProperties()->TrackedDeviceToPropertyContainer(
-                       k_unTrackedDeviceIndex_Hmd);
-        if (hmd != k_ulInvalidPropertyContainer) {
-            m_hmdComponentAttempted = true;
-            auto err = VRDriverInput()->CreateBooleanComponent(
-                           hmd, "/input/system/click", &m_hSystemClick);
-            if (err != VRInputError_None) {
-                m_hSystemClick = k_ulInvalidInputComponentHandle;
-                DriverLog("CreateBooleanComponent failed: %d\n", err);
-            }
-        }
-    }
-
-    // 2. Drain any queued triggers from HTTP thread
-    ClickRequest req;
-    while (m_commandQueue.try_pop(req)) {
-        if (m_hSystemClick != k_ulInvalidInputComponentHandle) {
-            VRDriverInput()->UpdateBooleanComponent(m_hSystemClick, true, 0.0);
-            m_pendingReleases.push_back({m_hSystemClick,
-                std::chrono::steady_clock::now() +
-                std::chrono::milliseconds(req.durationMs)});
-        }
-    }
-
-    // 3. Process scheduled releases
-    auto now = std::chrono::steady_clock::now();
-    m_pendingReleases.erase(
-        std::remove_if(m_pendingReleases.begin(), m_pendingReleases.end(),
-            [&](const auto& pr) {
-                if (now >= pr.releaseTime) {
-                    VRDriverInput()->UpdateBooleanComponent(pr.handle, false, 0.0);
-                    return true;
-                }
-                return false;
-            }),
-        m_pendingReleases.end());
-}
+// driver/src/command_queue.hpp — extend ONLY if Phase 4 demands it
+struct TapCommand {};
+struct ReconfigureCommand {};   // optional — for "settings changed, reset detector"
+using DriverCommand = std::variant<TapCommand, ReconfigureCommand>;
 ```
 
-### Pattern 2: Single-Producer-Single-Consumer Command Queue (HTTP thread → RunFrame thread)
+For v1.6, `TapCommand` alone suffices — settings changes are applied via the atomic settings snapshot; no explicit reset needed for sensitivity/threshold/cooldown (detection thread reads new snapshot next iteration). The `ReconfigureCommand` is only required if the audio device or sample rate changes mid-flight; even then it's cleaner to do the stop/restart synchronously inside the HTTP handler (see §4 atomic update).
 
-**What:** The HTTP server thread (inside cpp-httplib) receives `POST /trigger` requests. It must **not** call `UpdateBooleanComponent` directly — OpenVR's driver-side APIs expect to be called on vrserver's RunFrame thread. Instead, HTTP handlers enqueue a command; RunFrame drains.
+### What dies in the audio callback
 
-**When to use:** Any cross-thread handoff between a non-RunFrame thread and OpenVR driver calls. This is the canonical pattern for sidecar drivers accepting external input.
+`apps/micmap/main.cpp:353-444` runs FFT, state-machine `update`, RMS, dB, and UI state mutation **inline in the WASAPI callback under `audioMutex`**. This is a known fragile pattern (see `.planning/codebase/CONCERNS.md:74-78` "Audio Buffer Accumulation" and `:94-98` "State Machine Thread Safety"). Migrating gives us a free fix:
 
-**Primitive recommendation:** **Mutex + `std::deque<ClickRequest>`** (simple bounded FIFO), with `try_pop()` non-blocking drain in RunFrame.
+- WASAPI callback writes to ring buffer only — non-blocking, no allocation.
+- Detection thread does the FFT+analyze+state-machine work.
+- `audioMutex` and `currentLevel`/`currentConfidence` UI fields disappear from the driver entirely (they only exist for UI display; client polls `/telemetry/level` instead).
 
-**Why this over alternatives:**
+### Concurrency primitive choices
 
-| Option | Recommendation | Rationale |
-|--------|---------------|-----------|
-| `std::atomic<bool> triggerPending` + `std::atomic<int> durationMs` | ❌ Reject | Coalesces rapid-fire triggers, loses duration fidelity, race on read-reset-clear |
-| `std::condition_variable` | ❌ Reject | RunFrame is called unconditionally by SteamVR at ~90Hz — it's a polled loop, not event-driven. CV adds complexity with no benefit; HTTP thread never needs to wake the RunFrame thread. |
-| Lock-free SPSC queue (e.g. `boost::lockfree::spsc_queue`) | ❌ Overkill | Trigger rate is <1 Hz peak (human mic-cover cadence). Mutex contention is a non-issue. Adds boost dependency for zero measurable benefit. |
-| **`std::mutex` + `std::deque<ClickRequest>` with bounded capacity (e.g. 8)** | ✅ **Recommend** | Simple, correct, preserves each trigger's parameters, drops gracefully under pathological burst (log + discard oldest). Matches existing `pendingReleasesMutex_` pattern in `virtual_controller.cpp` — proven in-tree idiom. |
-| `httplib::Server::set_task_queue` with custom pool | ❌ Wrong layer | Doesn't solve thread-affinity — cpp-httplib still runs handlers off-RunFrame |
+- **Sample ring:** lock-free SPSC (single producer = WASAPI thread, single consumer = detection thread). Hand-rolled head/tail atomics over a `std::array<float, N>` is sufficient; no boost dep needed. Depth: 4× WASAPI period @ 48 kHz, ~10 ms each, so 4 × 480 = 1920 floats ≈ 7.7 KB. Drop-oldest on overflow.
+- **Settings snapshot:** `std::atomic<std::shared_ptr<DriverSettings>>` — C++17 needs `std::atomic_load/atomic_store` free functions on shared_ptr (deprecated in C++20 but present); C++20 has native atomic shared_ptr. HTTP thread builds a new `DriverSettings`, atomic-stores it; detection thread atomic-loads at the top of each iteration.
+- **CommandQueue:** keep existing `std::mutex + std::deque`. Correct, depth-8, low rate (≤2 Hz nominal — one tap per cover) makes contention noise.
 
-**Trade-offs of the chosen mutex+deque:**
-- (+) Short critical section (push one 16-byte struct).
-- (+) No new dependencies.
-- (+) Same idiom already used in-tree — low cognitive load.
-- (-) Technically a brief lock on both threads — immaterial given trigger rate.
+---
 
-**Example (driver/src/command_queue.hpp, new):**
-```cpp
-struct ClickRequest {
-    int durationMs;
-    std::chrono::steady_clock::time_point enqueuedAt;
-};
+## 3. New IPC Contract
 
-class CommandQueue {
-public:
-    void push(ClickRequest req) {
-        std::lock_guard<std::mutex> lock(m_mtx);
-        if (m_queue.size() >= kMaxDepth) m_queue.pop_front();  // drop oldest
-        m_queue.push_back(req);
-    }
-    bool try_pop(ClickRequest& out) {
-        std::lock_guard<std::mutex> lock(m_mtx);
-        if (m_queue.empty()) return false;
-        out = m_queue.front();
-        m_queue.pop_front();
-        return true;
-    }
-private:
-    static constexpr size_t kMaxDepth = 8;
-    std::mutex m_mtx;
-    std::deque<ClickRequest> m_queue;
-};
-```
+### Transport: keep cpp-httplib + JSON. Versioned.
 
-### Pattern 3: Duplicate-Path Component Coexistence (cross-driver input injection)
+**Rationale:** the existing surface (`POST /button`, `GET /health`, `GET /port`, `GET /status` at `driver/src/http_server.cpp:124-170`) already uses cpp-httplib + nlohmann::json. The team has the muscle memory; debug tooling (curl, browser) just works; the `IDriverClient` retry/port-discovery logic in `src/steamvr/src/vr_input.cpp` is battle-tested. **Do not switch transport (named pipes, shared memory, gRPC) for v1.6.** Added complexity buys nothing — IPC traffic is low-rate (settings push on user action; training samples are not transmitted at all post-migration; telemetry is only when settings UI is open).
 
-**What:** Two drivers register the same component path (`/input/system/click`) on the same device container (the HMD). SteamVR permits this and propagates updates from whichever driver calls `UpdateBooleanComponent`. **Critically:** you cannot call `UpdateBooleanComponent` on the lighthouse driver's handle — it returns `VRInputError_WrongType`. You must create your own.
+**Versioning:** add `"v": 1` field on every JSON request and response. Driver returns `400 {"error":"unsupported version"}` for unknown versions. Lets v1.7 add fields without breaking older clients.
 
-**When to use:** When you need to trigger an input action that another driver owns (system button, proximity sensor, etc.) and you cannot control that driver.
+### Endpoint catalog (v1.6 contract)
 
-**Trade-offs:**
-- (+) Only documented mechanism that achieves this outcome.
-- (+) Validated on SteamVR March 2026 + OpenVR SDK v2.5.1.
-- (-) Undocumented behavior — Valve could in theory tighten this in future SteamVR releases (treat as a dependency risk, not a showstopper).
-- (-) Debugging note: handle IDs differ per-driver. Handle `3` in MicMap is not handle `3` in lighthouse.
+#### Health & state (client-pulls-driver)
 
-## Data Flow
+| Method | Path | Body | Returns | Purpose |
+|--------|------|------|---------|---------|
+| GET | `/health` | — | `{"v":1,"status":"healthy"}` | Liveness — keep existing semantics |
+| GET | `/state` | — | `{"v":1,"state":"Idle\|Training\|Detecting\|Cooldown","hasProfile":true,"deviceConnected":true,"hmdReady":true}` | Replaces `/status`; client polls @ 2 Hz for the indicator UI |
+| GET | `/telemetry/level` | — | `{"v":1,"rms":0.04,"db":-28.0,"confidence":0.62,"isWhiteNoise":false}` | Replaces inline UI fields from v1.5 main.cpp; client polls @ 30 Hz only when settings window is open (rate-limited by client) |
 
-### End-to-End Trigger Flow (target)
+#### Settings (client-pushes-driver)
+
+| Method | Path | Body | Returns | Purpose |
+|--------|------|------|---------|---------|
+| GET | `/settings` | — | full `AppConfig` JSON | Driver returns its in-memory snapshot — source of truth at runtime |
+| PUT | `/settings` | full `AppConfig` JSON | `{"v":1,"applied":true}` or `{"v":1,"applied":false,"errors":["..."]}` | **Whole-object** replacement (atomic). Driver validates (clamp/range-check), persists to `%APPDATA%/MicMap/config.json` via the existing `IConfigManager::save`, atomic-stores new settings snapshot. Detection thread sees new values on next iteration |
+| GET | `/devices` | — | `{"v":1,"devices":[{"id":"...","name":"...","sampleRate":48000,...}],"selected":"..."}` | Driver enumerates via `IDeviceEnumerator`; client UI displays a picker |
+
+**Whole-object vs per-field decision: whole-object.** Reasons:
+- AppConfig is small (~10 fields).
+- Atomic swap of the entire snapshot is trivially race-free; per-field would require per-field locks or CRDT-style merges.
+- File write becomes deterministic — driver writes the same object it just received.
+- Diffing is the *client's* job (compute new AppConfig, send it). Client already has the editing UI.
+
+#### Training (client controls; driver owns audio)
+
+| Method | Path | Body | Returns | Purpose |
+|--------|------|------|---------|---------|
+| POST | `/training/start` | `{"v":1}` | `{"v":1,"trainingId":"uuid","minSamples":150}` | Driver calls `INoiseDetector::startTraining()`, returns a session ID |
+| GET | `/training/progress` | — | `{"v":1,"samplesCollected":120,"target":150,"spectralPreview":[...]}` | Client polls @ 5 Hz while training UI is open; renders progress bar + live FFT preview |
+| POST | `/training/finalize` | `{"v":1}` | `{"v":1,"thresholds":{"energy":0.04,"correlation":0.78},"saved":true}` | Driver calls `INoiseDetector::finishTraining()` + `saveTrainingData(...)`. Persists to `%APPDATA%/MicMap/training_data.bin` |
+| POST | `/training/cancel` | `{"v":1}` | `{"v":1,"cancelled":true}` | Discards in-progress training without persisting |
+
+**Training-flow architectural pivot:** the v1.5 model has the client capturing audio and computing the profile. After migration, the **driver owns the audio device** — there's no other process for the user's mic to flow through. The client's training UI is now an *observer* of driver-side training, not a sample producer. So **no `POST /training/sample` endpoint is needed**: the entire flow is "client says start, driver collects N samples from its already-running WASAPI capture, client polls progress, client says finalize." This is the correct shape. (Add `/training/sample` only if v1.7 needs offline retraining from a recorded WAV — defer until justified.)
+
+#### Trigger (NO ENDPOINT)
+
+`POST /button` is **deleted** at Phase 6. The trigger event no longer crosses IPC. The current call path
 
 ```
-[User covers mic]
-    │
-    ▼
-WASAPI callback (audio thread)
-    │  raw float samples
-    ▼
-Detection (FFT/RMS, same thread)
-    │  DetectionResult {confidence, ...}
-    ▼
-StateMachine::update()   Idle → Detecting → Triggered
-    │  onTrigger() fires
-    ▼
-DriverClient::trigger(100ms)                    [app process, audio thread]
-    │
-    │  HTTP POST localhost:27015/trigger?duration=100
-    ▼
-────────────────── process boundary ──────────────────
-    │
-HttpServer cpp-httplib worker thread            [driver, HTTP thread]
-    │  parse, validate, push to queue
-    ▼
-CommandQueue::push({durationMs=100})            [mutex acquired ~1µs]
-    │
-    │  (HTTP thread returns 200 OK immediately)
-    ▼
-    ⋯ waits up to 1/90s ⋯
-    │
-    ▼
-DeviceProvider::RunFrame()                       [driver, RunFrame thread, ~90Hz]
-    │  CommandQueue::try_pop → ClickRequest
-    ▼
-VRDriverInput()->UpdateBooleanComponent(
-    m_hSystemClick, true, 0.0)                  [if handle valid]
-    │
-    │  schedule release at t+100ms
-    ▼
-    ⋯ ~9 RunFrame ticks later ⋯
-    │
-    ▼
-VRDriverInput()->UpdateBooleanComponent(
-    m_hSystemClick, false, 0.0)
-    │
-    ▼
-SteamVR propagates to application input layer
-    │
-    ▼
-[Dashboard opens / in-dashboard selection fires]
+apps/micmap/main.cpp:520 → driverClient->tap()
+  → HTTP → http_server.cpp:129 → queue_.push(TapCommand{})
 ```
 
-**Latency budget:** ~1 RunFrame tick (≤11ms @ 90Hz) from HTTP POST to button-down. Within perceptual noise floor; matches user expectation for a microphone-triggered action.
+collapses to a direct call from the driver-internal detection thread to `commandQueue_->push(TapCommand{})`. This is the central trigger-pipeline simplification of the milestone.
 
-### HMD Re-Activation Flow (hot-swap, HMD sleep/wake)
+### IPC client refactor on the EXE side
 
-```
-[HMD sleeps or disconnects]
-    │
-    ▼
-lighthouse driver may call Deactivate on HMD
-    │
-    ▼
-Our m_hSystemClick handle: technically still valid for our driver
-(handles are per-driver; we didn't destroy ours) BUT downstream
-propagation may silently stop because the HMD container state is gone.
-    │
-    ▼
-[HMD wakes / reconnects]
-    │
-    ▼
-lighthouse driver re-activates HMD — property container handle may differ.
-    │
-    ▼
-Our one-shot m_hmdComponentAttempted latch is still TRUE — we don't re-create.
-    │
-    ▼
-⚠ POTENTIAL BUG: updates may go to a stale handle. Needs validation.
-```
+`src/steamvr/src/vr_input.cpp` houses `DriverClientImpl` (per `vr_input.hpp:149-198`). After migration, `IDriverClient::tap()` is dead code — delete it. Repurpose the file: add `IDriverClient::getState()`, `getTelemetry()`, `getSettings()`, `putSettings(const AppConfig&)`, `getDevices()`, `startTraining()`, `getTrainingProgress()`, `finalizeTraining()`, `cancelTraining()`. Keep the same port-discovery + retry mechanics. **Recommend rename `IDriverClient` → `IDriverApi`** to reflect the broader role; the old name no longer fits.
 
-See **Lifecycle §** below for the concrete recommendation.
+---
 
-### State Management (driver-side)
+## 4. Config Ownership
+
+### Writer/reader matrix
+
+| Operation | v1.5 | v1.6 |
+|-----------|------|------|
+| `config.json` write | Client (`saveDefault()` in `MicMapApp::shutdown`) | **Driver** writes after `PUT /settings` succeeds; client never writes the file directly |
+| `config.json` read | Client at startup; driver does NOT read | Driver at `Init` (boot); client reads on startup as a *fallback* if driver isn't reachable yet |
+| `training_data.bin` write | Client (after `finishTraining`) | Driver after `POST /training/finalize` |
+| `training_data.bin` read | Client at startup | Driver at `Init` |
+
+**Consequence:** the client becomes a *cache* of the driver's state, not a writer. Edit flow:
 
 ```
-Driver lifecycle:
-
-[DLL loaded by vrserver]
-    │
-    ▼
-HmdDriverFactory() → DeviceProvider*
-    │
-    ▼
-DeviceProvider::Init()
-    • VR_INIT_SERVER_DRIVER_CONTEXT
-    • start HttpServer thread
-    • state: m_hmdComponentAttempted = false
-             m_hSystemClick = invalid
-    │
-    ▼
-[SteamVR pumps RunFrame ~90Hz]
-    │
-    ├─→ HMD not yet activated: poll returns invalid container → do nothing
-    │
-    ├─→ HMD activated this frame: Create component, latch attempted=true
-    │
-    └─→ Handle valid: drain queue + process releases
-    │
-    ▼
-DeviceProvider::Cleanup()
-    • stop HttpServer
-    • VR_CLEANUP_SERVER_DRIVER_CONTEXT
-    • handles are invalidated by SteamVR
+User edits in client UI  →  client builds AppConfig  →  PUT /settings  →
+driver validates  →  driver atomic-swaps in-memory snapshot  →
+driver writes config.json  →  driver returns OK  →
+client refreshes its local copy from GET /settings (truth-up call)
 ```
 
-## HMD-Container Handle Lifecycle (deep dive)
+### Why driver-as-writer (not client-as-writer + driver-watches-file)
 
-This is the single most architecturally load-bearing topic in the milestone. Four sub-cases:
+A file-watcher in the driver was considered. **Rejected.** Reasons:
+- File-system notifications on Windows (`ReadDirectoryChangesW`) are racy with atomic-rename writes (the existing `ReplaceFileW` path at `src/core/src/config_manager.cpp` causes spurious change events).
+- Two writers (client and the auto-init defaults from `loadDefault()`) creates lost-write races.
+- Single-writer rule is the simplest correctness invariant.
+- IPC round-trip latency on `PUT /settings` (~5 ms localhost) is imperceptible to a settings-form UX.
 
-### Case A: HMD not yet activated at Init() time (normal cold start)
+### Client startup race
 
-**What happens:** `TrackedDeviceToPropertyContainer(k_unTrackedDeviceIndex_Hmd)` returns `k_ulInvalidPropertyContainer`. `CreateBooleanComponent` on an invalid container fails with `VRInputError_InvalidParam`.
-**Handling:** Defer to RunFrame polling. First RunFrame tick after HMD activation succeeds. **Validated in bey-closer-t1.**
+If the client launches before the driver finishes `Init` (auto-launch order with SteamVR), `GET /settings` will fail. Mitigation:
+1. Client reads `config.json` directly at startup (read-only, with the existing defensive nlohmann/json path).
+2. Client polls `GET /settings` with the existing port-discovery retry loop; once available, **driver's snapshot wins** and client refreshes its local copy.
+3. If the user edits before driver is up, disable the Apply button and show "connecting…" — already a UX pattern in the existing `IDriverClient::isConnected()` flow at `apps/micmap/main.cpp:534`.
 
-### Case B: HMD activates after a few RunFrame ticks (normal warm start)
+### Atomic update propagation
 
-**What happens:** First N ticks see invalid container; tick N+1 returns valid handle; create succeeds.
-**Handling:** Same polling loop. No special code — `m_bComponentAttempted` latches once successful.
+Inside the driver, `PUT /settings` handler:
+1. Validates → builds new `AppConfig`.
+2. Calls `IConfigManager::save(...)` (atomic `ReplaceFileW` already in v1.5 — verified per CFG-04).
+3. `std::atomic_store(&settingsSnapshot_, std::make_shared<const AppConfig>(newConfig))`.
+4. Returns 200 to client.
+5. Detection thread reads `std::atomic_load(&settingsSnapshot_)` at the top of each iteration; sensitivity / minDuration / cooldown changes propagate within ≤ one detection cycle (~20 ms).
 
-### Case C: CreateBooleanComponent fails despite valid HMD container
+For fields that require **detector reconstruction** (sample rate change, FFT size change, audio device change), the handler must:
+1. Stop detection thread.
+2. Stop audio capture.
+3. Reconstruct `IAudioCapture` (potentially with new device) and `INoiseDetector` (potentially with new fftSize / sampleRate).
+4. Restart capture + detection.
 
-**What happens:** E.g. SteamVR version regression, permissions issue, other driver grabbed an exclusive lock. Returns an error other than `InvalidParam`.
-**Handling:** Log the error code. Set `m_hmdComponentAttempted = true` (stop retrying — don't spam SteamVR). `m_hSystemClick` remains invalid; updates become no-ops. App still runs; user gets no trigger but no crash. This is the "fallback gracefully" requirement from SVR-02.
+A controlled stop/start under the HTTP thread, with the CommandQueue draining naturally. UI shows "applying…" during the swap; expected duration < 500 ms. **No OpenVR API call** during this — preserves the SVR-05 invariant that HTTP thread never touches `vr::*`.
 
-### Case D: HMD re-activation / hot-swap (HMD sleeps and wakes, or user power-cycles HMD mid-session)
+### `training_data.bin` ownership
 
-**What happens:** Underspecified in OpenVR docs and NOT validated in bey-closer-t1. Two hypotheses:
-1. **Optimistic:** Property container handle is stable across HMD sleep/wake; our component handle remains live; updates work after wake.
-2. **Pessimistic:** Container handle invalidates; our component handle becomes stale; updates silently fail.
+Driver-only owner. Reasons:
+- Driver is the only process running detection — only consumer at runtime.
+- Client never needs to read it: the only client-side need is "do I have a profile?" which `GET /state.hasProfile` answers.
+- Eliminates the v1.5 "two processes both think they own this file" risk.
 
-**Recommendation for this milestone:**
-1. **Ship with the one-shot latch** (Case A/B/C behavior) as V1.
-2. **Add a Phase validation TODO**: during hmd_button_test manual validation, sleep and wake the HMD, verify trigger still works. If it doesn't, add:
-   ```cpp
-   // On every RunFrame tick, re-check container handle
-   auto currentHmd = VRProperties()->TrackedDeviceToPropertyContainer(k_unTrackedDeviceIndex_Hmd);
-   if (currentHmd != m_lastHmdContainer) {
-       m_lastHmdContainer = currentHmd;
-       m_hmdComponentAttempted = false;  // force re-creation
-       m_hSystemClick = k_ulInvalidInputComponentHandle;
-   }
-   ```
-3. **Do NOT ship this re-creation logic speculatively** — it's ~10 LOC but the CreateBooleanComponent call is suspected to leak handles on repeated calls per-driver-session (anecdotal, unvalidated). Ship simple; fix reactively if validation fails.
+**Migration nuance:** existing user installs have `training_data.bin` written by the v1.5 client. The v1.6 driver must read this file at boot — schema is unchanged, so it just works. No format migration. Confidence: HIGH (binary format is in `src/detection/src/noise_detector.cpp`'s `saveTrainingData/loadTrainingData` and is shared between client and driver via the unchanged `micmap_detection` static lib).
 
-**Confidence:** HIGH for Cases A-C (validated). MEDIUM for Case D (hypothesized; needs in-phase validation).
+---
 
-### Graceful teardown
+## 5. Build Order / Suggested Phase Shape
 
-`Cleanup()` is called by SteamVR before the DLL unloads. Stop HttpServer first (to prevent new triggers arriving during teardown), then `VR_CLEANUP_SERVER_DRIVER_CONTEXT`. Component handle doesn't need explicit release — SteamVR reclaims when the driver context tears down. **Current `device_provider.cpp:76-101` already does this correctly; retain the pattern.**
+### Constraints driving the order
 
-## Install-Time vs. Runtime Dependencies
+1. **No "big bang" cutover.** Each phase produces a buildable, UAT-able installer. v1.5 shipped UAT-on-real-hardware; v1.6 must keep that discipline.
+2. **Backwards-compatible interim states.** During phases where both client-side and driver-side detection exist, the system must run with one or the other (feature-flagged in `default.vrsettings`).
+3. **Risk frontloading.** Riskiest unknowns (WASAPI in DLL host; OpenVR audio-thread coexistence) come first so failures surface before cutover phases.
+4. **`mic_test.exe` is the regression backstop.** It must build at every phase boundary — if it breaks, the shared-lib boundary has been violated.
 
-This section explicitly enumerates what must be true at each stage, for the quality gate.
+### Recommended phase order
 
-### Install-time (Inno Setup, admin-elevated)
+#### Phase 1 — Shared lib boundary + driver links it (NO behavior change)
+**Risk:** LOW. **Buildable end:** YES. **UAT:** existing v1.5 UAT plus "driver still ships 100% v1.5 behavior."
 
-| Dependency | Who provides | When |
-|------------|--------------|------|
-| Steam install located | Installer guesses `{autopf}\Steam`, validates presence of SteamVR | Before file copy |
-| SteamVR not running | Installer checks `vrserver.exe` via WMI (pattern from BeyondProximity.iss:100-105) | Before file copy — abort if running |
-| Driver files placed at `{steam}\steamapps\common\SteamVR\drivers\micmap\bin\win64\driver_micmap.dll` | Installer `[Files]` section | File copy step |
-| `driver.vrdrivermanifest` placed at `{steam}\steamapps\common\SteamVR\drivers\micmap\driver.vrdrivermanifest` | Installer `[Files]` | File copy step |
-| `micmap.exe` + `app.vrmanifest` placed at **`{pf}\MicMap\`** (outside Steam; app is not a driver) | Installer `[Files]` | File copy step |
-| Driver registered with SteamVR | `vrpathreg.exe adddriver "{steam}\…\drivers\micmap"` | Installer `[Run]` step |
-| `app.vrmanifest` registered for auto-launch | **Deferred to first app run** (see below) — NOT done by installer | n/a at install time |
+- Add `micmap_core_runtime` INTERFACE target in `src/CMakeLists.txt`.
+- `driver/CMakeLists.txt`: add `target_link_libraries(driver_micmap PRIVATE micmap_core_runtime)`. Driver doesn't *use* the lib yet.
+- `apps/mic_test/CMakeLists.txt`: switch from individual libs to `micmap_core_runtime`. Verifies the aggregate target is correctly headless.
+- Verify: clean build with `-DMICMAP_BUILD_DRIVER=OFF` still produces `mic_test.exe`.
 
-**Key asymmetry with bey-closer-t1:** BeyondProximity nests under `Bigscreen Beyond Driver` because it piggybacks on an existing HMD driver. MicMap **owns its own driver directory** (`drivers\micmap\`) under SteamVR's driver root — simpler, no nesting, no resourceOnly manifest dance. The BeyondProximity.iss `RestoreRootManifest` / `RestoreVrresources` functions have no MicMap analogue and should NOT be copied.
+**Exit criterion:** driver DLL grows by < 50 KB (audio + detection + core static linkage); behavior identical to v1.5; `mic_test.exe` still builds with no OpenVR present.
 
-### Runtime Boot Order
+#### Phase 2 — Driver-side audio capture spike (parallel-running, off by default)
+**Risk:** HIGH. **Buildable end:** YES. **UAT:** load driver, verify SteamVR start is healthy (no audio path active because feature-flag default OFF).
+
+This is the **WASAPI-in-DLL feasibility validation**. If WASAPI doesn't work inside vrserver's DLL host (COM apartment quirks, audio session permissions when SteamVR runs under a different user), we need to know NOW, not three phases in.
+
+- Add a feature flag `enableDriverAudio` in `default.vrsettings`.
+- In `DeviceProvider::Init`, if flag is set: construct `IAudioCapture`, select device by name pattern, start capture, log the sample rate + channel count + first 1 second of RMS values, then stop.
+- Don't run detection yet; don't push any commands.
+- Validate on real Bigscreen Beyond + Win11 rig.
+
+**Exit criterion:** `vrserver.txt` shows successful WASAPI capture inside the driver process. If this fails, escalate (research the workaround) BEFORE proceeding.
+
+#### Phase 3 — Driver-side detection thread (still off by default)
+**Risk:** MEDIUM. **Buildable end:** YES. **UAT:** flag-on test mode.
+
+- Add `DetectionRunner` class (new) that owns the sample ring, `INoiseDetector`, `IStateMachine`.
+- Wire WASAPI callback → ring → detection thread → state-machine `TriggerCallback` → `commandQueue_->push(TapCommand{})`.
+- Driver loads `training_data.bin` from `%APPDATA%/MicMap/` at Init.
+- Behind `enableDriverDetection` flag (default OFF). Client still does its own detection and still posts to (still-active) `POST /button`.
+- Wire two simultaneous trigger paths in test mode for instrumentation: log when the driver-internal trigger fires AND when an HTTP-bridge trigger arrives, so we can correlate.
+
+**Exit criterion:** with flag ON, covering the mic toggles dashboard. Confidence in the new path. Client-side detection still works with flag OFF (rollback path).
+
+#### Phase 4 — IPC contract reshape (settings + state, no training migration yet)
+**Risk:** MEDIUM. **Buildable end:** YES. **UAT:** new client UI talks to new driver endpoints; trigger still works (flag-gated).
+
+- Driver: add `GET /state`, `GET /telemetry/level`, `GET /devices`, `GET /settings`, `PUT /settings`. Keep existing `POST /button` until Phase 6.
+- Driver: load config at Init, atomic-swap on PUT, write config file on success.
+- Client: extend `IDriverClient` (rename to `IDriverApi`) with new methods. Update settings UI to PUT instead of writing file directly. Show driver-pulled state in indicator.
+- Client config file write path remains as Phase 4-fallback (in case PUT fails).
+
+**Exit criterion:** all v1.5 settings flows now go through IPC; client no longer writes `config.json` on the success path; UAT proves UI changes propagate to driver detection (the flag still gates which side actually triggers).
+
+#### Phase 5 — Training migration
+**Risk:** MEDIUM. **Buildable end:** YES. **UAT:** train new pattern through new flow.
+
+- Driver: add `POST /training/{start,finalize,cancel}`, `GET /training/progress`. Wire to `INoiseDetector` training mode.
+- Driver: write `training_data.bin` at finalize.
+- Client: replace local training pipeline with IPC calls. Keep client-local training data display ("trained at: …") via `GET /state.hasProfile`.
+- v1.5 `training_data.bin` files are forward-compatible (same format). Confidence: HIGH.
+
+**Exit criterion:** retrain end-to-end on real hardware. Trigger fires from new pattern.
+
+#### Phase 6 — Cutover (flip the flag, delete dead code)
+**Risk:** LOW (all paths proven). **Buildable end:** YES. **UAT:** v1.5-style end-to-end UAT.
+
+- `enableDriverDetection` flag default flipped to ON.
+- Delete `POST /button` endpoint from `http_server.cpp`.
+- Delete `IDriverClient::tap()` and the associated path in client.
+- Delete client-side audio capture, detector, state machine wiring from `apps/micmap/main.cpp`. Keep only: settings UI, training UI (now IPC-driven), tray icon, manifest registrar, bindings patcher.
+- Delete the audio callback's FFT/state-machine work — was already a hot-path violator.
+
+**Exit criterion:** real-hardware UAT; client EXE binary size drops noticeably (no more KissFFT, no more audio capture in-proc); driver DLL takes over.
+
+#### Phase 7 — Documentation (v1.5 carryover)
+DOC-01 (README sync) + DOC-02 (`docs/architecture.md`) reflecting post-migration architecture.
+
+### Parallel opportunities
+
+- Phase 1 and Phase 2 can be done by the same engineer in sequence (each is small).
+- Phase 4 can begin in parallel with Phase 3 once the shared-lib boundary (Phase 1) is in. Phase 4 is mostly client-side IPC plumbing; Phase 3 is driver-side detection.
+- Phase 5 must follow Phase 4 (depends on the new IPC surface) but can begin once Phase 4's `/state` and `/settings` routes are stable.
+
+### Risks per ordering choice
+
+| Choice | Risk if WRONG order |
+|--------|---------------------|
+| Phase 1 before Phase 2 | If Phase 2 happens first, the driver gets a one-off ad-hoc copy of audio code that has to be reverted |
+| Phase 2 before Phase 3 | If detection comes first, we hit "driver doesn't capture audio" with detection code in flight — wasted work |
+| Phase 3 before Phase 4 | If IPC reshape comes first, the driver has new endpoints but client is still doing its own detection — endpoints sit unused, regression risk on the client side |
+| Phase 5 before Phase 4 | Training endpoints need `/state` and `/settings` to exist for UI integration — Phase 5 can't even ship a usable UI without them |
+| Phase 6 (flip + delete) before Phase 5 | Without training migration, the cutover removes the only way users can train new patterns. Hard blocker |
+
+### Hard ordering invariant
+
+**Phase 1 first. Always.** Without the shared lib, every other phase requires duplicating code into the driver, which then has to be unduplicated at cutover. The lift-to-shared-lib pattern is already proven in this repo by `src/bindings/` (the Phase 4 D-10 lift in v1.5) — same recipe.
+
+---
+
+## 6. Per-File / Per-Directory Component Delta
+
+### Component status legend
+- **NEW** — file/directory created in v1.6
+- **MODIFIED** — existing file changed in scope (signature, behavior, or linkage)
+- **DELETED** — removed from build at end of v1.6
+- **UNCHANGED** — touched by linkage only or not at all
+
+| Path | Status | What changes |
+|------|--------|--------------|
+| `src/CMakeLists.txt` | **MODIFIED** | Add `micmap_core_runtime` INTERFACE aggregate target. Existing `micmap::lib` umbrella stays for client EXE convenience |
+| `src/audio/` | **UNCHANGED** | Headers + impl as-is. Linked into both client and driver via shared lib |
+| `src/audio/CMakeLists.txt` | **UNCHANGED** | Already cleanly factored (PRIVATE platform deps) |
+| `src/detection/` | **UNCHANGED** | Same as audio — no source changes |
+| `src/detection/CMakeLists.txt` | **UNCHANGED** | KissFFT linkage already PRIVATE |
+| `src/core/include/micmap/core/state_machine.hpp` | **UNCHANGED** | Interface stays; both processes use it (driver authoritatively, client reads state via IPC) |
+| `src/core/include/micmap/core/config_manager.hpp` | **UNCHANGED** | Schema is shared; both processes link it. Client reads as fallback, driver is sole writer |
+| `src/core/CMakeLists.txt` | **UNCHANGED** | nlohmann/json PRIVATE — clean |
+| `src/common/` | **UNCHANGED** | Logger, types — both processes use |
+| `src/steamvr/include/micmap/steamvr/vr_input.hpp` | **MODIFIED** | `IDriverClient::tap()` deleted at Phase 6. New methods: `getState`, `getTelemetry`, `getDevices`, `getSettings`, `putSettings`, `startTraining`, `getTrainingProgress`, `finalizeTraining`, `cancelTraining`. Recommend rename `IDriverClient` → `IDriverApi` |
+| `src/steamvr/src/vr_input.cpp` | **MODIFIED** | `DriverClientImpl` rewritten around new endpoints; port discovery + retry logic preserved |
+| `src/steamvr/include/micmap/steamvr/manifest_registrar.hpp` | **UNCHANGED** | Auto-launch is client-only |
+| `src/bindings/` | **UNCHANGED** | Already correctly factored as a shared lib in v1.5 (Phase 4 D-10 lift) |
+| `driver/CMakeLists.txt` | **MODIFIED** | Add `target_link_libraries(driver_micmap PRIVATE micmap_core_runtime)`. nlohmann::json continues to be linked for new IPC routes |
+| `driver/src/driver_main.cpp` | **UNCHANGED** | `HmdDriverFactory` glue stays |
+| `driver/src/device_provider.hpp` | **MODIFIED** | Add members: `std::unique_ptr<IAudioCapture> audioCapture_`, `std::unique_ptr<INoiseDetector> detector_`, `std::unique_ptr<IStateMachine> stateMachine_`, `std::unique_ptr<DetectionRunner> detectionRunner_`, `std::unique_ptr<IConfigManager> configManager_`, `std::atomic<std::shared_ptr<const AppConfig>> settings_` |
+| `driver/src/device_provider.cpp` | **MODIFIED** | `Init` constructs the above and starts capture+detection. `Cleanup` reverses the order. RunFrame is **untouched** — still drains CommandQueue, still writes UpdateBooleanComponent. The whole detection pipeline is invisible to RunFrame, which is the architectural prize |
+| `driver/src/command_queue.{hpp,cpp}` | **UNCHANGED** | Existing primitive is reused as-is. Producer changes from "HTTP thread" to "detection thread" — wiring change, not a primitive change |
+| `driver/src/http_server.hpp` | **MODIFIED** | New routes wired in `SetupRoutes`. New collaborator pointer (`DeviceProvider*` or thinner facade) so handlers can read state and call into config/training operations from outside RunFrame |
+| `driver/src/http_server.cpp` | **MODIFIED** | `POST /button` deleted at Phase 6. New routes: `/state`, `/telemetry/level`, `/devices`, `/settings`, `/training/*`. Discipline preserved: HTTP thread does NOT call any OpenVR API (still SVR-05) |
+| `driver/src/detection_runner.{hpp,cpp}` | **NEW** | Owns the sample ring, the detection thread loop, and the state-machine TriggerCallback that pushes `TapCommand{}` into the existing CommandQueue |
+| `driver/src/sample_ring.hpp` | **NEW** | SPSC lock-free ring used by WASAPI callback (producer) and DetectionRunner thread (consumer). Header-only |
+| `driver/src/settings_snapshot.hpp` | **NEW** | Tiny wrapper around `std::atomic<std::shared_ptr<const AppConfig>>` with API: `load()` / `swap(new)`. Tests can construct one directly |
+| `driver/src/training_session.{hpp,cpp}` | **NEW** | Tracks one training session's lifecycle (start, sample count, finalize, cancel). HTTP routes call into it. Delegates to the underlying `INoiseDetector` |
+| `apps/micmap/main.cpp` | **HEAVILY MODIFIED → SLIMMED** | Delete: WASAPI callback body that runs FFT+state-machine (lines 353-444), `audioCapture` member, `detector` member, `stateMachine` member, `onTrigger` (line 515), `audioMutex`, RMS/dB inline computation. Keep: ImGui UI, tray icon, window message pump, async `IDriverApi::connect()` retry, `vrInput` for SteamVR Quit-event lifecycle (still need this for tray-icon dismissal on SteamVR shutdown), `manifestRegistrar` for `--register-vrmanifest` CLI mode, settings form that builds an `AppConfig` and PUTs it. Roughly: 1061 lines → ~500 lines |
+| `apps/micmap/CMakeLists.txt` | **MODIFIED** | Drop direct dependency on `micmap_audio`+`micmap_detection` if removed via `micmap_lib` umbrella unlinking; cleaner: keep umbrella, but document the slimmed role. Continue linking `micmap::core_runtime` (for AppConfig schema), `micmap::steamvr` (for vrInput + manifest_registrar + IDriverApi), `micmap::bindings` (for uninstall path), ImGui |
+| `apps/mic_test/CMakeLists.txt` | **MODIFIED (one line)** | `target_link_libraries(mic_test PRIVATE micmap_core_runtime)` instead of three libs. Verifies headless-build invariant |
+| `apps/mic_test/main.cpp` | **UNCHANGED** | Still tests the headless detection pipeline against real microphones, no driver, no SteamVR. Regression backstop |
+| `apps/hmd_button_test/main.cpp` | **UNCHANGED** | Pure VR-input test; doesn't touch detection |
+| `apps/hmd_button_test/CMakeLists.txt` | **UNCHANGED** | |
+| `installer/MicMap.iss` | **UNCHANGED** | Same files installed; no installer changes needed for the migration |
+| `driver/resources/settings/default.vrsettings` | **MODIFIED** | Add new keys: `enableDriverDetection` (Phase 3 feature flag, default OFF until Phase 6), `enableDriverAudio` (Phase 2 spike flag — can be removed at Phase 6), `audioDeviceNamePattern` (default fallback if no config.json) |
+| `tests/test_placeholder.cpp` | **UNCHANGED** | No new tests required by this analysis, though Phase 3 would benefit from a CommandQueue+DetectionRunner integration test fixture |
+| `external/` | **UNCHANGED** | No new third-party deps |
+
+---
+
+## Data Flow — Before vs After
+
+### Before (v1.5)
 
 ```
-1. User logs in → SteamVR launches (from Steam auto-start, or manually)
-2. vrserver.exe reads all drivers under paths registered via vrpathreg
-3. driver_micmap.dll is loaded — HmdDriverFactory() called
-4. DeviceProvider::Init() — HttpServer starts on 27015
-5. DeviceProvider::RunFrame() begins ticking at ~90Hz
-6. HMD activates (lighthouse driver) — our RunFrame creates /input/system/click
-7. vrserver reads registered app manifests — finds MicMap's app.vrmanifest
-8. If SetApplicationAutoLaunch(true) set earlier: SteamVR launches micmap.exe
-9. micmap.exe starts: loads config, connects to driver HTTP, starts audio capture
+WASAPI thread (in micmap.exe)
+  └─→ AudioCallback (under audioMutex)
+        ├─→ RMS / dB calc
+        ├─→ INoiseDetector::analyze (FFT, KissFFT)
+        ├─→ IStateMachine::update
+        │     └─→ TriggerCallback fires
+        │           └─→ MicMapApp::onTrigger
+        │                 └─→ IDriverClient::tap
+        │                       └─→ POST /button {"kind":"tap"}  ─ HTTP ─→
+                                                                    │
+                                                                    ▼
+                                                  HTTP thread (in driver_micmap.dll)
+                                                    └─→ http_server::SetupRoutes
+                                                          └─→ CommandQueue::push(TapCommand)
+                                                                    │
+                                                  RunFrame (vrserver) drains:
+                                                    └─→ UpdateBooleanComponent(/input/system/click, true)
+                                                    └─→ ... 150ms later: ...UpdateBooleanComponent(false)
+                                                          └─→ SteamVR ToggleDashboard
 ```
 
-**Critical ordering invariant:** The driver is loaded by SteamVR **before** `micmap.exe` is launched via auto-start. The app will attempt to POST to the driver HTTP endpoint; if the HTTP server isn't up yet, the DriverClient retries (existing async-connect logic in `src/steamvr/driver_client`). This timing is safe because `Init()` starts HttpServer synchronously before returning.
-
-**If auto-launch isn't yet registered** (first-ever session after install): SteamVR starts without launching the app. User launches micmap.exe manually once; `manifest_registrar` inside the app calls `AddApplicationManifest` + `SetApplicationAutoLaunch(true)`. **From the next SteamVR session onward, auto-launch works.** This "register on first manual run" pattern is the cleanest way around the documented [SteamVR bug](https://github.com/ValveSoftware/openvr/issues/106) where `AddApplicationManifest` doesn't take effect until next vrserver restart.
-
-### `vrpathreg` vs. `IVRApplications::AddApplicationManifest` — distinct namespaces
-
-| Tool / API | Registers | Runtime effect |
-|------------|-----------|----------------|
-| `vrpathreg adddriver <path>` | A **driver** (DLL + vrdrivermanifest). Writes to SteamVR's `steamvr.vrsettings` externaldrivers list. | SteamVR loads the DLL on next startup |
-| `IVRApplications::AddApplicationManifest(<path>)` + `SetApplicationAutoLaunch(appKey, true)` | An **application** (exe + vrmanifest). Writes to SteamVR's `applications.json`. | SteamVR launches the exe on next startup when `auto_launch=true` and app key matches |
-
-These are **orthogonal registries.** The installer MUST call `vrpathreg` for the driver. The app (not the installer) calls `AddApplicationManifest` for the manifest. Uninstall must reverse both.
-
-### Uninstall Symmetry
-
-| Install action | Uninstall action | Notes |
-|----------------|-----------------|-------|
-| `vrpathreg adddriver <driverpath>` | `vrpathreg removedriver <driverpath>` | Installer `[UninstallRun]` |
-| Copy `driver_micmap.dll`, `driver.vrdrivermanifest`, `app.vrmanifest` | Delete files + empty dirs | Inno Setup handles via `[UninstallDelete]` implicitly for tracked files |
-| `AddApplicationManifest` (done at runtime by app) | `RemoveApplicationManifest` | **Cannot be done from installer** (OpenVR not guaranteed available). Best-effort: app does it in a "uninstall mode" CLI flag, OR installer ignores it and SteamVR self-cleans when the manifest file vanishes (imperfect but acceptable). |
-| `SetApplicationAutoLaunch(true)` | `SetApplicationAutoLaunch(false)` | Same caveat — best-effort; surviving state is harmless (it's just a dangling entry in applications.json pointing at a deleted exe). |
-
-**Recommendation:** Installer does perfect symmetry for driver. App-manifest entry is tolerated as orphaned state post-uninstall — SteamVR handles missing binaries gracefully. Don't overengineer uninstall.
-
-**Note on Inno Setup:** BeyondProximity.iss sets `Uninstallable=no`. For MicMap, flip this to `yes` — users expect Add/Remove Programs entries. Uninstaller runs `vrpathreg removedriver` symmetrically.
-
-## Suggested Build Order (phase slicing recommendation)
-
-This is the load-bearing output for roadmap authoring. Ordering is driven by: (a) avoiding broken intermediate states, (b) enabling validation at each phase end, (c) minimizing rework.
-
-### Phase 1: Driver sidecar rewrite (SVR-01 through SVR-04)
-**Rationale:** Must land FIRST. Reasons:
-1. Auto-start (AUTO-01) of an app that drives a broken/virtual-controller driver is strictly worse UX than no auto-start — users see a laser beam they didn't want, plus their app launches itself, which is the wrong combination.
-2. The installer (INST-01) needs to know final driver layout to place files correctly. Writing the installer against the old driver layout is throwaway work.
-3. `hmd_button_test` can validate the sidecar in isolation — no audio, no UI, no installer needed. Tight iteration loop.
-4. `dashboard_manager` deletion and `driver_client` simplification cascade from this phase — they're touched once, not twice.
-
-**Contents of phase:**
-- Remove `TrackedDeviceAdded` call
-- Create HMD-container component on RunFrame-polled HMD activation
-- Add CommandQueue; wire HTTP `/trigger` → queue → RunFrame drain
-- Delete `virtual_controller.{hpp,cpp}`, `process_launcher.{hpp,cpp}`, `micmap_controller_profile.json`
-- Simplify `driver_client.cpp` to single `trigger()` method
-- Delete `dashboard_manager` open/select branching; collapse to thin trigger wrapper
-- Validation: manual test with `hmd_button_test` — cover mic surrogate → dashboard opens, no laser beam visible
-
-**Exit criterion:** MicMap works end-to-end via the sidecar path on a developer machine that still has the manually-installed-via-batch driver.
-
-### Phase 2: Config read-back (CFG-01)
-**Rationale:** Small, independent, unblocks persistent user settings which matter for post-installer UX (user tunes sensitivity once, it sticks). Can run in parallel with Phase 1 if capacity allows, but not a blocker for Phase 3.
-**Exit criterion:** Restart app → sensitivity, device choice, training data all restored.
-
-### Phase 3: Auto-launch (AUTO-01)
-**Rationale:** Depends on Phase 1 (don't auto-launch a broken driver). Depends on `app.vrmanifest` file existing. Does NOT depend on Phase 4 installer — can be tested manually by running the app once to register the manifest. Independent of CFG-01.
-**Contents:**
-- Author `app.vrmanifest` with correct `binary_path_windows`, `app_key`, `name`, `image_path`
-- Implement `manifest_registrar` in `src/steamvr/` — calls `AddApplicationManifest` + `SetApplicationAutoLaunch(true)` on app startup (idempotent)
-- Wire into app init path (after OpenVR client init)
-**Exit criterion:** Run micmap.exe once, quit, restart SteamVR → micmap.exe launches automatically.
-
-### Phase 4: Installer (INST-01, INST-02)
-**Rationale:** Packages everything from Phases 1-3. Last, because it depends on final file layout and the auto-launch mechanism already being in place.
-**Contents:**
-- `installer/MicMap.iss` patterned on BeyondProximity.iss (strip out nested-driver / RestoreRootManifest logic)
-- Admin elevation, vrserver.exe WMI check, `vrpathreg adddriver`
-- Places driver at `{steam}\…\drivers\micmap`, app at `{pf}\MicMap\`
-- Uninstallable (unlike BeyondProximity): Inno Setup uninstaller runs `vrpathreg removedriver`
-- Optional post-install "Launch SteamVR" checkbox (pattern from BeyondProximity.iss:67-69)
-**Exit criterion:** Clean VM, run installer, SteamVR finds driver, launches micmap, mic-cover triggers dashboard. Uninstaller cleanly reverses.
-
-### Phase 5: Documentation (DOC-01)
-**Rationale:** Always last — docs describe shipped reality, not plans. README sections marked crossed-out for auto-start become current.
-
-### Dependency graph
+### After (v1.6)
 
 ```
-Phase 1 (driver sidecar) ──┬──> Phase 3 (auto-launch) ──┐
-                           │                            ├──> Phase 4 (installer) ──> Phase 5 (docs)
-Phase 2 (config read)  ────┴────────────────────────────┘
-         (independent, any order before Phase 4)
+WASAPI thread (in driver_micmap.dll)
+  └─→ AudioCallback
+        └─→ SampleRing::push (lock-free, drop-oldest)
+
+DetectionRunner thread (in driver_micmap.dll)
+  └─→ loop: SampleRing::pop_chunk
+        ├─→ INoiseDetector::analyze
+        ├─→ IStateMachine::update
+        │     └─→ TriggerCallback fires
+        │           └─→ CommandQueue::push(TapCommand)
+        │
+        └─→ atomic snapshot of telemetry (level, confidence, state) for /telemetry/level
+
+RunFrame (vrserver) drains:
+  └─→ UpdateBooleanComponent(/input/system/click, true)
+  └─→ ... 150ms later: ...UpdateBooleanComponent(false)
+        └─→ SteamVR ToggleDashboard
+
+[Sidecar IPC, opportunistic, NOT in trigger path]
+HTTP thread (in driver_micmap.dll)
+  ├─→ GET /state, /telemetry/level, /devices    ←──  client UI polls
+  ├─→ PUT /settings → atomic-swap snapshot + config.json write   ←──  client edits
+  └─→ POST /training/* → INoiseDetector training mode + persist  ←──  client trains
 ```
 
-## Scaling Considerations
+The trigger path collapses from a 7-hop cross-process flow to a 4-hop in-process flow. IPC moves from being a hot path to being a cold path (settings + telemetry only).
 
-This is a single-user desktop app. "Scaling" in the traditional sense doesn't apply. Relevant axes:
+---
 
-| Concern | Current | At stress | Mitigation |
-|---------|---------|-----------|------------|
-| Trigger rate | <1 Hz typical | 10 Hz pathological (user spamming) | CommandQueue drops oldest at depth 8; cooldown in state_machine prevents spam upstream |
-| HTTP port contention | 27015 default, 27015-27025 fallback | Other app grabs all 10 ports | Driver logs & fails gracefully; app surfaces connection error in UI |
-| SteamVR API version drift | OpenVR SDK v2.5.1 | Valve changes duplicate-path behavior | Runtime error from CreateBooleanComponent → log + fall back silently; user sees "detected but not triggering" — known fail mode |
-| HMD re-activation | One-shot latch | HMD sleeps/wakes mid-session | Validation TODO in Phase 1; if broken, add ~10 LOC re-check logic |
+## Key Abstractions — New
 
-## Anti-Patterns
+### `DetectionRunner` (new, driver-only)
 
-### Anti-Pattern 1: Feature-flagging the virtual controller
-**What people do:** Keep `virtual_controller.cpp` behind a config flag "in case sidecar doesn't work."
-**Why it's wrong:** Dead-code paths rot. The user explicitly stated no fallback. The sidecar is validated. Dual paths means two sets of tests, two sets of configs, two sets of edge cases.
-**Do this instead:** Delete. If the sidecar breaks in the field, roll back via installer version, not via runtime flag.
+**Purpose:** owns the detection thread; bridges WASAPI capture to the existing CommandQueue.
 
-### Anti-Pattern 2: Calling UpdateBooleanComponent from the HTTP thread
-**What people do:** In the `/trigger` handler, directly call `VRDriverInput()->UpdateBooleanComponent(...)`.
-**Why it's wrong:** OpenVR driver-side APIs are not documented as thread-safe. Observed behavior is "mostly works" but race conditions with RunFrame can corrupt internal SteamVR state. Valve devs have said "call driver APIs from RunFrame" in community posts.
-**Do this instead:** Enqueue a command; RunFrame drains. See Pattern 2.
+**Pattern:** Worker thread with shutdown signal. Constructor takes references to `IAudioCapture`, `INoiseDetector`, `IStateMachine`, `CommandQueue`, `SettingsSnapshot`. Method `start()` launches thread; `stop()` joins. Thread loop: pop sample chunk, analyze, update state machine, repeat.
 
-### Anti-Pattern 3: Re-registering the app.vrmanifest on every app launch
-**What people do:** Call `AddApplicationManifest` on every startup as a "just in case."
-**Why it's wrong:** Spams SteamVR's applications.json; `SetApplicationAutoLaunch` has documented regressions ([issue #1378](https://github.com/ValveSoftware/openvr/issues/1378)) around re-registered apps returning `UnknownApplication`.
-**Do this instead:** Check `IsApplicationInstalled(app_key)` first; only register if absent. Store a "registered" flag in config.json as belt-and-braces.
+**Why not just a callback-on-callback chain?** Because the WASAPI callback must return promptly (per WASAPI documentation; AvSetMmThreadCharacteristics MMCSS isn't yet wired). FFT can take 1-3 ms on 2048 samples; on a slow machine that's a lot of audio-cb time. Decoupling via SPSC ring is the canonical fix and was flagged as tech debt in v1.5 (`.planning/codebase/CONCERNS.md:74-78`).
 
-### Anti-Pattern 4: Copying BeyondProximity.iss's RestoreRootManifest logic
-**What people do:** Clone the whole BeyondProximity.iss, including the `RestoreRootManifest` + `RestoreVrresources` Pascal Script procedures.
-**Why it's wrong:** That logic exists because BeyondProximity nests under the Bigscreen Beyond driver folder and must preserve the parent driver's manifest as `resourceOnly=true`. MicMap owns its own driver directory. No parent manifest. That logic is not just unneeded — it would corrupt a valid driver manifest.
-**Do this instead:** Start from the skeleton (preprocessor defines, `[Setup]`, `[Files]`, `[Run]` for vrpathreg, `IsProcessRunning` / `PrepareToInstall` for vrserver.exe detection). Drop the `[Code]` procedures.
+### `SettingsSnapshot` (new, driver-only)
 
-### Anti-Pattern 5: Driver-launches-app process spawning (current code)
-**What people do:** Driver calls `CreateProcess` to launch micmap.exe from its DLL.
-**Why it's wrong:** Runs under vrserver.exe's token (potentially elevated, potentially wrong session in multi-user scenarios). Bypasses SteamVR's own app lifecycle. Makes uninstall harder (dangling processes). Already a known source of weirdness in `process_launcher.cpp`.
-**Do this instead:** Use SteamVR's native auto-launch (`app.vrmanifest`). SteamVR launches the app in the correct session with the correct token, tracks lifetime, and cleans up on SteamVR exit.
+**Purpose:** thread-safe read-mostly access to `AppConfig` for the detection thread.
 
-## Integration Points
+**Pattern:** `std::atomic<std::shared_ptr<const AppConfig>>`. Read via `std::atomic_load(&snapshot_)`; write via `std::atomic_store(&snapshot_, std::make_shared<const AppConfig>(newCfg))`. Detection thread reads at the top of each iteration.
 
-### External Services
+### `TrainingSession` (new, driver-only)
 
-| Service | Integration Pattern | Notes |
-|---------|---------------------|-------|
-| SteamVR (vrserver.exe) | Driver loaded as DLL; app linked against OpenVR client lib | Driver is in-process with vrserver; app is separate process |
-| Steam | Only touched by installer to locate SteamVR install path | `{autopf}\Steam\steamapps\common\SteamVR\` convention |
-| Windows WASAPI | C API consumed by `src/audio` | Unchanged this milestone |
+**Purpose:** single-session training state held outside the detector itself, so HTTP handlers can interrogate progress without locking detector internals.
 
-### Internal Boundaries
+**Pattern:** owned by `DeviceProvider`; HTTP routes mutate via `std::mutex`-guarded methods. On finalize, calls into `INoiseDetector::finishTraining()` (which stays single-threaded by virtue of being called only from the detection thread or from the HTTP thread when the detection thread is paused). Deletes itself on cancel/finalize.
 
-| Boundary | Communication | Notes |
-|----------|---------------|-------|
-| `apps/micmap` ↔ `src/*` libraries | Direct C++ function calls | Standard linkage |
-| `src/steamvr/driver_client` ↔ `driver/src/http_server` | Localhost HTTP (cpp-httplib) | Process boundary; 27015-27025 port range; JSON body |
-| `driver HTTP thread` ↔ `driver RunFrame thread` | **CommandQueue (mutex + deque)** | NEW primitive; see Pattern 2 |
-| `src/steamvr/manifest_registrar` ↔ SteamVR | IVRApplications OpenVR client API | Only from app process; not from installer |
-| `installer` ↔ SteamVR | `vrpathreg.exe` subprocess | Only at install/uninstall time |
+### `IDriverApi` (renamed from `IDriverClient`, client-only)
+
+**Purpose:** broadened HTTP client surface — settings, state, training, devices.
+
+**Pattern:** same factory pattern (`createDriverApi(host, startPort, endPort)`); same retry/discovery semantics; new method set; client-side JSON serialize/deserialize via nlohmann/json.
+
+---
+
+## Patterns to Follow
+
+### Pattern 1: Single-writer for cross-process state
+**What:** Driver writes `config.json` and `training_data.bin`; client never does.
+**When:** All persistent state.
+**Example:** `PUT /settings` → driver validates → driver atomic-saves file → driver returns OK to client.
+
+### Pattern 2: HTTP thread NEVER touches OpenVR API
+**What:** Continuation of v1.5's SVR-05. HTTP handlers may now also touch detection state, audio device list, training session state — but still nothing through `vr::*`.
+**When:** Every HTTP route handler.
+**Example:** `device_provider.cpp:124` shows the existing pattern — HTTP push, RunFrame consumes. New routes must obey: e.g. `PUT /settings` mutates `settingsSnapshot_` (atomic) and may stop/restart the detector synchronously inside the handler — but **never** calls `vr::VRDriverInput()` or any `vr::*` surface.
+
+### Pattern 3: Atomic shared_ptr for read-mostly cross-thread state
+**What:** `std::atomic<std::shared_ptr<const T>>` for settings; reader gets a value snapshot, writer creates a new one.
+**When:** Settings, telemetry snapshots.
+**Why:** Lock-free reads on the detection hot path; writers are rare (user edits).
+
+### Pattern 4: Bounded SPSC ring with drop-oldest
+**What:** Audio sample ring between WASAPI cb thread and detection thread.
+**When:** Any producer/consumer where producer must not block.
+**Caveat:** The existing CommandQueue uses a mutex+deque with the same drop-oldest policy at depth 8. SPSC ring is for the higher-rate audio path; the existing mutex queue is fine for the low-rate command path.
+
+### Pattern 5: CommandQueue boundary preserved
+**What:** Even though detection moves into the driver, the CommandQueue → RunFrame contract stays. Detection thread `push`es; RunFrame `try_pop`s; OpenVR API only called from RunFrame.
+**Why:** Don't break what works. The CommandQueue is the v1.5 hard-won correctness boundary.
+
+---
+
+## Anti-Patterns to Avoid
+
+### Anti-Pattern 1: Calling OpenVR API from the detection thread
+**What:** Tempting to "just call `UpdateBooleanComponent` directly from `TriggerCallback`" since we're now in-process.
+**Why bad:** OpenVR's not-thread-safe-on-non-RunFrame-threads contract is real (validated empirically in bey-closer-t1; SteamVR crashes if violated).
+**Instead:** Push `TapCommand{}` into CommandQueue; let RunFrame drain it. Same as v1.5.
+
+### Anti-Pattern 2: Two writers for `config.json`
+**What:** Client writes on settings change, driver writes on training finalize.
+**Why bad:** Race between concurrent writers; either writer can clobber the other's update.
+**Instead:** Driver is sole writer. Client's "save" path is `PUT /settings` (which the driver writes for it).
+
+### Anti-Pattern 3: File-watching the config from the driver
+**What:** Use `ReadDirectoryChangesW` to detect client-side edits.
+**Why bad:** Re-introduces two-writer problem; spurious notifications during atomic rename writes; complicates testing.
+**Instead:** Single-writer + IPC push.
+
+### Anti-Pattern 4: Per-field settings endpoints
+**What:** `PUT /settings/sensitivity`, `PUT /settings/cooldown`, etc.
+**Why bad:** Multiplies endpoints; makes atomic multi-field changes (e.g. "sensitivity AND threshold change together") impossible without versioning.
+**Instead:** Single `PUT /settings` with the full `AppConfig`. Client computes the diff if it cares.
+
+### Anti-Pattern 5: Reusing `micmap::lib` (the existing INTERFACE umbrella)
+**What:** Linking `micmap_core_runtime`'s contents into `micmap::lib`.
+**Why bad:** `micmap::lib` (`src/CMakeLists.txt:12`) already pulls in `micmap_steamvr` which has the OpenVR + cpp-httplib dependency; using it from the driver re-imports those into the DLL (wasteful) and makes the headless-test invariant murky.
+**Instead:** New `micmap_core_runtime` aggregate. Old `micmap::lib` stays for the client EXE.
+
+### Anti-Pattern 6: Removing `IDriverClient::tap()` before Phase 6
+**What:** Eager cleanup during Phase 3.
+**Why bad:** Loses the rollback path; a Phase 4 IPC bug could brick the trigger flow before driver-side detection is proven.
+**Instead:** Carry the dead path until Phase 6's flag flip. Accept the temporary code bloat.
+
+---
+
+## Scalability Considerations
+
+| Concern | Today | Migration impact |
+|---------|-------|------------------|
+| Audio capture rate | ~96 KB/s @ 48 kHz mono float | Same — unchanged |
+| Detection FFT throughput | ~50 FFTs/sec @ 2048 samples | Same — moved, not increased |
+| IPC traffic | 1 trigger/sec peak | Drops to near-zero (settings + telemetry polls only) |
+| Driver memory | ~20 MB (estimated) | +5 MB (KissFFT plan, training profile, ring buffer) |
+| HMD reactivation cycles | 5-cycle stress test PASS in v1.5 | Audio capture survives independently of HMD container reattach |
+
+The migration doesn't introduce new scaling axes. It shifts costs from one process to the other and eliminates IPC on the hot path.
+
+---
 
 ## Sources
 
-- [`D:\Documents\Projects\bey-closer-t1\HMD Button Stub.md`](file:///D:/Documents/Projects/bey-closer-t1/HMD%20Button%20Stub.md) — HIGH confidence, direct validation of sidecar technique on SteamVR March 2026 + OpenVR SDK v2.5.1
-- [`D:\Documents\Projects\bey-closer-t1\installer\BeyondProximity.iss`](file:///D:/Documents/Projects/bey-closer-t1/installer/BeyondProximity.iss) — HIGH confidence, working installer pattern to copy from (minus nested-driver Pascal procedures)
-- [ValveSoftware/openvr — Driver API Documentation](https://github.com/ValveSoftware/openvr/blob/master/docs/Driver_API_Documentation.md) — HIGH confidence for RunFrame semantics, TrackedDeviceToPropertyContainer usage
-- [ValveSoftware/openvr#106 — AddApplicationManifest doesn't load until reboot](https://github.com/ValveSoftware/openvr/issues/106) — MEDIUM confidence, older issue but symptom is recurring
-- [ValveSoftware/openvr#1378 — SetApplicationAutoLaunch fails with UnknownApplication](https://github.com/ValveSoftware/openvr/issues/1378) — MEDIUM confidence, relevant gotcha for manifest_registrar logic
-- [ValveSoftware/openvr Wiki — API Documentation](https://github.com/ValveSoftware/openvr/wiki/API-Documentation) — HIGH confidence for IVRApplications surface
-- Current codebase files inspected: `driver/src/device_provider.cpp`, `driver/src/virtual_controller.cpp`, `driver/src/http_server.cpp`, `driver/driver.vrdrivermanifest` — HIGH confidence for "what's there to remove"
+- `.planning/codebase/ARCHITECTURE.md` — current layered architecture (v1.5 snapshot)
+- `.planning/codebase/STRUCTURE.md` — directory layout and CMake targets
+- `.planning/codebase/CONCERNS.md` — known v1.5 tech debt (state-machine thread safety, audio buffer accumulation)
+- `.planning/codebase/INTEGRATIONS.md` — IPC contract today (cpp-httplib :27015, JSON)
+- `.planning/PROJECT.md` (v1.6 milestone definition, sidecar-on-HMD constraints)
+- Codebase verification (HIGH confidence — every named symbol/path read on branch `hmd-button` 2026-04-30):
+  - `CMakeLists.txt:1-223`
+  - `src/CMakeLists.txt:1-20`
+  - `src/audio/CMakeLists.txt:1-41` and `src/audio/include/micmap/audio/audio_capture.hpp:1-107`
+  - `src/audio/src/audio_capture.cpp:196,233,435,453,521,531` (CoInitializeEx + capture thread)
+  - `src/detection/CMakeLists.txt:1-26` and `src/detection/include/micmap/detection/noise_detector.hpp:1-148`
+  - `src/core/CMakeLists.txt:1-30`, `src/core/include/micmap/core/state_machine.hpp:1-141`, `src/core/include/micmap/core/config_manager.hpp:1-137`
+  - `src/steamvr/CMakeLists.txt:1-105`, `src/steamvr/include/micmap/steamvr/vr_input.hpp:1-215`
+  - `driver/CMakeLists.txt:1-165`
+  - `driver/src/driver_main.cpp:1-41`
+  - `driver/src/device_provider.{hpp,cpp}` — full file
+  - `driver/src/command_queue.hpp:1-41`
+  - `driver/src/http_server.{hpp,cpp}` — full files
+  - `apps/micmap/main.cpp:340-498` (audio cb + shutdown ordering)
+  - `apps/mic_test/CMakeLists.txt:1-25` (the headless invariant)
+- Sister project: `D:\Documents\Projects\bey-closer-t1\HMD Button Stub.md` — sidecar-on-HMD validation, audio-thread coexistence with driver runtime (referenced via PROJECT.md context)
 
 ---
-*Architecture research for: MicMap Seamless SteamVR Integration milestone — target sidecar architecture*
-*Researched: 2026-04-22*
+
+*Architecture analysis: 2026-04-30 — for v1.6 Feature Migration roadmap*
