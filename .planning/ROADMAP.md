@@ -1,9 +1,18 @@
-# Roadmap: MicMap
+# Roadmap: MicMap — v1.6 Feature Migration
+
+**Defined:** 2026-04-30
+**Granularity:** standard
+**Coverage:** 45/45 v1.6 requirements mapped (LIB-01..04, MIG-01..06, IPC-01..08, HEALTH-01..08, TRAIN-01..06, TEST-01..05, FAIL-01..05, INST-09, DOC-01..02)
+**Phase numbering:** continues from v1.5 (Phase 4 was the last shipped phase). v1.6 phases 5–11.
+
+**Milestone goal:** Relocate WASAPI audio capture, FFT detection, state machine, config persistence, and the trigger pipeline from `micmap.exe` into `driver_micmap.dll`. Extract a shared static library so the same source compiles into driver, client, and `mic_test.exe` headless harness. Demote the client to a settings + driver-health UI. Roll in v1.5 Phase 5 documentation carryover.
+
+**Load-bearing invariant (from v1.5 SVR-05):** HTTP-thread → CommandQueue → RunFrame is the only path that touches OpenVR API. No phase may violate this. Detection thread becomes a new producer for the same CommandQueue; the boundary is unchanged.
 
 ## Milestones
 
 - ✅ **v1.5 Seamless SteamVR Integration** — Phases 1-4 (shipped 2026-04-24) — see [`milestones/v1.5-ROADMAP.md`](milestones/v1.5-ROADMAP.md)
-- 📋 **vNext Documentation + Polish** — Phase 5 carried forward; backlog under review (planned)
+- 🚧 **v1.6 Feature Migration** — Phases 5-11 (in progress)
 
 ## Phases
 
@@ -20,10 +29,111 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
 
 </details>
 
-### 📋 vNext (Planned — start with `/gsd-new-milestone`)
+### 🚧 v1.6 Feature Migration (Active)
 
-- [ ] Phase 5: Documentation — README sync to shipped reality + `docs/architecture.md` (carried forward from v1.5; DOC-01, DOC-02)
-- Backlog candidates (not yet scoped): file-sink logger (UAT C3 follow-up), in-app auto-start toggle (UX-01), in-VR settings overlay (UX-02), finished-page launch checkbox (DIST-01), silent-install CLI docs (DIST-02), non-default Steam path support (DIST-03), detection accuracy improvements (DET-01/02).
+- [ ] **Phase 5: Shared Library Extraction** — Add `micmap_core_runtime` INTERFACE target; driver, client, and `mic_test.exe` all link it; CI guard asserts no OpenVR symbols leak into shared layer.
+- [ ] **Phase 6: Driver-Side Audio Capture Spike** — WASAPI capture works inside `driver_micmap.dll` on real Bigscreen Beyond + Win11 hardware (feature-flagged OFF by default).
+- [ ] **Phase 7: Driver-Side Detection Thread** — Detection runs in-process inside the driver; trigger collapses to direct CommandQueue push; client-side detection still active behind feature flag.
+- [ ] **Phase 8: IPC Contract Reshape** — New endpoints (`/state`, `/settings`, `/devices`, `/telemetry/level`); driver becomes sole `config.json` writer; client UI surfaces driver health by polling.
+- [ ] **Phase 9: Training Migration** — Driver becomes sole microphone owner during training; client is observer-only; `training_data.bin` ownership transfers to driver; `mic_test.exe --replay` lands.
+- [ ] **Phase 10: Cutover & Cleanup** — Flip the flag, delete `POST /button` and `IDriverClient::tap()`, ship FAIL cluster, tray-icon state glyphs, `--debug-trigger`, installer co-versioning bake.
+- [ ] **Phase 11: Documentation** — README sync (DOC-01) + `docs/architecture.md` (DOC-02) reflect post-migration architecture.
+
+## Phase Details
+
+### Phase 5: Shared Library Extraction
+**Goal**: A new `micmap_core_runtime` INTERFACE library aggregates the existing static libs (`micmap_audio`, `micmap_detection`, `micmap_core`, `micmap_common`) into a single boundary that compiles into the driver DLL, the client EXE, and `mic_test.exe` with no OpenVR/ImGui/D3D11/cpp-httplib symbols leaking into the shared layer.
+**Depends on**: Nothing (first phase of v1.6; v1.5 shipped)
+**Requirements**: LIB-01, LIB-02, LIB-03
+**Success Criteria** (what must be TRUE):
+  1. `driver_micmap.dll`, `micmap.exe`, and `mic_test.exe` all link `micmap_core_runtime`; clean build succeeds with `-DMICMAP_BUILD_DRIVER=OFF` and produces a working `mic_test.exe` even with OpenVR SDK absent (headless invariant preserved).
+  2. CI grep check (`cmake/AssertNoOpenVRInCore.cmake`) fails the build if any target inside `micmap_core_runtime` transitively links `openvr_api` or includes `<openvr.h>`/`<openvr_driver.h>`.
+  3. `dumpbin /exports driver_micmap.dll` shows exactly one exported symbol (`HmdDriverFactory`); no shared-lib symbols leaked through the DLL boundary.
+  4. `grep -rn 'MICMAP_DRIVER_BUILD' src/audio/ src/detection/ src/core/ src/common/` returns zero hits — no compile-time host-switching inside the shared lib.
+  5. Driver behavior is byte-for-byte identical to v1.5 (driver links `micmap_core_runtime` but does not yet *use* it); v1.5 UAT scenarios still pass on Bigscreen Beyond rig.
+**Plans**: TBD
+**Research flag**: STANDARD — well-documented CMake INTERFACE pattern; `micmap_bindings` precedent already in-tree from v1.5 Phase 4 D-10 lift.
+
+### Phase 6: Driver-Side Audio Capture Spike
+**Goal**: WASAPI capture proven feasible inside the `vrserver.exe` DLL host on real Bigscreen Beyond + Windows 11 hardware. Validates the highest-risk unknown of the milestone before any detection/IPC work begins. Behind a `enableDriverAudio` flag, default OFF.
+**Depends on**: Phase 5
+**Requirements**: MIG-01
+**Success Criteria** (what must be TRUE):
+  1. With `enableDriverAudio=1`, `vrserver.txt` shows the driver's audio worker thread successfully calling `CoInitializeEx(COINIT_MULTITHREADED)`, opening the configured WASAPI capture device, and logging the first 1 second of RMS readings on real Bigscreen Beyond + Win11 Pro rig.
+  2. `RPC_E_CHANGED_MODE` (`0x80010106`) is handled distinctly in driver logs (treated as "this thread already in another apartment — bail out and start own thread"), not silently ignored.
+  3. WASAPI capture lifecycle is owned by a dedicated audio worker thread that the driver constructs in `DeviceProvider::Init` and joins in `Cleanup`; `CoInitializeEx` is never called on the calling/RunFrame thread.
+  4. With `enableDriverAudio=0` (default), driver behavior is identical to Phase 5; SteamVR start/stop is healthy and the v1.5 trigger path through HTTP `POST /button` still works.
+  5. `IMMNotificationClient` is registered on the audio worker thread and unregistered cleanly in `Cleanup`; callbacks check an `atomic<bool> alive` flag before dereferencing driver state (Pitfall 13 mitigation).
+**Plans**: TBD
+**Research flag**: NEEDS VALIDATION — WASAPI inside vrserver DLL host validated once in sister project `bey-closer-t1` but not in this driver. Real-hardware spike on Bigscreen Beyond + Win11 Pro is mandatory before Phase 7. If WASAPI fails in DLL context, escalate before proceeding.
+
+### Phase 7: Driver-Side Detection Thread
+**Goal**: Full in-process detection pipeline runs inside `driver_micmap.dll`: a `DetectionRunner` thread drains an SPSC sample ring from the WASAPI callback, runs FFT + state machine, and emits `TapCommand` directly into the existing `CommandQueue`. Trigger collapses from 7 hops cross-process to 4 hops in-process. Behind `enableDriverDetection` flag (default OFF) so client-side detection and `POST /button` remain the rollback path.
+**Depends on**: Phase 6
+**Requirements**: MIG-02, MIG-03, MIG-04, MIG-06
+**Success Criteria** (what must be TRUE):
+  1. With `enableDriverDetection=1` on the Bigscreen Beyond rig, covering the microphone toggles the SteamVR dashboard via the in-process trigger path (`detection_runner.cpp` → `commandQueue_->push(TapCommand{})` → `RunFrame::UpdateBooleanComponent`); zero HTTP traffic on the trigger path during the test.
+  2. CI grep check confirms `VRDriverInput`, `VRProperties`, `VRServerDriverHost`, `VRSettings` only appear in `driver/src/device_provider.cpp` and `driver/src/manifest_registrar.cpp` — never in `detection_runner.cpp`, `sample_ring.hpp`, or any audio TU (Pitfall 3 mitigation).
+  3. Detection runs continuously while SteamVR is running regardless of HMD activation state; `EnterStandby` pauses the detection thread cleanly and `LeaveStandby` resumes; HMD sleep/wake cycle does not crash vrserver or strand audio device handles.
+  4. 50-cycle Init→500ms→Cleanup stress test passes with zero leaked handles in Process Explorer; `IMMNotificationClient` is unregistered before COM `Release()` on every Cleanup; reverse-order teardown verified (detection thread → audio worker → HTTP server) (Pitfall 4).
+  5. `PUT /settings` (sensitivity, threshold, cooldown) propagates to the detection hot path within 50 ms via lock-free `std::atomic<std::shared_ptr<const AppConfig>>` snapshot; no audio-thread blocking measured under stress.
+**Plans**: TBD
+**Research flag**: STANDARD for threading pattern (CommandQueue boundary preserved from v1.5); NEEDS VALIDATION for real-hardware trigger latency and HMD sleep/wake cycle behavior.
+
+### Phase 8: IPC Contract Reshape
+**Goal**: New IPC surface — `GET /state`, `GET /telemetry/level`, `GET /devices`, `GET /settings`, `PUT /settings`, plus a `POST /state/clear-error` endpoint. Driver becomes the sole writer of `%APPDATA%\MicMap\config.json` (single-writer rule, file-watching rejected per Pitfall 5). `IDriverClient` renamed to `IDriverApi`. Client UI surfaces driver health by polling. Logger sinks injected at construction (LIB-04). `POST /button` persists until Phase 10.
+**Depends on**: Phase 5 (driver-side endpoints can be built before Phase 7 lands; full integration after Phase 7)
+**Requirements**: IPC-01, IPC-02, IPC-03, IPC-04, IPC-05, IPC-06, IPC-07, IPC-08, LIB-04, HEALTH-01, HEALTH-02, HEALTH-03, HEALTH-04, HEALTH-05, HEALTH-06, HEALTH-07
+**Success Criteria** (what must be TRUE):
+  1. Editing the sensitivity slider in the client UI sends `PUT /settings` with the full `AppConfig`; driver validates atomically (HTTP 400 with `{"field":"...","reason":"..."}` on rejection, no partial state mutation), persists via `ReplaceFileW`, and the new value is observable in `GET /settings` on the next poll.
+  2. Driver is the sole writer of `config.json`: `grep -rn 'config.json' apps/micmap/src/ src/steamvr/src/` shows no client-side write path; client edits flow exclusively through `PUT /settings`.
+  3. Client UI shows live driver-loaded indicator (red on `ECONNREFUSED`, green on success), detection-state pill, last-trigger-relative timestamp, and a 5 Hz RMS/dBFS level meter when visible (0.5 Hz when minimized to tray); ECONNREFUSED *is* the canonical "driver down" signal — no separate liveness ping exists.
+  4. `netstat -an` confirms every driver HTTP route (`/health`, `/port`, `/state`, `/settings`, `/devices`, `/telemetry/level`) binds to `127.0.0.1` only — never `0.0.0.0` (Pitfall 7 mitigation).
+  5. The HTTP-thread → CommandQueue → RunFrame v1.5 SVR-05 boundary survives unchanged: HTTP handlers for `PUT /settings` mutate the atomic snapshot directly (data-only) and never call any `vr::*` API; verified by inspection.
+  6. Driver writes its own log to `%APPDATA%\MicMap\micmap-driver.log` via injected `FileLogSink`; client writes to `%APPDATA%\MicMap\micmap.log` via injected `StdoutLogSink`+`FileLogSink`; no `#ifdef MICMAP_DRIVER_BUILD` inside `micmap_core_runtime` (LIB-04).
+**Plans**: TBD
+**UI hint**: yes
+**Research flag**: STANDARD — extends existing cpp-httplib pattern from v1.5 Phase 1; same CommandQueue discipline.
+
+### Phase 9: Training Migration
+**Goal**: Driver becomes the sole owner of the microphone end-to-end during training; client becomes the observer that visualizes progress and confirms thresholds. New endpoints: `POST /training/start`, `GET /training/progress`, `POST /training/finalize`, `POST /training/cancel`, `POST /training/recompute`. `training_data.bin` ownership transfers to driver. `mic_test.exe --replay <wav>` enables reproducible regression testing.
+**Depends on**: Phase 7 (driver owns audio), Phase 8 (IPC surface with `/state` and `/settings`)
+**Requirements**: TRAIN-01, TRAIN-02, TRAIN-03, TRAIN-04, TRAIN-05, TRAIN-06, TEST-04
+**Success Criteria** (what must be TRUE):
+  1. User clicks "Train" in the client; driver enters training mode (detection mutex-paused), collects ~150 samples while client polls `GET /training/progress` at 5–10 Hz and renders a live progress bar; on `POST /training/finalize` driver writes `training_data.bin` atomically and returns to detection mode using the new thresholds — verified end-to-end on real Bigscreen Beyond + Win11 hardware.
+  2. Anti-feature TRAIN-AF-01 enforced: client never opens its own WASAPI capture during training; `grep -rn 'IAudioCapture\|createAudioCapture' apps/micmap/src/` returns no calls to `start()` during training mode (single-owner WASAPI invariant).
+  3. `POST /training/cancel` aborts an in-flight session, discards collected samples, returns the driver to detection mode without modifying `training_data.bin`; `POST /training/recompute {"sensitivity":0.7}` recomputes thresholds over the most-recent stored sample set without re-collecting and returns a preview the client can confirm or discard.
+  4. `mic_test.exe --replay <path-to-wav>` feeds a WAV file into the detection pipeline as if it were live mic input; reproducible regression test against a corpus of known-positive and known-negative samples emits the expected count of triggers (verified for at least one positive and one negative sample).
+  5. Driver is the sole writer of `training_data.bin`: client UI never touches the file directly; driver reads at `Init` and writes only on `POST /training/finalize`.
+**Plans**: TBD
+**UI hint**: yes
+**Research flag**: NEEDS VALIDATION — training UX commit/discard pattern designed from first principles (no v1.5 prior art); validate with a real training session on hardware before declaring phase done.
+
+### Phase 10: Cutover & Cleanup
+**Goal**: All paths proven in prior phases. Flip `enableDriverDetection` default to ON, delete `POST /button` and `IDriverClient::tap()`, delete the client-side WASAPI/FFT/state-machine body from `apps/micmap/main.cpp` (~500 LoC reduction). Ship the FAIL cluster (graceful failure modes), tray-icon state glyphs (HEALTH-08), `--debug-trigger` CLI flag, and the installer co-versioning bake (INST-09). Largest code-deletion phase of the milestone.
+**Depends on**: Phase 9
+**Requirements**: MIG-05, FAIL-01, FAIL-02, FAIL-03, FAIL-04, FAIL-05, HEALTH-08, TEST-01, TEST-02, TEST-03, TEST-05, INST-09
+**Success Criteria** (what must be TRUE):
+  1. After cutover, `grep -rn 'IDriverClient::tap\|/button\|TapCommand' apps/ src/steamvr/` returns zero hits in client code; the `POST /button` route is removed from `driver/src/http_server.cpp`; client EXE binary size drops noticeably (KissFFT and audio capture no longer linked into client).
+  2. Tray icon glyph/color reflects driver state on the desktop — armed (green), triggered (pulse), error (red) — and updates within one health-poll cycle of an actual state change on the Bigscreen Beyond rig (HEALTH-08).
+  3. Failure modes show actionable, user-visible UX: mic permission denied → "Mic access blocked" with deep-link to Windows mic settings (FAIL-01); driver not loaded → "Driver not installed — run installer or enable in SteamVR" (FAIL-02); SteamVR not running → "SteamVR not running" with 1 Hz polite poll, no retry storm (FAIL-03); double client instance → second instance foregrounds the first via named mutex and exits silently (FAIL-04); audio device removed mid-session → driver pauses with a clear `last_error` and auto-recovers when the device reappears (FAIL-05).
+  4. Installer (`MicMap-Setup-vX.Y.Z.exe`) places driver, client, vrmanifest, and shared-lib artifacts in lock-step; installing then upgrading then uninstalling on a clean Win11 VM cleans the matched set; client logs a warning at startup if `GET /health` reports a driver version mismatch with the client's compiled-in version (INST-09).
+  5. `mic_test.exe` continues to build and run against `micmap_core_runtime` with no SteamVR/driver dependency (TEST-01); `micmap.exe --debug-trigger` issues a synthetic trigger via a debug-build-gated endpoint without going through audio (TEST-02); driver writes `micmap-driver.log` with size-cap rotation at 5 MB and 5 retained generations (TEST-03); `hmd_button_test.exe` is preserved as a developer tool (TEST-05).
+  6. v1.5 SVR-05 invariant survives: full grep audit confirms `VRDriverInput`/`VRProperties`/`VRServerDriverHost` calls only appear in `device_provider.cpp` and `manifest_registrar.cpp`; HMD sleep/wake stress test passes on Bigscreen Beyond.
+**Plans**: TBD
+**UI hint**: yes
+**Research flag**: STANDARD — deletion phase; v1.5 SVR-04 rip-out discipline (eliminate fallback paths, no dual-mode runtime) is the template.
+
+### Phase 11: Documentation
+**Goal**: README and architecture documentation reflect the post-migration shipped reality (driver runs detection end-to-end; client is settings + health UI; install via single `.exe`; no batch scripts; auto-launch is SteamVR-native via `app.vrmanifest`). Carries forward the v1.5 Phase 5 commitment, re-scoped against v1.6 architecture.
+**Depends on**: Phase 10
+**Requirements**: DOC-01, DOC-02
+**Success Criteria** (what must be TRUE):
+  1. `README.md` reflects the v1.6 reality (driver hosts detection end-to-end; client is settings + health UI; install via single `.exe`; auto-launch via SteamVR-native `app.vrmanifest`); all crossed-out v1.5 sections removed.
+  2. New `docs/architecture.md` documents the post-migration architecture: driver-resident detection pipeline, `micmap_core_runtime` shared library boundary, OpenVR `RunFrame` + `CommandQueue` boundary, settings/health/training IPC contract, `training_data.bin` ownership, HMD reactivation lifecycle, and the v1.5 sidecar-on-HMD `/input/system/click` technique.
+  3. Diagrams cover both the in-process trigger path (4 hops) and the IPC reshape (settings push, health pull, training coordination); a fresh reader can understand the architecture without reading v1.5 milestone artifacts.
+**Plans**: TBD
+**Research flag**: STANDARD — writing docs, no technical unknowns.
 
 ## Progress
 
@@ -33,7 +143,40 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
 | 2. Config Read-Back | v1.5 | 3/3 | Complete | 2026-04-23 |
 | 3. Auto-Start | v1.5 | 7/7 | Complete | 2026-04-23 |
 | 4. Installer | v1.5 | 9/9 | Complete | 2026-04-24 |
-| 5. Documentation | vNext | 0/0 | Not started | — |
+| 5. Shared Library Extraction | v1.6 | 0/0 | Not started | — |
+| 6. Driver-Side Audio Capture Spike | v1.6 | 0/0 | Not started | — |
+| 7. Driver-Side Detection Thread | v1.6 | 0/0 | Not started | — |
+| 8. IPC Contract Reshape | v1.6 | 0/0 | Not started | — |
+| 9. Training Migration | v1.6 | 0/0 | Not started | — |
+| 10. Cutover & Cleanup | v1.6 | 0/0 | Not started | — |
+| 11. Documentation | v1.6 | 0/0 | Not started | — |
+
+## Phase Ordering Rationale
+
+- **Phase 5 must be first.** Without the shared lib boundary, every other phase duplicates code or breaks the `mic_test.exe` headless invariant. This is the keystone refactor (Pitfalls 6, 9, 15 all addressed here).
+- **Phase 6 before Phase 7.** WASAPI inside vrserver DLL host is the highest-risk unknown of the milestone. Validate feasibility on real hardware before building detection on top of it. If it fails, escalate before Phase 7.
+- **Phase 7 before Phase 8 IPC integration cutover.** Driver-side detection must work end-to-end with the in-process trigger path before client UI gets rewired to the new IPC surface (otherwise we have new endpoints sitting unused while client still uses `POST /button`).
+- **Phase 8 before Phase 9.** Training endpoints depend on `/state` and `/settings` IPC surface plus the driver-as-sole-writer rule.
+- **Phase 9 before Phase 10.** Cutover deletes the client-side training path; without Phase 9, users would lose the ability to retrain after the flag flip.
+- **Phase 10 before Phase 11.** Docs describe shipped reality, not aspirational architecture.
+
+## Coverage Notes
+
+All 45 v1.6 requirements mapped to exactly one phase. No orphans, no duplicates.
+
+| Cluster | Count | Phases |
+|---------|-------|--------|
+| LIB (4) | 4 | LIB-01..03 → P5; LIB-04 → P8 |
+| MIG (6) | 6 | MIG-01 → P6; MIG-02..04, MIG-06 → P7; MIG-05 → P10 |
+| IPC (8) | 8 | IPC-01..08 → P8 |
+| HEALTH (8) | 8 | HEALTH-01..07 → P8; HEALTH-08 → P10 |
+| TRAIN (6) | 6 | TRAIN-01..06 → P9 |
+| TEST (5) | 5 | TEST-04 → P9; TEST-01, TEST-02, TEST-03, TEST-05 → P10 |
+| FAIL (5) | 5 | FAIL-01..05 → P10 |
+| INST (1) | 1 | INST-09 → P10 |
+| DOC (2) | 2 | DOC-01, DOC-02 → P11 |
+| **Total** | **45** | **45 mapped, 0 orphans** |
 
 ---
-*Roadmap reorganized: 2026-04-29 after v1.5 milestone close*
+
+*Roadmap defined: 2026-04-30 — derived from REQUIREMENTS.md (45 v1.6 reqs) and `.planning/research/` (SUMMARY.md proposed 7-phase shape, refined here to align dependencies and pitfall mitigations from PITFALLS.md).*

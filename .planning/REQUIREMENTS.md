@@ -97,7 +97,7 @@ Single installer upgrades both driver and client atomically. Mismatched installs
 Re-scoped from v1.5 Phase 5 against the post-migration architecture.
 
 - [ ] **DOC-01**: `README.md` reflects the v1.6 reality: driver hosts detection end-to-end; client is settings + health UI; install via single `.exe`; no batch scripts; auto-launch is SteamVR-native via `app.vrmanifest`. All crossed-out v1.5 sections removed.
-- [ ] **DOC-02**: `docs/architecture.md` documents the post-migration architecture: driver-resident detection pipeline, `micmap_core_runtime` shared library, OpenVR `RunFrame` + `CommandQueue` boundary, settings/health/training IPC contract, training-data ownership, HMD reactivation lifecycle, and the v1.5 sidecar-on-HMD technique. Diagrams cover the in-process trigger path and the IPC reshape.
+- [ ] **DOC-02**: New `docs/architecture.md` documents the post-migration architecture: driver-resident detection pipeline, `micmap_core_runtime` shared library, OpenVR `RunFrame` + `CommandQueue` boundary, settings/health/training IPC contract, training-data ownership, HMD reactivation lifecycle, and the v1.5 sidecar-on-HMD technique. Diagrams cover the in-process trigger path and the IPC reshape.
 
 ## Future Requirements (Deferred)
 
@@ -128,12 +128,58 @@ Explicit milestone boundaries:
 
 ## Traceability
 
-Filled by `/gsd-roadmapper` when the roadmap maps each REQ-ID to a phase.
+Each REQ-ID maps to exactly one phase. 45/45 requirements mapped. No orphans, no duplicates.
 
 | REQ-ID | Phase | Status |
 |--------|-------|--------|
-| (populated by roadmapper) | | |
+| LIB-01 | Phase 5 | Pending |
+| LIB-02 | Phase 5 | Pending |
+| LIB-03 | Phase 5 | Pending |
+| LIB-04 | Phase 8 | Pending |
+| MIG-01 | Phase 6 | Pending |
+| MIG-02 | Phase 7 | Pending |
+| MIG-03 | Phase 7 | Pending |
+| MIG-04 | Phase 7 | Pending |
+| MIG-05 | Phase 10 | Pending |
+| MIG-06 | Phase 7 | Pending |
+| IPC-01 | Phase 8 | Pending |
+| IPC-02 | Phase 8 | Pending |
+| IPC-03 | Phase 8 | Pending |
+| IPC-04 | Phase 8 | Pending |
+| IPC-05 | Phase 8 | Pending |
+| IPC-06 | Phase 8 | Pending |
+| IPC-07 | Phase 8 | Pending |
+| IPC-08 | Phase 8 | Pending |
+| HEALTH-01 | Phase 8 | Pending |
+| HEALTH-02 | Phase 8 | Pending |
+| HEALTH-03 | Phase 8 | Pending |
+| HEALTH-04 | Phase 8 | Pending |
+| HEALTH-05 | Phase 8 | Pending |
+| HEALTH-06 | Phase 8 | Pending |
+| HEALTH-07 | Phase 8 | Pending |
+| HEALTH-08 | Phase 10 | Pending |
+| TRAIN-01 | Phase 9 | Pending |
+| TRAIN-02 | Phase 9 | Pending |
+| TRAIN-03 | Phase 9 | Pending |
+| TRAIN-04 | Phase 9 | Pending |
+| TRAIN-05 | Phase 9 | Pending |
+| TRAIN-06 | Phase 9 | Pending |
+| TEST-01 | Phase 10 | Pending |
+| TEST-02 | Phase 10 | Pending |
+| TEST-03 | Phase 10 | Pending |
+| TEST-04 | Phase 9 | Pending |
+| TEST-05 | Phase 10 | Pending |
+| FAIL-01 | Phase 10 | Pending |
+| FAIL-02 | Phase 10 | Pending |
+| FAIL-03 | Phase 10 | Pending |
+| FAIL-04 | Phase 10 | Pending |
+| FAIL-05 | Phase 10 | Pending |
+| INST-09 | Phase 10 | Pending |
+| DOC-01 | Phase 11 | Pending |
+| DOC-02 | Phase 11 | Pending |
+
+**Coverage:** 45/45 v1.6 requirements mapped (LIB ×4, MIG ×6, IPC ×8, HEALTH ×8, TRAIN ×6, TEST ×5, FAIL ×5, INST ×1, DOC ×2).
 
 ---
 
-*Last updated: 2026-04-30 — initial v1.6 requirements*
+*Last updated: 2026-04-30 — traceability table populated by `/gsd-roadmapper` against ROADMAP.md (7 phases, 5–11)*
