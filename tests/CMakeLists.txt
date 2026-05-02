@@ -107,3 +107,18 @@ target_link_libraries(test_bindings_patcher PRIVATE micmap::bindings nlohmann_js
 add_test(NAME test_bindings_patcher COMMAND test_bindings_patcher)
 add_test(NAME bindings_patcher_idempotent
          COMMAND test_bindings_patcher idempotent-only)
+
+# ---- Phase 5 D-02 / D-12 source-grep lints ----
+# Both lints scan src/{audio,detection,core,common}/ for forbidden tokens.
+# They are pure CMake-script-mode runs (no compiled exe), invoked via -P.
+# $<SEMICOLON> escapes the list separator so CTest passes a single -D arg.
+
+add_test(NAME lint_no_openvr_in_core
+    COMMAND ${CMAKE_COMMAND}
+        -DSRC_ROOTS=${CMAKE_SOURCE_DIR}/src/audio$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/detection$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/core$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/common
+        -P ${CMAKE_SOURCE_DIR}/cmake/lint_no_openvr_in_core.cmake)
+
+add_test(NAME lint_no_driver_macro
+    COMMAND ${CMAKE_COMMAND}
+        -DSRC_ROOTS=${CMAKE_SOURCE_DIR}/src/audio$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/detection$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/core$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/common
+        -P ${CMAKE_SOURCE_DIR}/cmake/lint_no_driver_macro.cmake)
