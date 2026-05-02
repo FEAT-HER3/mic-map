@@ -36,9 +36,17 @@ add_executable(micmap WIN32
     ${MICMAP_SOURCES}
 )
 
+# Phase 5 D-09: micmap.exe links the new shared runtime aggregate AND keeps
+# a direct micmap_steamvr link. The steamvr lib carries IDriverClient + the
+# HTTP-bridge plumbing that apps/micmap/main.cpp still calls — that lib lives
+# OUTSIDE the shared runtime (D-05) because it links OpenVR PUBLIC, so it must
+# remain a direct app-level dependency until later v1.6 phases lift the trigger
+# path into the driver. The old umbrella aggregator was deleted in Plan 05-02
+# (D-07); micmap::core_runtime fully supersedes it.
 target_link_libraries(micmap
     PRIVATE
-        micmap_lib
+        micmap::core_runtime
+        micmap_steamvr
         imgui
         micmap::bindings
 )
