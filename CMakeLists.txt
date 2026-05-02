@@ -21,6 +21,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Build options
 option(MICMAP_BUILD_TESTS "Build unit tests" ON)
 option(MICMAP_BUILD_TEST_APPS "Build test applications" ON)
+# Phase 5 SC1: mic_test.exe must build with MICMAP_BUILD_DRIVER=OFF and
+# OpenVR absent (headless invariant). CI's headless job sets
+# -DMICMAP_BUILD_DRIVER=OFF explicitly. Default-ON is correct for the dev
+# workflow (Bigscreen Beyond + SteamVR); do not flip this default to OFF
+# without coordinating the CI matrix or SC1 will silently regress.
 option(MICMAP_BUILD_DRIVER "Build OpenVR driver" ON)
 
 # Output directories
