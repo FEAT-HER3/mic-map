@@ -13,23 +13,27 @@ if(NOT DEFINED SRC_ROOTS)
         "Pass -DSRC_ROOTS=<root1>$<SEMICOLON><root2>...")
 endif()
 
-set(_extensions "*.h" "*.hpp" "*.hxx" "*.c" "*.cpp" "*.cc" "*.cxx" "*.inc" "*.ipp")
 set(_violations "")
 set(_files_scanned 0)
 
+# WR-03: collapse extension loop into a single GLOB_RECURSE per root (one
+# directory walk instead of nine). Mirrors the change in
+# cmake/lint_no_openvr_in_core.cmake — the two scripts share scaffold and
+# any change here should land there too (see IN-02).
 foreach(_root ${SRC_ROOTS})
     if(NOT IS_DIRECTORY "${_root}")
         message(FATAL_ERROR "lint_no_driver_macro: SRC_ROOTS entry is not a directory: ${_root}")
     endif()
-    foreach(_ext ${_extensions})
-        file(GLOB_RECURSE _files "${_root}/${_ext}")
-        foreach(_file ${_files})
-            math(EXPR _files_scanned "${_files_scanned} + 1")
-            file(READ "${_file}" _content)
-            if(_content MATCHES "MICMAP_DRIVER_BUILD")
-                list(APPEND _violations "${_file}")
-            endif()
-        endforeach()
+    file(GLOB_RECURSE _files
+        "${_root}/*.h"   "${_root}/*.hpp" "${_root}/*.hxx"
+        "${_root}/*.c"   "${_root}/*.cpp" "${_root}/*.cc"
+        "${_root}/*.cxx" "${_root}/*.inc" "${_root}/*.ipp")
+    foreach(_file ${_files})
+        math(EXPR _files_scanned "${_files_scanned} + 1")
+        file(READ "${_file}" _content)
+        if(_content MATCHES "MICMAP_DRIVER_BUILD")
+            list(APPEND _violations "${_file}")
+        endif()
     endforeach()
 endforeach()
 
