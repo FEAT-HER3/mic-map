@@ -35,12 +35,16 @@ function(_assert_no_openvr_recurse target visited_var)
     set(${visited_var} ${${visited_var}} PARENT_SCOPE)
 
     # (d) Resolve ALIAS targets — property reads on aliases are restricted
-    # in some CMake versions (Pitfall 5-A).
+    # in some CMake versions (Pitfall 5-A). CMake 3.18+ permits ALIAS-of-
+    # ALIAS, so iterate until ALIASED_TARGET is empty (WR-02).
     set(_resolved ${target})
-    get_target_property(_alias ${target} ALIASED_TARGET)
-    if(_alias)
+    while(TRUE)
+        get_target_property(_alias ${_resolved} ALIASED_TARGET)
+        if(NOT _alias)
+            break()
+        endif()
         set(_resolved ${_alias})
-    endif()
+    endwhile()
 
     # (e) Forbidden by name (case-insensitive 'openvr' substring).
     string(TOLOWER "${_resolved}" _lc)
