@@ -51,7 +51,10 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
   3. `dumpbin /exports driver_micmap.dll` shows exactly one exported symbol (`HmdDriverFactory`); no shared-lib symbols leaked through the DLL boundary.
   4. `grep -rn 'MICMAP_DRIVER_BUILD' src/audio/ src/detection/ src/core/ src/common/` returns zero hits — no compile-time host-switching inside the shared lib.
   5. Driver behavior is byte-for-byte identical to v1.5 (driver links `micmap_core_runtime` but does not yet *use* it); v1.5 UAT scenarios still pass on Bigscreen Beyond rig.
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 05-01-PLAN.md — Wave 1: configure-time guard (cmake/AssertNoOpenVRInCore.cmake) + CTest source-grep lints (no-OpenVR, no-MICMAP_DRIVER_BUILD); wire include() at D-04 splice point in root CMakeLists.txt
+- [ ] 05-02-PLAN.md — Wave 2: replace micmap_lib with micmap_core_runtime in src/CMakeLists.txt (drop micmap_steamvr, add cxx_std_17 INTERFACE, micmap::core_runtime ALIAS); link driver_micmap PRIVATE (D-10/D-11)
+- [ ] 05-03-PLAN.md — Wave 2: relink mic_test (D-08, SC1 acceptance probe) and micmap (D-09); run full build matrix (driver-on + headless); SC5 manual UAT on Bigscreen Beyond
 **Research flag**: STANDARD — well-documented CMake INTERFACE pattern; `micmap_bindings` precedent already in-tree from v1.5 Phase 4 D-10 lift.
 
 ### Phase 6: Driver-Side Audio Capture Spike
