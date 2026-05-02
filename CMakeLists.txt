@@ -77,6 +77,13 @@ endif()
 add_subdirectory(external)
 add_subdirectory(src)
 
+# Phase 5 D-04: walk the micmap_core_runtime link/include graph at configure
+# time and FATAL_ERROR if any node touches OpenVR. Must run AFTER the src
+# tree so all four sub-lib targets are defined, and BEFORE the driver
+# tree below so a clean fail message lands before the driver target tries
+# to link the shared layer.
+include(cmake/AssertNoOpenVRInCore.cmake)
+
 if(MICMAP_BUILD_TEST_APPS)
     add_subdirectory(apps)
 endif()
