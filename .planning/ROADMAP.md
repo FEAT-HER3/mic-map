@@ -31,7 +31,7 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
 
 ### 🚧 v1.6 Feature Migration (Active)
 
-- [ ] **Phase 5: Shared Library Extraction** — Add `micmap_core_runtime` INTERFACE target; driver, client, and `mic_test.exe` all link it; CI guard asserts no OpenVR symbols leak into shared layer.
+- [x] **Phase 5: Shared Library Extraction** (3/3 plans) — completed 2026-05-02; `micmap_core_runtime` INTERFACE target landed; driver/client/mic_test linked; configure-time guard + CTest lints active; SC5 UAT signed off byte-identical on Bigscreen Beyond.
 - [ ] **Phase 6: Driver-Side Audio Capture Spike** — WASAPI capture works inside `driver_micmap.dll` on real Bigscreen Beyond + Win11 hardware (feature-flagged OFF by default).
 - [ ] **Phase 7: Driver-Side Detection Thread** — Detection runs in-process inside the driver; trigger collapses to direct CommandQueue push; client-side detection still active behind feature flag.
 - [ ] **Phase 8: IPC Contract Reshape** — New endpoints (`/state`, `/settings`, `/devices`, `/telemetry/level`); driver becomes sole `config.json` writer; client UI surfaces driver health by polling.
@@ -52,9 +52,9 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
   4. `grep -rn 'MICMAP_DRIVER_BUILD' src/audio/ src/detection/ src/core/ src/common/` returns zero hits — no compile-time host-switching inside the shared lib.
   5. Driver behavior is byte-for-byte identical to v1.5 (driver links `micmap_core_runtime` but does not yet *use* it); v1.5 UAT scenarios still pass on Bigscreen Beyond rig.
 **Plans**: 3 plans
-- [ ] 05-01-PLAN.md — Wave 1: configure-time guard (cmake/AssertNoOpenVRInCore.cmake) + CTest source-grep lints (no-OpenVR, no-MICMAP_DRIVER_BUILD); wire include() at D-04 splice point in root CMakeLists.txt
-- [ ] 05-02-PLAN.md — Wave 2: replace micmap_lib with micmap_core_runtime in src/CMakeLists.txt (drop micmap_steamvr, add cxx_std_17 INTERFACE, micmap::core_runtime ALIAS); link driver_micmap PRIVATE (D-10/D-11)
-- [ ] 05-03-PLAN.md — Wave 2: relink mic_test (D-08, SC1 acceptance probe) and micmap (D-09); run full build matrix (driver-on + headless); SC5 manual UAT on Bigscreen Beyond
+- [x] 05-01-PLAN.md — Wave 1: configure-time guard (cmake/AssertNoOpenVRInCore.cmake) + CTest source-grep lints (no-OpenVR, no-MICMAP_DRIVER_BUILD); wire include() at D-04 splice point in root CMakeLists.txt
+- [x] 05-02-PLAN.md — Wave 2: replace micmap_lib with micmap_core_runtime in src/CMakeLists.txt (drop micmap_steamvr, add cxx_std_17 INTERFACE, micmap::core_runtime ALIAS); link driver_micmap PRIVATE (D-10/D-11)
+- [x] 05-03-PLAN.md — Wave 2: relink mic_test (D-08, SC1 acceptance probe) and micmap (D-09); run full build matrix (driver-on + headless); SC5 manual UAT on Bigscreen Beyond
 **Research flag**: STANDARD — well-documented CMake INTERFACE pattern; `micmap_bindings` precedent already in-tree from v1.5 Phase 4 D-10 lift.
 
 ### Phase 6: Driver-Side Audio Capture Spike
@@ -146,7 +146,7 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
 | 2. Config Read-Back | v1.5 | 3/3 | Complete | 2026-04-23 |
 | 3. Auto-Start | v1.5 | 7/7 | Complete | 2026-04-23 |
 | 4. Installer | v1.5 | 9/9 | Complete | 2026-04-24 |
-| 5. Shared Library Extraction | v1.6 | 0/0 | Not started | — |
+| 5. Shared Library Extraction | v1.6 | 3/3 | Complete | 2026-05-02 |
 | 6. Driver-Side Audio Capture Spike | v1.6 | 0/0 | Not started | — |
 | 7. Driver-Side Detection Thread | v1.6 | 0/0 | Not started | — |
 | 8. IPC Contract Reshape | v1.6 | 0/0 | Not started | — |
