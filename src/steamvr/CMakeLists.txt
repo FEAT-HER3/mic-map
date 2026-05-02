@@ -101,6 +101,23 @@ if(WIN32 AND TARGET OpenVR::openvr_api)
             # Two-step fix: ensure the destination directory exists with
             # `make_directory`, then copy with the explicit destination filename
             # appended. Behavior is identical to the previous form on CMake 3.x.
+            #
+            # IN-03 invariant: ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>
+            # MUST match the per-config directory the executable targets
+            # (`micmap`, `mic_test`, `hmd_button_test`) actually land in,
+            # otherwise the OpenVR DLL is dropped beside nothing and the
+            # exes fail at launch with STATUS_DLL_INIT_FAILED.
+            #
+            # On multi-config generators (MSBuild / Xcode) `$<CONFIG>`
+            # expands to Debug/Release/etc and matches the per-target
+            # default. On single-config generators (Ninja / Makefile)
+            # `$<CONFIG>` expands to CMAKE_BUILD_TYPE (or empty if unset),
+            # which produces an extra `/` in the path — Windows tolerates
+            # this but it is semantically odd. Do NOT override
+            # RUNTIME_OUTPUT_DIRECTORY on any of the three executable
+            # targets to a path that bypasses the per-config directory
+            # (e.g. plain `${CMAKE_BINARY_DIR}/bin`) without also updating
+            # this destination, or the DLL co-location breaks silently.
             add_custom_command(TARGET micmap_steamvr POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E make_directory
                     "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>"
