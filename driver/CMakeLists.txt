@@ -68,6 +68,17 @@ endif()
 # device_provider.cpp).
 target_link_libraries(driver_micmap PRIVATE micmap::bindings)
 
+# Phase 5 D-10 / D-11: link the shared runtime layer into the driver.
+# - PRIVATE only (D-11): PUBLIC would re-export every shared-lib symbol
+#   across the driver DLL boundary, regressing SC3 (only HmdDriverFactory
+#   may be exported).
+# - LINK-ONLY (D-10): no driver TU (driver/src/*.cpp) may #include any
+#   header from src/audio, src/detection, src/core, or src/common in this
+#   phase. SC5 demands byte-identical behavior to v1.5; including runtime
+#   headers would change template instantiations / debug info even if no
+#   symbol is referenced. Phases 6/7 lift the link-only restriction.
+target_link_libraries(driver_micmap PRIVATE micmap::core_runtime)
+
 # Version string used in SVR-10 init log line
 target_compile_definitions(driver_micmap PRIVATE
     MICMAP_DRIVER_VERSION="${PROJECT_VERSION}"
