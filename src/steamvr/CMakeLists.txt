@@ -94,10 +94,19 @@ if(WIN32 AND TARGET OpenVR::openvr_api)
             # Using CMAKE_RUNTIME_OUTPUT_DIRECTORY is correct because
             # micmap_steamvr is a STATIC library — $<TARGET_FILE_DIR:micmap_steamvr>
             # would resolve to the archive dir (build/lib/<cfg>), not build/bin/<cfg>.
+            #
+            # Phase 5 Plan 03 Rule-3 fix: CMake 4.3+ rejects `copy_if_different`
+            # when the destination is a bare directory path with a trailing slash
+            # (returns "Invalid argument" — see file API change c. CMake 3.26).
+            # Two-step fix: ensure the destination directory exists with
+            # `make_directory`, then copy with the explicit destination filename
+            # appended. Behavior is identical to the previous form on CMake 3.x.
             add_custom_command(TARGET micmap_steamvr POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory
+                    "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${OPENVR_DLL}"
-                    "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/"
+                    "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/${OPENVR_DLL_NAME}"
                 COMMENT "Copying OpenVR DLL to runtime output directory"
             )
         endif()
