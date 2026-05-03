@@ -216,10 +216,19 @@ if(OpenVR_FOUND)
     target_compile_features(test_device_provider_lifecycle_stress PRIVATE cxx_std_17)
     target_include_directories(test_device_provider_lifecycle_stress PRIVATE
         ${CMAKE_SOURCE_DIR}/driver/src)
+    # P7 07-04 Rule-3: device_provider.cpp / http_server.cpp need their full
+    # transitive deps now that the source list expanded (07-01 RED scaffold
+    # left these latent; once detection_runner.cpp landed in 07-03, the test
+    # exe compiled all four driver TUs and exposed the missing httplib +
+    # bindings_patcher links). Mirrors driver/CMakeLists.txt link list.
     target_link_libraries(test_device_provider_lifecycle_stress PRIVATE
         micmap::core_runtime
+        micmap::bindings
+        httplib::httplib
         OpenVR::openvr_api
         nlohmann_json)
+    target_compile_definitions(test_device_provider_lifecycle_stress PRIVATE
+        CPPHTTPLIB_NO_EXCEPTIONS)
     add_test(NAME DeviceProviderLifecycleStress
         COMMAND test_device_provider_lifecycle_stress)
 else()

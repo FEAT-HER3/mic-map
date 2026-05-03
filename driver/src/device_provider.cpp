@@ -15,7 +15,8 @@
 #include "micmap/bindings/bindings_patcher.hpp"
 #include "command_queue.hpp"
 #include "http_server.hpp"
-#include "audio_worker.hpp"   // P6 — AudioWorker class for conditional Init/Cleanup
+#include "audio_worker.hpp"      // P6 — AudioWorker class for conditional Init/Cleanup
+#include "detection_runner.hpp"  // P7 D-19 — DetectionRunner full type for ctor/dtor
 #include "driver_log.hpp"
 #include "vr_error.hpp"
 
@@ -57,6 +58,22 @@ DeviceProvider::~DeviceProvider() {
 }
 
 EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
+    // P7 07-04 Rule-2 defensive guard: VR_INIT_SERVER_DRIVER_CONTEXT(nullptr)
+    // SEGFAULTs because COpenVRDriverContext::VRSettings() lazy-loads via
+    // VRDriverContext()->GetGenericInterface(...) — but VRDriverContext() was
+    // just assigned nullptr by InitServerDriverContext, so the deref crashes
+    // (openvr_driver.h:4228 + 4422). vrserver.exe always passes a real
+    // context, but the headless DeviceProviderLifecycleStress test (SC4 /
+    // MIG-04 50-cycle audit) calls Init(nullptr) deliberately to exercise
+    // the OpenVR-context-teardown lifecycle. Bail-with-error preserves the
+    // existing fail-soft contract (initialized_ stays false → Cleanup is a
+    // no-op → no leaks across cycles).
+    if (!pDriverContext) {
+        DriverLog("MicMap: DeviceProvider::Init called with null IVRDriverContext "
+                  "— bailing out (headless test path)\n");
+        return VRInitError_Init_InvalidInterface;
+    }
+
     VR_INIT_SERVER_DRIVER_CONTEXT(pDriverContext);
 
     DriverLog("MicMap driver initializing (sidecar mode)\n");
@@ -106,6 +123,104 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
         }
     }
 
+    // P7 D-13: read the 5 new detection_* keys once, here, on the vrserver
+    // thread. Single-read pattern matches v1.5 atomic-config-read shape
+    // (Pitfall 11) and P6 D-01's enable_driver_audio block above.
+    // Default-on-UnsetSettingHasNoDefault per Shared Pattern 2.
+    {
+        vr::EVRSettingsError err = vr::VRSettingsError_None;
+
+        driverDetectionEnabled_ = vr::VRSettings()->GetBool(
+            "driver_micmap", "enable_driver_detection", &err);
+        if (err == vr::VRSettingsError_UnsetSettingHasNoDefault) {
+            driverDetectionEnabled_ = false;
+            DriverLog("MicMap: enable_driver_detection unset, defaulting to false\n");
+        } else if (err != vr::VRSettingsError_None) {
+            DriverLog("MicMap: VRSettings GetBool(enable_driver_detection) error=%d\n",
+                      static_cast<int>(err));
+            driverDetectionEnabled_ = false;
+        } else {
+            DriverLog("MicMap: enable_driver_detection = %s\n",
+                      driverDetectionEnabled_ ? "true" : "false");
+        }
+
+        err = vr::VRSettingsError_None;
+        detectionDefaults_.sensitivity = vr::VRSettings()->GetFloat(
+            "driver_micmap", "detection_sensitivity", &err);
+        if (err != vr::VRSettingsError_None) {
+            detectionDefaults_.sensitivity = 0.7f;
+            DriverLog("MicMap: detection_sensitivity unset/error, defaulting to 0.7\n");
+        } else {
+            DriverLog("MicMap: detection_sensitivity = %.3f\n",
+                      detectionDefaults_.sensitivity);
+        }
+
+        err = vr::VRSettingsError_None;
+        detectionDefaults_.threshold = vr::VRSettings()->GetFloat(
+            "driver_micmap", "detection_threshold", &err);
+        if (err != vr::VRSettingsError_None) {
+            detectionDefaults_.threshold = 0.6f;
+            DriverLog("MicMap: detection_threshold unset/error, defaulting to 0.6\n");
+        } else {
+            DriverLog("MicMap: detection_threshold = %.3f\n",
+                      detectionDefaults_.threshold);
+        }
+
+        err = vr::VRSettingsError_None;
+        detectionDefaults_.cooldown_ms = vr::VRSettings()->GetInt32(
+            "driver_micmap", "detection_cooldown_ms", &err);
+        if (err != vr::VRSettingsError_None) {
+            detectionDefaults_.cooldown_ms = 1000;
+            DriverLog("MicMap: detection_cooldown_ms unset/error, defaulting to 1000\n");
+        } else {
+            DriverLog("MicMap: detection_cooldown_ms = %d\n",
+                      detectionDefaults_.cooldown_ms);
+        }
+
+        err = vr::VRSettingsError_None;
+        detectionDefaults_.min_duration_ms = vr::VRSettings()->GetInt32(
+            "driver_micmap", "detection_min_duration_ms", &err);
+        if (err != vr::VRSettingsError_None) {
+            detectionDefaults_.min_duration_ms = 200;
+            DriverLog("MicMap: detection_min_duration_ms unset/error, defaulting to 200\n");
+        } else {
+            DriverLog("MicMap: detection_min_duration_ms = %d\n",
+                      detectionDefaults_.min_duration_ms);
+        }
+    }
+
+    // P7 D-19: construct DetectionRunner LAST, AFTER AudioWorker. Fail-soft
+    // when audio is unavailable — log the warning + skip; do NOT fail Init
+    // (P6 D-14 fail-soft semantics extended). The v1.5 trigger path stays
+    // alive even when detection cannot start.
+    if (driverDetectionEnabled_) {
+        if (!audioWorker_) {
+            DriverLog("MicMap: enable_driver_detection requires enable_driver_audio "
+                      "— skipping detection construction\n");
+        } else {
+            // WASAPI shared-mode default sample rate. AudioWorker does not
+            // currently expose getSampleRate() out to here; if a future plan
+            // adds an accessor, swap to audioWorker_->sample_rate().
+            const uint32_t sampleRate = 48000;
+            detectionRunner_ = std::make_unique<DetectionRunner>(
+                audioWorker_->ring(),
+                *commandQueue_,
+                sampleRate,
+                detectionDefaults_);
+            if (!detectionRunner_->Start()) {
+                DriverLog("MicMap: DetectionRunner::Start failed — continuing without detection\n");
+                detectionRunner_.reset();   // do NOT fail Init
+            } else {
+                // Attach the runner pointer so the audio callback can wake it
+                // via NotifyOne(). Order matters: SetDetectionRunner ONLY after
+                // a successful Start() so the audio cb never dereferences a
+                // half-constructed runner.
+                audioWorker_->SetDetectionRunner(detectionRunner_.get());
+                DriverLog("MicMap: DetectionRunner active (sampleRate=%u)\n", sampleRate);
+            }
+        }
+    }
+
     initialized_ = true;
     return VRInitError_None;
 }
@@ -117,16 +232,30 @@ void DeviceProvider::Cleanup() {
 
     DriverLog("MicMap driver cleaning up...\n");
 
-    // D-13 step 1: AudioWorker FIRST (reverse construction order). Destructor
-    // sets state->alive=false, signals shutdown CV, joins thread with 2 s
-    // watchdog. Worker thread itself runs the WASAPI/COM teardown on its own
-    // apartment (Pitfall 4 — IMMNotificationClient unregister BEFORE COM
-    // Release, both on the same thread that did the register).
+    // P7 D-20 step 1: detectionRunner_.reset() FIRST (strict reverse
+    // construction order — Pitfall 4). DetectionRunner's destructor signals
+    // shutdown_, notify_all, joins the detection thread with a 2 s watchdog.
+    // The detection thread exits cleanly BEFORE AudioWorker stops feeding the
+    // ring — DetectionRunner holds a reference to AudioWorker's ring_, which
+    // becomes a dangling reference if AudioWorker dies first.
+    // Reverse-order = correctness. SC4 / MIG-04 50-cycle stress
+    // (DeviceProviderLifecycleStress) verifies handle delta <= 5.
+    if (detectionRunner_) {
+        detectionRunner_.reset();
+    }
+
+    // D-13 step 2: AudioWorker NEXT (existing P6 reverse-order step). Now
+    // happens AFTER detectionRunner_.reset() so the detection thread is
+    // already joined and the ring is no longer being read by anyone.
+    // Destructor sets state->alive=false, signals shutdown CV, joins thread
+    // with 2 s watchdog. Worker thread itself runs the WASAPI/COM teardown
+    // on its own apartment (Pitfall 4 — IMMNotificationClient unregister
+    // BEFORE COM Release, both on the same thread that did the register).
     if (audioWorker_) {
         audioWorker_.reset();
     }
 
-    // D-13 step 2-onwards: existing v1.5 sequence unchanged.
+    // D-13 step 3-onwards: existing v1.5 sequence unchanged.
     if (httpServer_) {
         httpServer_->Stop();
         httpServer_.reset();
@@ -142,6 +271,8 @@ void DeviceProvider::Cleanup() {
     loggedAwaitingHmd_ = false;
     profilePropsWritten_ = false;
     driverAudioEnabled_ = false;   // P6 — symmetry with the Init-time read
+    driverDetectionEnabled_ = false;            // P7 D-20 — symmetry with Init-time read
+    detectionDefaults_ = DetectionConfig{};     // reset cached defaults to construct-time
     initialized_ = false;
 
     VR_CLEANUP_SERVER_DRIVER_CONTEXT();
@@ -252,10 +383,20 @@ bool DeviceProvider::ShouldBlockStandbyMode() {
 
 void DeviceProvider::EnterStandby() {
     DriverLog("MicMap driver entering standby\n");
+    // P7 D-21 / MIG-03: pause the detection thread while the HMD is asleep.
+    // Pause() emits its own "MicMap detection: paused" log line; do NOT add a
+    // second log line here. AudioWorker continues capturing — its WASAPI
+    // handles stay valid and the ring continues to fill (but with the
+    // detection consumer paused, drop-OLDEST kicks in within ~50 ms;
+    // expected and harmless during standby).
+    if (detectionRunner_) detectionRunner_->Pause();
 }
 
 void DeviceProvider::LeaveStandby() {
     DriverLog("MicMap driver leaving standby\n");
+    // P7 D-21 / MIG-03: resume the detection thread when the HMD wakes.
+    // Resume() emits its own "MicMap detection: resumed" log line.
+    if (detectionRunner_) detectionRunner_->Resume();
 }
 
 void DeviceProvider::writeValue(bool v) {

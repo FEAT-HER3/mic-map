@@ -14,6 +14,14 @@
 
 #include <openvr_driver.h>
 
+#include "detection_runner.hpp"   // P7 D-13/D-19: DetectionConfig is stored
+                                  // BY VALUE as detectionDefaults_; including
+                                  // the full header here is cheaper than the
+                                  // unique_ptr<DetectionConfig> alternative.
+                                  // detection_runner.hpp itself includes only
+                                  // command_queue.hpp + sample_ring.hpp + std
+                                  // headers — no shared-lib pull-in.
+
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -25,6 +33,10 @@ namespace micmap::driver {
 class HttpServer;
 class CommandQueue;
 class AudioWorker;
+class DetectionRunner;   // P7 D-19: full type only needed in device_provider.cpp
+                         // (where ~DeviceProvider is defined). DetectionConfig
+                         // (used as a by-value member) comes from the include
+                         // above.
 
 /**
  * @brief Lifecycle state of the HMD-side /input/system/click component.
@@ -83,6 +95,19 @@ private:
     // reset FIRST in Cleanup (reverse construction order, Pitfall 4).
     bool                          driverAudioEnabled_{false};
     std::unique_ptr<AudioWorker>  audioWorker_;
+
+    // P7 D-13/D-19/D-20: driver-side detection thread.
+    // driverDetectionEnabled_ holds the result of the single Init-time
+    // vr::VRSettings()->GetBool("driver_micmap","enable_driver_detection") read.
+    // detectionDefaults_ caches the 4 numeric VRSettings reads (sensitivity,
+    // threshold, cooldown_ms, min_duration_ms) so DetectionRunner is
+    // constructed with values mirroring driver/resources/settings/default.vrsettings.
+    // detectionRunner_ is constructed LAST in Init when both flags are true
+    // and audioWorker_ is alive, and reset FIRST in Cleanup (strict reverse
+    // construction order — Pitfall 4 / D-20).
+    bool                              driverDetectionEnabled_{false};
+    DetectionConfig                   detectionDefaults_{};
+    std::unique_ptr<DetectionRunner>  detectionRunner_;
 
     // HMD-side component state
     vr::VRInputComponentHandle_t hSystemClick_{vr::k_ulInvalidInputComponentHandle};
