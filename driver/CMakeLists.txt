@@ -25,6 +25,7 @@ add_library(driver_micmap SHARED
     src/device_provider.cpp
     src/http_server.cpp
     src/audio_worker.cpp     # P6 D-05: driver-side audio capture worker
+    src/detection_runner.cpp # P7 D-17: driver-side detection thread
 )
 
 # Include directories
