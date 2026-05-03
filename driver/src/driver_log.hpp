@@ -28,14 +28,22 @@ inline void SafeDriverLog(const char* fmt, ...) {
     vsnprintf(buffer, sizeof(buffer), fmt, args);
     va_end(args);
 
-    // Try to use OpenVR's DriverLog if available
-    // VRDriverLog() returns nullptr if context not initialized
-    if (vr::VRDriverLog()) {
-        vr::VRDriverLog()->Log(buffer);
-    } else {
-        // Fallback to stderr before context is initialized
-        fprintf(stderr, "[MicMap Driver] %s", buffer);
+    // P6 Plan 06-02: VRDriverLog() itself dereferences VRDriverContext()
+    // which is a default-null static pointer until VR_INIT_SERVER_DRIVER_CONTEXT
+    // runs. Calling VRDriverLog() before that init crashes with an access
+    // violation (the docstring's "safely handles logging before context init"
+    // intent was not actually realised by the original implementation).
+    // Guard on VRDriverContext() first so headless test environments — which
+    // compile this header transitively but never call VR_INIT_SERVER_DRIVER_CONTEXT
+    // — fall through cleanly to stderr instead of segfaulting.
+    if (vr::VRDriverContext() != nullptr) {
+        if (vr::VRDriverLog()) {
+            vr::VRDriverLog()->Log(buffer);
+            return;
+        }
     }
+    // Fallback to stderr before context is initialized
+    fprintf(stderr, "[MicMap Driver] %s", buffer);
 }
 
 } // namespace micmap::driver

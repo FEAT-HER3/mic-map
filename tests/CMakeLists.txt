@@ -138,18 +138,33 @@ add_test(NAME lint_no_driver_macro
 # compile failure IS the Nyquist gate. The companion lint
 # AssertAudioWorkerNoVrApi (below) stays GREEN at Wave 0 via its
 # RED-tolerant skip-on-NOT-EXISTS branch.
+#
+# P6 Plan 06-02 Rule 3 fix: audio_worker.cpp transitively includes
+# driver_log.hpp -> <openvr_driver.h>, so the test target needs OpenVR's
+# include path. Gate the target on OpenVR_FOUND so the P5 SC1 headless
+# invariant (build with -DMICMAP_BUILD_DRIVER=OFF and OpenVR absent must
+# succeed) is preserved. When OpenVR is not found, this test is skipped
+# entirely — the AssertAudioWorkerNoVrApi lint still scans the sources
+# and the AudioWorkerLifecycleHeadless test runs in the OpenVR-present
+# build (where ctest -R AudioWorkerLifecycleHeadless is the GREEN gate).
 set(_p6_audio_worker_sources driver/audio_worker_lifecycle_headless.cpp)
 if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp")
     list(APPEND _p6_audio_worker_sources
         "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp")
 endif()
-add_executable(test_audio_worker_lifecycle_headless ${_p6_audio_worker_sources})
-target_compile_features(test_audio_worker_lifecycle_headless PRIVATE cxx_std_17)
-target_include_directories(test_audio_worker_lifecycle_headless PRIVATE
-    ${CMAKE_SOURCE_DIR}/driver/src)
-target_link_libraries(test_audio_worker_lifecycle_headless PRIVATE micmap::core_runtime)
-add_test(NAME AudioWorkerLifecycleHeadless
-    COMMAND test_audio_worker_lifecycle_headless)
+if(OpenVR_FOUND)
+    add_executable(test_audio_worker_lifecycle_headless ${_p6_audio_worker_sources})
+    target_compile_features(test_audio_worker_lifecycle_headless PRIVATE cxx_std_17)
+    target_include_directories(test_audio_worker_lifecycle_headless PRIVATE
+        ${CMAKE_SOURCE_DIR}/driver/src)
+    target_link_libraries(test_audio_worker_lifecycle_headless PRIVATE
+        micmap::core_runtime
+        OpenVR::openvr_api)
+    add_test(NAME AudioWorkerLifecycleHeadless
+        COMMAND test_audio_worker_lifecycle_headless)
+else()
+    message(STATUS "AudioWorkerLifecycleHeadless: skipped (OpenVR SDK not found)")
+endif()
 
 # P6 D-07 / SVR-05: assert no vr::* in driver/src/audio_worker.{hpp,cpp}.
 # Pure CMake script-mode (-P) lint, no compiled exe. Wave 0 RED-tolerant —
