@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Feature Migration
-status: executing
-stopped_at: 06-04-PLAN.md Task 1 checkpoint — UAT scaffold + flag toggle committed (5c65c71); awaiting operator READY signal before D-17(1)
-last_updated: "2026-05-02T19:52:00.000Z"
-last_activity: 2026-05-02
+status: ready_to_plan
+stopped_at: Phase 6 complete — D-17(1)-(4) all PASS on Bigscreen Beyond + Win11 Pro, spike GO; ready to discuss/plan Phase 7
+last_updated: "2026-05-03T06:12:00.000Z"
+last_activity: 2026-05-03
 progress:
   total_phases: 7
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 7
-  completed_plans: 6
-  percent: 86
+  completed_plans: 7
+  percent: 29
 ---
 
 # Project State
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-30 with v1.6 Feature Migration milestone)
 
 **Core value:** Covering the microphone reliably toggles the SteamVR dashboard, invisibly to the rest of VR — no controller beam, no extra hardware, no focus loss.
-**Current focus:** Phase --phase — 06
+**Current focus:** Phase 7 — Driver-Side Detection Thread
 
 ## Current Position
 
-Phase: 06 — EXECUTING
-Next: Plan 06-04 Task 2 (operator-driven D-17(1)+(2)+(3) on Bigscreen Beyond + Win11 Pro rig)
-Plan: 4 of 4 (Wave 0/1/2 complete: 06-01 RED scaffold + 06-02 AudioWorker impl + 06-03 DeviceProvider wiring; Plan 06-04 in progress at Task 1 checkpoint)
-Status: PAUSED — awaiting operator READY signal (Task 1 scaffold + flag-toggle committed at 5c65c71; default.vrsettings.enable_driver_audio = true for D-17(1)-(3) runs, will restore to false in Task 3)
-Last activity: 2026-05-02
+Phase: 7 — Driver-Side Detection Thread
+Next: `/gsd-discuss-phase 7` (no CONTEXT.md yet)
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-05-03
 
 ## Roadmap Summary
 
@@ -101,9 +101,10 @@ Items carried forward from v1.5 that are NOT in v1.6 scope (see PROJECT.md and R
 
 ## Session Continuity
 
-Last session: 2026-05-02T19:52:00.000Z
-Stopped at: Plan 06-04 Task 1 checkpoint — UAT scaffold + flag-toggle committed (5c65c71); awaiting operator READY before Task 2 (D-17(1)+(2)+(3) live run on Bigscreen Beyond + Win11 Pro rig)
+Last session: 2026-05-03T06:12:00.000Z
+Stopped at: Phase 6 complete — D-17(1)-(4) all PASS, spike GO; ready to plan Phase 7
+Resume file: None
 
-**Next action:** Operator replies `READY` to proceed to D-17(1) (or `BLOCKED: <reason>` to halt). Resume signal vocabulary per 06-04-PLAN.md Task 1 `<resume-signal>`.
+**Next action:** `/gsd-discuss-phase 7` — gather context for Driver-Side Detection Thread (MIG-02, MIG-03, MIG-04, MIG-06).
 
-**Planned Phase:** 6 (Driver-Side Audio Capture Spike) — 4 plans — 2026-05-03T01:37:31.988Z
+**Phase 6 spike outcome:** GO. WASAPI capture inside `vrserver.exe` DLL host on Bigscreen Beyond + Win11 Pro is feasible. Phase 7 unblocked.
