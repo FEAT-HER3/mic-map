@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Feature Migration
 status: executing
-stopped_at: Completed 06-02-PLAN.md (Wave 1 AudioWorker impl)
-last_updated: "2026-05-03T01:59:26.886Z"
-last_activity: 2026-05-03 — Plan 06-02 (AudioWorker driver-side capture worker) completed
+stopped_at: Completed 06-03-PLAN.md (Wave 2 DeviceProvider AudioWorker wiring)
+last_updated: "2026-05-03T02:05:28.359Z"
+last_activity: 2026-05-03
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 7
-  completed_plans: 5
-  percent: 71
+  completed_plans: 6
+  percent: 86
 ---
 
 # Project State
@@ -27,9 +27,9 @@ See: .planning/PROJECT.md (updated 2026-04-30 with v1.6 Feature Migration milest
 
 Phase: 06 — EXECUTING
 Next: Plan 06-03 (Wave 2 — DeviceProvider Init/Cleanup wiring of AudioWorker)
-Plan: 2 of 4 (Wave 1 complete: 06-01 RED scaffold + 06-02 AudioWorker impl)
-Status: Executing Phase 06
-Last activity: 2026-05-03 — Plan 06-02 (AudioWorker driver-side capture worker) completed
+Plan: 3 of 4 (Wave 1 complete: 06-01 RED scaffold + 06-02 AudioWorker impl)
+Status: Ready to execute
+Last activity: 2026-05-03
 
 ## Roadmap Summary
 
@@ -65,6 +65,9 @@ Decisions affecting v1.6 roadmap:
 - 06-01: Wave 0 RED scaffold uses skip-on-NOT-EXISTS lint branch + EXISTS-gated test source list so cmake configure stays clean while build-time missing-include diagnostic remains the Nyquist gate
 - 06-02: AudioWorker class — Pitfall 1 apartment-trick (D-04) by constructing WASAPIAudioCapture on the worker thread; weak_ptr<State> alive-flag callback (Pitfall 13/D-15/D-16); 2 s watchdog Stop() (D-13); RPC_E_CHANGED_MODE distinct log line (D-06/SC2)
 - 06-02: SafeDriverLog Rule-3 fix — guard on vr::VRDriverContext() before vr::VRDriverLog() so headless tests do not crash before VR_INIT_SERVER_DRIVER_CONTEXT
+- 06-03: forward-decl class AudioWorker in device_provider.hpp rather than including audio_worker.hpp — mirrors HttpServer/CommandQueue pattern; complete type only needed in device_provider.cpp where ~DeviceProvider is defined
+- 06-03: AudioWorker construction LAST in Init (after httpServer_->Start) and audioWorker_.reset() FIRST in Cleanup (before httpServer_->Stop) — D-13 reverse-order teardown enforced by explicit Cleanup() sequence not by member declaration order
+- 06-03: D-14 fail-soft semantics — AudioWorker::Start() failure resets the unique_ptr but Init still returns VRInitError_None so the v1.5 HTTP/CommandQueue/HMD trigger path stays alive even when audio capture cannot start
 
 ### Pending Todos
 
@@ -97,8 +100,8 @@ Items carried forward from v1.5 that are NOT in v1.6 scope (see PROJECT.md and R
 
 ## Session Continuity
 
-Last session: 2026-05-03T01:59:26.881Z
-Stopped at: Completed 06-02-PLAN.md (Wave 1 AudioWorker impl)
+Last session: 2026-05-03T02:05:28.354Z
+Stopped at: Completed 06-03-PLAN.md (Wave 2 DeviceProvider AudioWorker wiring)
 
 **Next action:** `/gsd-plan-phase 5` to begin planning the Shared Library Extraction phase.
 
