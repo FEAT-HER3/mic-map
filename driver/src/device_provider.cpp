@@ -15,6 +15,7 @@
 #include "micmap/bindings/bindings_patcher.hpp"
 #include "command_queue.hpp"
 #include "http_server.hpp"
+#include "audio_worker.hpp"   // P6 — AudioWorker class for conditional Init/Cleanup
 #include "driver_log.hpp"
 #include "vr_error.hpp"
 
@@ -74,6 +75,37 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
     }
     DriverLog("MicMap: HTTP server listening on port %d\n", httpServer_->GetPort());
 
+    // D-01: read the flag once, here, on the vrserver thread. Single-read
+    // pattern matches v1.5 atomic-config-read shape (Pitfall 11). Default
+    // false on UnsetSettingHasNoDefault — SC4 safety net.
+    {
+        vr::EVRSettingsError err = vr::VRSettingsError_None;
+        driverAudioEnabled_ = vr::VRSettings()->GetBool(
+            "driver_micmap", "enable_driver_audio", &err);
+        if (err == vr::VRSettingsError_UnsetSettingHasNoDefault) {
+            driverAudioEnabled_ = false;   // explicit default per D-01 + SC4
+            DriverLog("MicMap: enable_driver_audio unset, defaulting to false\n");
+        } else if (err != vr::VRSettingsError_None) {
+            DriverLog("MicMap: VRSettings GetBool(enable_driver_audio) error=%d\n",
+                      static_cast<int>(err));
+            driverAudioEnabled_ = false;
+        } else {
+            DriverLog("MicMap: enable_driver_audio = %s\n",
+                      driverAudioEnabled_ ? "true" : "false");
+        }
+    }
+
+    // D-14: construct AudioWorker LAST so an audio failure does not corrupt
+    // the v1.5 trigger path. D-03: when flag is OFF, never construct the
+    // worker — no thread, no COM, no WASAPI. Byte-identical to Phase 5.
+    if (driverAudioEnabled_) {
+        audioWorker_ = std::make_unique<AudioWorker>();
+        if (!audioWorker_->Start()) {
+            DriverLog("MicMap: AudioWorker::Start failed — continuing without audio\n");
+            audioWorker_.reset();   // do NOT fail Init — v1.5 trigger path stays alive
+        }
+    }
+
     initialized_ = true;
     return VRInitError_None;
 }
@@ -85,6 +117,16 @@ void DeviceProvider::Cleanup() {
 
     DriverLog("MicMap driver cleaning up...\n");
 
+    // D-13 step 1: AudioWorker FIRST (reverse construction order). Destructor
+    // sets state->alive=false, signals shutdown CV, joins thread with 2 s
+    // watchdog. Worker thread itself runs the WASAPI/COM teardown on its own
+    // apartment (Pitfall 4 — IMMNotificationClient unregister BEFORE COM
+    // Release, both on the same thread that did the register).
+    if (audioWorker_) {
+        audioWorker_.reset();
+    }
+
+    // D-13 step 2-onwards: existing v1.5 sequence unchanged.
     if (httpServer_) {
         httpServer_->Stop();
         httpServer_.reset();
@@ -99,6 +141,7 @@ void DeviceProvider::Cleanup() {
     initLogged_ = false;
     loggedAwaitingHmd_ = false;
     profilePropsWritten_ = false;
+    driverAudioEnabled_ = false;   // P6 — symmetry with the Init-time read
     initialized_ = false;
 
     VR_CLEANUP_SERVER_DRIVER_CONTEXT();

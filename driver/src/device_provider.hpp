@@ -24,6 +24,7 @@ namespace micmap::driver {
 // Forward declarations
 class HttpServer;
 class CommandQueue;
+class AudioWorker;
 
 /**
  * @brief Lifecycle state of the HMD-side /input/system/click component.
@@ -74,6 +75,14 @@ private:
     std::unique_ptr<CommandQueue> commandQueue_;
     std::unique_ptr<HttpServer> httpServer_;
     std::atomic<bool> initialized_{false};
+
+    // P6 D-01/D-03/D-14: driver-side audio capture spike.
+    // driverAudioEnabled_ holds the result of the single Init-time
+    // vr::VRSettings()->GetBool("driver_micmap","enable_driver_audio") read.
+    // audioWorker_ is constructed LAST in Init when the flag is true and
+    // reset FIRST in Cleanup (reverse construction order, Pitfall 4).
+    bool                          driverAudioEnabled_{false};
+    std::unique_ptr<AudioWorker>  audioWorker_;
 
     // HMD-side component state
     vr::VRInputComponentHandle_t hSystemClick_{vr::k_ulInvalidInputComponentHandle};
