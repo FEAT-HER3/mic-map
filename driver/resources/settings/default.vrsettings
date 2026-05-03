@@ -3,6 +3,6 @@
         "enable": true,
         "http_port": 27015,
         "http_host": "127.0.0.1",
-        "enable_driver_audio": false
+        "enable_driver_audio": true
     }
 }
