@@ -517,6 +517,14 @@ void MicMapApp::onTrigger() {
         MICMAP_LOG_DEBUG("onTrigger: driver not connected, skipping");
         return;
     }
+    // P7 D-10: suppress local trigger when driver owns the detection path.
+    // State machine cooldown is the belt-and-suspenders backstop per D-11.
+    // The /health poll is cached for 1 s in DriverClient so the latency
+    // overhead per onTrigger is bounded. Deleted in P10 per D-12.
+    if (driverClient->isDriverDetectionActive()) {
+        MICMAP_LOG_DEBUG("onTrigger: driver_detection_active=true, suppressing");
+        return;
+    }
     if (!driverClient->tap()) {
         MICMAP_LOG_WARNING("onTrigger failed: ", driverClient->getLastError());
     }

@@ -19,6 +19,7 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include <chrono>   // P7 D-10: DriverClient::isDriverDetectionActive cache TTL
 
 namespace micmap::steamvr {
 
@@ -196,6 +197,28 @@ public:
      * @return Error message string
      */
     virtual std::string getLastError() const = 0;
+
+    /**
+     * @brief Returns true iff the driver currently owns the detection path.
+     *
+     * P7 D-10: polls the driver's `GET /health` endpoint and parses the
+     * `driver_detection_active` boolean field (added by P7 D-09 / 07-05
+     * Task 1). Result is cached for ~1 second to keep onTrigger latency
+     * bounded (Pitfall 10 mitigation — client suppresses its own POST
+     * /button when the driver owns the detection path; state machine
+     * cooldown is the belt-and-suspenders backstop per D-11).
+     *
+     * Returns false defensively when not connected, when /health is
+     * unreachable, when the field is missing, or when JSON parse fails.
+     * The principle: if we cannot determine that the driver actively
+     * owns detection, we do NOT suppress — the client falls back to its
+     * own trigger path (no restart required when the driver flag flips
+     * mid-session or the driver crashes).
+     *
+     * Deleted in P10 (D-12) along with tap() and the entire trigger-
+     * coexistence scaffolding once cutover completes.
+     */
+    virtual bool isDriverDetectionActive() = 0;
 };
 
 /**

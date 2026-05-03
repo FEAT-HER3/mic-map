@@ -26,6 +26,10 @@ target_link_libraries(micmap_steamvr
         micmap_common
     PRIVATE
         httplib::httplib
+        # P7 07-05 Rule-3 fix: vr_input.cpp now parses /health JSON to extract
+        # the driver_detection_active boolean (D-10 / Pitfall 10 mitigation).
+        # nlohmann/json is INTERFACE-only so this PRIVATE link is sufficient.
+        nlohmann_json
 )
 
 # Pathcch.lib (Windows SDK): required by manifest_registrar.cpp's

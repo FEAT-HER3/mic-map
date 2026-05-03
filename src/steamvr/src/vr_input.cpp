@@ -24,6 +24,7 @@
 // Include httplib for HTTP client (without OpenSSL support)
 // Note: We don't need HTTPS for localhost communication
 #include <httplib.h>
+#include <nlohmann/json.hpp>   // P7 D-10: parse /health driver_detection_active
 
 namespace micmap::steamvr {
 
@@ -217,6 +218,43 @@ public:
         return true;
     }
 
+    // P7 D-10: poll /health for `driver_detection_active`; cache 1 s.
+    // See vr_input.hpp doc-block on IDriverClient::isDriverDetectionActive
+    // for the full contract (returns false defensively on any error so the
+    // client falls back to its own trigger path; D-11 state-machine cooldown
+    // is the belt-and-suspenders backstop). Deleted in P10 per D-12.
+    bool isDriverDetectionActive() override {
+        using clock = std::chrono::steady_clock;
+        const auto now = clock::now();
+        if (now - lastDetectionPoll_ < std::chrono::milliseconds(1000)) {
+            return cachedDetectionActive_;
+        }
+        if (!connected_ || port_ == 0) {
+            cachedDetectionActive_ = false;
+            lastDetectionPoll_ = now;
+            return false;
+        }
+
+        httplib::Client client(host_, port_);
+        client.set_connection_timeout(2);
+        client.set_read_timeout(2);
+
+        auto res = client.Get("/health");
+        if (!res || res->status != 200) {
+            cachedDetectionActive_ = false;
+            lastDetectionPoll_ = now;
+            return false;
+        }
+        try {
+            auto body = nlohmann::json::parse(res->body);
+            cachedDetectionActive_ = body.value("driver_detection_active", false);
+        } catch (const nlohmann::json::exception&) {
+            cachedDetectionActive_ = false;
+        }
+        lastDetectionPoll_ = now;
+        return cachedDetectionActive_;
+    }
+
     int getPort() const override {
         return port_;
     }
@@ -239,6 +277,13 @@ private:
     int port_ = 0;
     bool connected_ = false;
     std::string lastError_;
+
+    // P7 D-10: cache for isDriverDetectionActive — 1 s TTL keeps onTrigger
+    // latency bounded (worst case 4 s on first call when driver unreachable
+    // due to httplib timeouts). Default-initialized at zero so the very
+    // first call always polls (`now - lastDetectionPoll_` >= TTL trivially).
+    std::chrono::steady_clock::time_point lastDetectionPoll_{};
+    bool                                  cachedDetectionActive_{false};
 };
 
 // ============================================================================
