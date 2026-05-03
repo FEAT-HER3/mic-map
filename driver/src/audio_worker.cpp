@@ -176,6 +176,64 @@ void AudioWorker::RunWorker() {
     }
     capture_ = std::move(capture);
 
+    // D-11: select default capture device (eMultimedia/eConsole — whichever
+    // the existing WASAPIAudioCapture::enumerateDevices marks isDefault).
+    // The existing IAudioCapture API has no auto-select; both apps/micmap
+    // and apps/mic_test enumerate then call selectDeviceById. Without this
+    // step currentDevice_ stays null and startCapture() bails. Spike-grade:
+    // prefer "Beyond" mic if present (production target), else isDefault,
+    // else first enumerated. Device pinning via config.json is deferred to
+    // Phase 8 per D-12 (driver-as-config-reader).
+    {
+        auto devices = capture_->enumerateDevices();
+        if (devices.empty()) {
+            DriverLog("MicMap: audio worker enumerateDevices returned 0 capture "
+                      "endpoints - bailing out\n");
+            capture_.reset();
+#ifdef _WIN32
+            ::CoUninitialize();
+#endif
+            if (state_) state_->alive.store(false, std::memory_order_release);
+            thread_finished_.store(true, std::memory_order_release);
+            return;
+        }
+        size_t pick = 0;
+        bool picked = false;
+        for (size_t i = 0; i < devices.size(); ++i) {
+            if (devices[i].name.find(L"Beyond") != std::wstring::npos) {
+                pick = i;
+                picked = true;
+                break;
+            }
+        }
+        if (!picked) {
+            for (size_t i = 0; i < devices.size(); ++i) {
+                if (devices[i].isDefault) {
+                    pick = i;
+                    picked = true;
+                    break;
+                }
+            }
+        }
+        // pick already 0 if nothing matched — fallback to first
+        if (!capture_->selectDeviceById(devices[pick].id)) {
+            DriverLog("MicMap: audio worker selectDeviceById failed for "
+                      "device index %zu - bailing out\n", pick);
+            capture_.reset();
+#ifdef _WIN32
+            ::CoUninitialize();
+#endif
+            if (state_) state_->alive.store(false, std::memory_order_release);
+            thread_finished_.store(true, std::memory_order_release);
+            return;
+        }
+        DriverLog("MicMap: audio worker selected device index=%zu of %zu "
+                  "(isDefault=%d, beyond=%d)\n",
+                  pick, devices.size(),
+                  devices[pick].isDefault ? 1 : 0,
+                  (devices[pick].name.find(L"Beyond") != std::wstring::npos) ? 1 : 0);
+    }
+
     // RMS callback wired with weak_ptr alive-flag (Pitfall 13 / D-15 / D-16).
     // The audio callback fires on the WASAPI internal capture thread (per
     // audio_capture.cpp captureLoop). The weak_ptr lock + alive check at
