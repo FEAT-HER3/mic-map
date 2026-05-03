@@ -122,3 +122,40 @@ add_test(NAME lint_no_driver_macro
     COMMAND ${CMAKE_COMMAND}
         -DSRC_ROOTS=${CMAKE_SOURCE_DIR}/src/audio$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/detection$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/core$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/common
         -P ${CMAKE_SOURCE_DIR}/cmake/lint_no_driver_macro.cmake)
+
+# ---- Phase 6 Wave 0 (RED scaffold) ----
+# AudioWorker lifecycle invariants. Compiles audio_worker.cpp directly into
+# the test exe — never link driver_micmap.dll into a test binary (Pitfall 6).
+# Mirrors tests/CMakeLists.txt:74-84 (test_tray_balloon_once) inline-impl
+# pattern: include the impl TU as a source so we don't need a dedicated
+# driver-side support library.
+#
+# RED state until Plan 06-02: when ${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp
+# does not yet exist, the conditional below excludes it from the source list
+# so configure still succeeds (otherwise the AssertAudioWorkerNoVrApi ctest
+# could not run). The test exe is then built from the headless TU alone,
+# which fails to BUILD with a missing "audio_worker.hpp" diagnostic — that
+# compile failure IS the Nyquist gate. The companion lint
+# AssertAudioWorkerNoVrApi (below) stays GREEN at Wave 0 via its
+# RED-tolerant skip-on-NOT-EXISTS branch.
+set(_p6_audio_worker_sources driver/audio_worker_lifecycle_headless.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp")
+    list(APPEND _p6_audio_worker_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp")
+endif()
+add_executable(test_audio_worker_lifecycle_headless ${_p6_audio_worker_sources})
+target_compile_features(test_audio_worker_lifecycle_headless PRIVATE cxx_std_17)
+target_include_directories(test_audio_worker_lifecycle_headless PRIVATE
+    ${CMAKE_SOURCE_DIR}/driver/src)
+target_link_libraries(test_audio_worker_lifecycle_headless PRIVATE micmap::core_runtime)
+add_test(NAME AudioWorkerLifecycleHeadless
+    COMMAND test_audio_worker_lifecycle_headless)
+
+# P6 D-07 / SVR-05: assert no vr::* in driver/src/audio_worker.{hpp,cpp}.
+# Pure CMake script-mode (-P) lint, no compiled exe. Wave 0 RED-tolerant —
+# the lint script's skip-on-NOT-EXISTS branch keeps this GREEN before the
+# audio_worker source files land in Plan 06-02.
+add_test(NAME AssertAudioWorkerNoVrApi
+    COMMAND ${CMAKE_COMMAND}
+        -DAUDIO_WORKER_DIR=${CMAKE_SOURCE_DIR}/driver/src
+        -P ${CMAKE_SOURCE_DIR}/cmake/AssertAudioWorkerNoVrApi.cmake)
