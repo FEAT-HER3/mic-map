@@ -174,3 +174,61 @@ add_test(NAME AssertAudioWorkerNoVrApi
     COMMAND ${CMAKE_COMMAND}
         -DAUDIO_WORKER_DIR=${CMAKE_SOURCE_DIR}/driver/src
         -P ${CMAKE_SOURCE_DIR}/cmake/AssertAudioWorkerNoVrApi.cmake)
+
+# ---- Phase 7 Wave 0 (RED scaffold) ----
+# DetectionRunner lifecycle + settings propagation. Compiles detection_runner.cpp
+# directly into the test exe — never link driver_micmap.dll into a test binary
+# (Pitfall 6). Mirrors P6 AudioWorkerLifecycleHeadless registration shape.
+
+# DetectionSettingsPropagation — MIG-06 < 50 ms verifier.
+# RED until Plan 07-03 lands detection_runner.cpp.
+set(_p7_propagation_sources driver/detection_settings_propagation_test.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+    list(APPEND _p7_propagation_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+endif()
+if(OpenVR_FOUND)
+    add_executable(test_detection_settings_propagation ${_p7_propagation_sources})
+    target_compile_features(test_detection_settings_propagation PRIVATE cxx_std_17)
+    target_include_directories(test_detection_settings_propagation PRIVATE
+        ${CMAKE_SOURCE_DIR}/driver/src)
+    target_link_libraries(test_detection_settings_propagation PRIVATE
+        micmap::core_runtime
+        OpenVR::openvr_api)
+    add_test(NAME DetectionSettingsPropagation
+        COMMAND test_detection_settings_propagation)
+else()
+    message(STATUS "DetectionSettingsPropagation: skipped (OpenVR SDK not found)")
+endif()
+
+# DeviceProviderLifecycleStress — SC4 / MIG-04 50-cycle harness.
+# RED until Plan 07-05 lands DetectionRunner wiring in DeviceProvider.
+set(_p7_stress_sources driver/device_provider_lifecycle_stress_test.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+    list(APPEND _p7_stress_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/http_server.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+endif()
+if(OpenVR_FOUND)
+    add_executable(test_device_provider_lifecycle_stress ${_p7_stress_sources})
+    target_compile_features(test_device_provider_lifecycle_stress PRIVATE cxx_std_17)
+    target_include_directories(test_device_provider_lifecycle_stress PRIVATE
+        ${CMAKE_SOURCE_DIR}/driver/src)
+    target_link_libraries(test_device_provider_lifecycle_stress PRIVATE
+        micmap::core_runtime
+        OpenVR::openvr_api
+        nlohmann_json)
+    add_test(NAME DeviceProviderLifecycleStress
+        COMMAND test_device_provider_lifecycle_stress)
+else()
+    message(STATUS "DeviceProviderLifecycleStress: skipped (OpenVR SDK not found)")
+endif()
+
+# P7 D-22 / SVR-05: assert no vr::* in detection_runner.{hpp,cpp} or sample_ring.hpp.
+# Pure CMake script-mode (-P) lint, no compiled exe. Wave 0 RED-tolerant.
+add_test(NAME AssertDetectionRunnerNoVrApi
+    COMMAND ${CMAKE_COMMAND}
+        -DDETECTION_RUNNER_DIR=${CMAKE_SOURCE_DIR}/driver/src
+        -P ${CMAKE_SOURCE_DIR}/cmake/AssertDetectionRunnerNoVrApi.cmake)
