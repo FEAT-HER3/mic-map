@@ -67,7 +67,11 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
   3. WASAPI capture lifecycle is owned by a dedicated audio worker thread that the driver constructs in `DeviceProvider::Init` and joins in `Cleanup`; `CoInitializeEx` is never called on the calling/RunFrame thread.
   4. With `enableDriverAudio=0` (default), driver behavior is identical to Phase 5; SteamVR start/stop is healthy and the v1.5 trigger path through HTTP `POST /button` still works.
   5. `IMMNotificationClient` is registered on the audio worker thread and unregistered cleanly in `Cleanup`; callbacks check an `atomic<bool> alive` flag before dereferencing driver state (Pitfall 13 mitigation).
-**Plans**: TBD
+**Plans**: 4 plans
+- [ ] 06-01-PLAN.md — Wave 0: cmake/AssertAudioWorkerNoVrApi.cmake + tests/driver/audio_worker_lifecycle_headless.cpp + ctest registrations (RED-tolerant scaffold)
+- [ ] 06-02-PLAN.md — Wave 1: AudioWorker class (driver/src/audio_worker.{hpp,cpp}) + default.vrsettings enable_driver_audio flag + driver/CMakeLists.txt source registration
+- [ ] 06-03-PLAN.md — Wave 2: device_provider.{hpp,cpp} Init flag-read + conditional AudioWorker construction (D-14) + Cleanup audioWorker_.reset() FIRST (D-13)
+- [ ] 06-04-PLAN.md — Wave 3: D-17 manual real-hardware UAT on Bigscreen Beyond + Win11 Pro (autonomous: false; (1) flag-ON capture / SC1, (2) HMD wake/sleep ×2, (3) SteamVR-restart-without-quit / SC2/SC5, (4) flag-OFF regression / SC4); 06-UAT.md sign-off
 **Research flag**: NEEDS VALIDATION — WASAPI inside vrserver DLL host validated once in sister project `bey-closer-t1` but not in this driver. Real-hardware spike on Bigscreen Beyond + Win11 Pro is mandatory before Phase 7. If WASAPI fails in DLL context, escalate before proceeding.
 
 ### Phase 7: Driver-Side Detection Thread
@@ -147,7 +151,7 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
 | 3. Auto-Start | v1.5 | 7/7 | Complete | 2026-04-23 |
 | 4. Installer | v1.5 | 9/9 | Complete | 2026-04-24 |
 | 5. Shared Library Extraction | v1.6 | 3/3 | Complete | 2026-05-02 |
-| 6. Driver-Side Audio Capture Spike | v1.6 | 0/0 | Not started | — |
+| 6. Driver-Side Audio Capture Spike | v1.6 | 0/4 | Planned | — |
 | 7. Driver-Side Detection Thread | v1.6 | 0/0 | Not started | — |
 | 8. IPC Contract Reshape | v1.6 | 0/0 | Not started | — |
 | 9. Training Migration | v1.6 | 0/0 | Not started | — |
