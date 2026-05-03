@@ -69,7 +69,7 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
   5. `IMMNotificationClient` is registered on the audio worker thread and unregistered cleanly in `Cleanup`; callbacks check an `atomic<bool> alive` flag before dereferencing driver state (Pitfall 13 mitigation).
 **Plans**: 4 plans
 - [ ] 06-01-PLAN.md — Wave 0: cmake/AssertAudioWorkerNoVrApi.cmake + tests/driver/audio_worker_lifecycle_headless.cpp + ctest registrations (RED-tolerant scaffold)
-- [ ] 06-02-PLAN.md — Wave 1: AudioWorker class (driver/src/audio_worker.{hpp,cpp}) + default.vrsettings enable_driver_audio flag + driver/CMakeLists.txt source registration
+- [x] 06-02-PLAN.md — Wave 1: AudioWorker class (driver/src/audio_worker.{hpp,cpp}) + default.vrsettings enable_driver_audio flag + driver/CMakeLists.txt source registration
 - [ ] 06-03-PLAN.md — Wave 2: device_provider.{hpp,cpp} Init flag-read + conditional AudioWorker construction (D-14) + Cleanup audioWorker_.reset() FIRST (D-13)
 - [ ] 06-04-PLAN.md — Wave 3: D-17 manual real-hardware UAT on Bigscreen Beyond + Win11 Pro (autonomous: false; (1) flag-ON capture / SC1, (2) HMD wake/sleep ×2, (3) SteamVR-restart-without-quit / SC2/SC5, (4) flag-OFF regression / SC4); 06-UAT.md sign-off
 **Research flag**: NEEDS VALIDATION — WASAPI inside vrserver DLL host validated once in sister project `bey-closer-t1` but not in this driver. Real-hardware spike on Bigscreen Beyond + Win11 Pro is mandatory before Phase 7. If WASAPI fails in DLL context, escalate before proceeding.

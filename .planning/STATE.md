@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Feature Migration
 status: executing
-stopped_at: Completed 06-01-PLAN.md (Wave 0 RED scaffold)
-last_updated: "2026-05-03T01:45:34.018Z"
-last_activity: 2026-05-03 -- Phase --phase execution started
+stopped_at: Completed 06-02-PLAN.md (Wave 1 AudioWorker impl)
+last_updated: "2026-05-03T01:59:26.886Z"
+last_activity: 2026-05-03 — Plan 06-02 (AudioWorker driver-side capture worker) completed
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 7
-  completed_plans: 4
-  percent: 57
+  completed_plans: 5
+  percent: 71
 ---
 
 # Project State
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-04-30 with v1.6 Feature Migration milest
 
 ## Current Position
 
-Phase: --phase (06) — EXECUTING
-Next: **Phase 6 — Driver-Side Audio Capture Spike** (ready to discuss/plan; NEEDS VALIDATION research flag — WASAPI inside vrserver DLL host)
-Plan: 1 of --name
-Status: Executing Phase --phase
-Last activity: 2026-05-03 -- Phase --phase execution started
+Phase: 06 — EXECUTING
+Next: Plan 06-03 (Wave 2 — DeviceProvider Init/Cleanup wiring of AudioWorker)
+Plan: 2 of 4 (Wave 1 complete: 06-01 RED scaffold + 06-02 AudioWorker impl)
+Status: Executing Phase 06
+Last activity: 2026-05-03 — Plan 06-02 (AudioWorker driver-side capture worker) completed
 
 ## Roadmap Summary
 
@@ -63,6 +63,8 @@ Decisions affecting v1.6 roadmap:
 - **v1.5 SVR-05 invariant preserved.** HTTP-thread → CommandQueue → RunFrame is still the only path that touches OpenVR API. Detection thread becomes a new producer for the same CommandQueue; the boundary is unchanged.
 - **Phase 5 (Documentation) carryover from v1.5 rolled into v1.6 as Phase 11** — DOC-01/DOC-02 re-scoped against the post-migration architecture.
 - 06-01: Wave 0 RED scaffold uses skip-on-NOT-EXISTS lint branch + EXISTS-gated test source list so cmake configure stays clean while build-time missing-include diagnostic remains the Nyquist gate
+- 06-02: AudioWorker class — Pitfall 1 apartment-trick (D-04) by constructing WASAPIAudioCapture on the worker thread; weak_ptr<State> alive-flag callback (Pitfall 13/D-15/D-16); 2 s watchdog Stop() (D-13); RPC_E_CHANGED_MODE distinct log line (D-06/SC2)
+- 06-02: SafeDriverLog Rule-3 fix — guard on vr::VRDriverContext() before vr::VRDriverLog() so headless tests do not crash before VR_INIT_SERVER_DRIVER_CONTEXT
 
 ### Pending Todos
 
@@ -95,8 +97,8 @@ Items carried forward from v1.5 that are NOT in v1.6 scope (see PROJECT.md and R
 
 ## Session Continuity
 
-Last session: 2026-05-03T01:45:30.698Z
-Stopped at: Completed 06-01-PLAN.md (Wave 0 RED scaffold)
+Last session: 2026-05-03T01:59:26.881Z
+Stopped at: Completed 06-02-PLAN.md (Wave 1 AudioWorker impl)
 
 **Next action:** `/gsd-plan-phase 5` to begin planning the Shared Library Extraction phase.
 
