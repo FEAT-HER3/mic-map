@@ -84,7 +84,13 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
   3. Detection runs continuously while SteamVR is running regardless of HMD activation state; `EnterStandby` pauses the detection thread cleanly and `LeaveStandby` resumes; HMD sleep/wake cycle does not crash vrserver or strand audio device handles.
   4. 50-cycle Init→500ms→Cleanup stress test passes with zero leaked handles in Process Explorer; `IMMNotificationClient` is unregistered before COM `Release()` on every Cleanup; reverse-order teardown verified (detection thread → audio worker → HTTP server) (Pitfall 4).
   5. `PUT /settings` (sensitivity, threshold, cooldown) propagates to the detection hot path within 50 ms via lock-free `std::atomic<std::shared_ptr<const AppConfig>>` snapshot; no audio-thread blocking measured under stress.
-**Plans**: TBD
+**Plans**: 6 plans
+- [ ] 07-01-PLAN.md — Wave 0: SPSC ring header (sample_ring.hpp) + AssertDetectionRunnerNoVrApi.cmake sibling lint + RED-tolerant test scaffolds (DetectionSettingsPropagation, DeviceProviderLifecycleStress) + ctest registrations + test_command_queue two-producer extension
+- [ ] 07-02-PLAN.md — Wave 1: default.vrsettings 5 new keys (enable_driver_detection + 4 detection_* tunables; D-13/D-27 default-OFF)
+- [ ] 07-03-PLAN.md — Wave 2: DetectionRunner class (detection_runner.{hpp,cpp}) — thread loop, MIG-06 atomic-snapshot publish/load, idempotent Pause/Resume, 2s watchdog Stop, no vr::* surface (D-17/D-18/D-22/D-23)
+- [ ] 07-04-PLAN.md — Wave 3: DeviceProvider Init/Cleanup/Standby splice + AudioWorker callback rewire (push to ring + NotifyOne; weak_ptr UAF guard preserved; RMS log gated by MICMAP_DEBUG_RMS_LOG; D-05/D-13/D-19/D-20/D-21)
+- [ ] 07-05-PLAN.md — Wave 4: /health JSON gains driver_detection_active (D-09) + IDriverClient::isDriverDetectionActive with 1s cache + MicMapApp::onTrigger suppression gate (D-10/D-11)
+- [ ] 07-06-PLAN.md — Wave 5: 07-UAT.md scaffold + manual D-25(1)..D-25(6) sign-off on Bigscreen Beyond + Win11 Pro + post-UAT default-OFF restore (D-25/D-26/D-27)
 **Research flag**: STANDARD for threading pattern (CommandQueue boundary preserved from v1.5); NEEDS VALIDATION for real-hardware trigger latency and HMD sleep/wake cycle behavior.
 
 ### Phase 8: IPC Contract Reshape
@@ -152,7 +158,7 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
 | 4. Installer | v1.5 | 9/9 | Complete | 2026-04-24 |
 | 5. Shared Library Extraction | v1.6 | 3/3 | Complete | 2026-05-02 |
 | 6. Driver-Side Audio Capture Spike | v1.6 | 4/4 | Complete | 2026-05-03 |
-| 7. Driver-Side Detection Thread | v1.6 | 0/0 | Not started | — |
+| 7. Driver-Side Detection Thread | v1.6 | 0/6 | Planned | — |
 | 8. IPC Contract Reshape | v1.6 | 0/0 | Not started | — |
 | 9. Training Migration | v1.6 | 0/0 | Not started | — |
 | 10. Cutover & Cleanup | v1.6 | 0/0 | Not started | — |
