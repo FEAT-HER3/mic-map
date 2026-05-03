@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Feature Migration
-status: completed
-stopped_at: Phase 6 context gathered
-last_updated: "2026-05-03T00:22:20.978Z"
-last_activity: 2026-05-02 — Phase 5 verified 5/5 SC; code review 0 critical / 3 warning / 5 info (non-blocking); ready for Phase 6
+status: executing
+stopped_at: Completed 06-01-PLAN.md (Wave 0 RED scaffold)
+last_updated: "2026-05-03T01:45:34.018Z"
+last_activity: 2026-05-03 -- Phase --phase execution started
 progress:
   total_phases: 7
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
-  percent: 100
+  total_plans: 7
+  completed_plans: 4
+  percent: 57
 ---
 
 # Project State
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-30 with v1.6 Feature Migration milestone)
 
 **Core value:** Covering the microphone reliably toggles the SteamVR dashboard, invisibly to the rest of VR — no controller beam, no extra hardware, no focus loss.
-**Current focus:** v1.6 Feature Migration — relocate audio/detection/state-machine/config/trigger from `micmap.exe` into `driver_micmap.dll`; extract shared `micmap_core_runtime` library so the same source compiles into driver, client, and `mic_test.exe`; client demoted to settings + driver-health UI; roll in v1.5 deferred docs (DOC-01/02) updated for post-migration architecture.
+**Current focus:** Phase --phase — 06
 
 ## Current Position
 
-Phase: **Phase 5 — Shared Library Extraction** (complete; verified 2026-05-02)
+Phase: --phase (06) — EXECUTING
 Next: **Phase 6 — Driver-Side Audio Capture Spike** (ready to discuss/plan; NEEDS VALIDATION research flag — WASAPI inside vrserver DLL host)
-Plan: —
-Status: Phase 5 done — LIB-01/02/03 satisfied; driver_micmap.dll byte-identical (439,296 B); SC5 UAT signed off
-Last activity: 2026-05-02 — Phase 5 verified 5/5 SC; code review 0 critical / 3 warning / 5 info (non-blocking); ready for Phase 6
+Plan: 1 of --name
+Status: Executing Phase --phase
+Last activity: 2026-05-03 -- Phase --phase execution started
 
 ## Roadmap Summary
 
@@ -62,6 +62,7 @@ Decisions affecting v1.6 roadmap:
 - **`POST /button` and `IDriverClient::tap()` survive until Phase 10.** Provides rollback path during phased migration; deletion is the cutover.
 - **v1.5 SVR-05 invariant preserved.** HTTP-thread → CommandQueue → RunFrame is still the only path that touches OpenVR API. Detection thread becomes a new producer for the same CommandQueue; the boundary is unchanged.
 - **Phase 5 (Documentation) carryover from v1.5 rolled into v1.6 as Phase 11** — DOC-01/DOC-02 re-scoped against the post-migration architecture.
+- 06-01: Wave 0 RED scaffold uses skip-on-NOT-EXISTS lint branch + EXISTS-gated test source list so cmake configure stays clean while build-time missing-include diagnostic remains the Nyquist gate
 
 ### Pending Todos
 
@@ -94,7 +95,9 @@ Items carried forward from v1.5 that are NOT in v1.6 scope (see PROJECT.md and R
 
 ## Session Continuity
 
-Last session: --stopped-at
-Stopped at: Phase 6 context gathered
+Last session: 2026-05-03T01:45:30.698Z
+Stopped at: Completed 06-01-PLAN.md (Wave 0 RED scaffold)
 
 **Next action:** `/gsd-plan-phase 5` to begin planning the Shared Library Extraction phase.
+
+**Planned Phase:** 6 (Driver-Side Audio Capture Spike) — 4 plans — 2026-05-03T01:37:31.988Z

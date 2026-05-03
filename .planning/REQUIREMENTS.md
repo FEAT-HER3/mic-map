@@ -22,7 +22,8 @@ Extract audio + detection + state machine + config schema into a shared static-l
 
 Move WASAPI capture, FFT detection, state machine, and the trigger pipeline into the driver process. Trigger no longer crosses IPC.
 
-- [ ] **MIG-01**: Driver hosts a dedicated audio worker thread that owns `CoInitializeEx(COINIT_MULTITHREADED)`, opens the configured WASAPI capture device, and pushes captured frames into a single-producer/single-consumer ring buffer.
+- [ ] **MIG-01
+**: Driver hosts a dedicated audio worker thread that owns `CoInitializeEx(COINIT_MULTITHREADED)`, opens the configured WASAPI capture device, and pushes captured frames into a single-producer/single-consumer ring buffer.
 - [ ] **MIG-02**: Driver hosts a dedicated detection thread that drains the audio ring, runs FFT + RMS + state-machine logic, and emits `TapCommand` to the existing `CommandQueue` on a positive trigger. The detection thread never touches `vr::*` API directly.
 - [ ] **MIG-03**: Detection runs continuously while SteamVR is running, regardless of HMD activation state. `EnterStandby` pauses detection cleanly; `LeaveStandby` resumes; HMD reactivation cycles do not leak audio device handles or threads.
 - [ ] **MIG-04**: Driver `Cleanup()` tears down detection thread → audio worker thread (join + `IMMNotificationClient::Unregister` + COM Release + `CoUninitialize`) → HTTP server, in reverse construction order. A 50-cycle Init/Cleanup stress test passes with zero leaked handles (verified via Process Explorer or equivalent).
