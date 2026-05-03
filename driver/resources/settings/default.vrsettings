@@ -3,6 +3,11 @@
         "enable": true,
         "http_port": 27015,
         "http_host": "127.0.0.1",
-        "enable_driver_audio": false
+        "enable_driver_audio": false,
+        "enable_driver_detection": false,
+        "detection_sensitivity": 0.7,
+        "detection_threshold": 0.6,
+        "detection_cooldown_ms": 1000,
+        "detection_min_duration_ms": 200
     }
 }
