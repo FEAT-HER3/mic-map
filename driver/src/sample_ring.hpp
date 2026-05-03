@@ -74,11 +74,23 @@ public:
     uint32_t drops() const noexcept { return drops_.load(std::memory_order_relaxed); }
 
 private:
+    // P7 D-04: cache-line-separate the producer-only and consumer-side
+    // atomics so SPSC false sharing is eliminated. MSVC C4324 ("structure
+    // was padded due to alignment specifier") is the EXPECTED outcome of
+    // alignas(64) — suppress locally. Consumers under /W4 /WX (driver_micmap)
+    // would otherwise fail-build on this template's instantiation site.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable: 4324)
+#endif
     alignas(64) std::atomic<size_t> head_{0};      // producer-only writer
     alignas(64) std::atomic<size_t> tail_{0};      // consumer writer; producer also bumps on drop
     alignas(64) std::atomic<uint32_t> drops_{0};
     std::array<std::array<float, kFrames>, kSlots> slots_{};
     std::array<size_t, kSlots> slot_count_{};
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 };
 
 } // namespace micmap::driver

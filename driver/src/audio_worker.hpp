@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include "sample_ring.hpp"   // P7 D-05: header-only SPSC ring; cheap include.
+
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -23,6 +25,11 @@
 
 // Forward-declare to avoid pulling micmap/audio/* into the header.
 namespace micmap::audio { class IAudioCapture; }
+
+// P7 D-05: forward-decl only; full type pulled into audio_worker.cpp where the
+// callback dereferences runner->NotifyOne(). Keeps detection_runner.hpp out of
+// the AudioWorker header (mirrors the IAudioCapture forward-decl precedent).
+namespace micmap::driver { class DetectionRunner; }
 
 namespace micmap::driver {
 
@@ -64,6 +71,20 @@ public:
 
     bool IsRunning() const { return running_.load(std::memory_order_acquire); }
 
+    /// P7 D-05 / RESEARCH Open Question 3 recommendation (a): AudioWorker owns
+    /// the SampleRing as a member. DetectionRunner takes a reference to it at
+    /// construction time (07-04 plan §3 — DeviceProvider passes
+    /// audioWorker_->ring() to make_unique<DetectionRunner>).
+    SampleRing<16, 480>& ring() { return ring_; }
+
+    /// P7 attach-setter — DeviceProvider calls this AFTER both AudioWorker and
+    /// DetectionRunner are constructed (and AFTER DetectionRunner::Start()
+    /// returns true). The audio callback reads State::runner_ptr (atomic) per
+    /// frame, so this setter is racy-safe: a nullptr stored here makes the
+    /// callback skip NotifyOne; a live pointer makes it fire NotifyOne.
+    /// Defensive against state_ == nullptr (early-return).
+    void SetDetectionRunner(micmap::driver::DetectionRunner* runner);
+
     /**
      * @brief Pitfall 13 alive-flag mitigation state.
      *
@@ -78,6 +99,11 @@ public:
         std::atomic<bool>     alive{true};
         std::atomic<uint32_t> rms_logs_emitted{0};
         std::atomic<uint32_t> frames_seen{0};
+        /// P7 D-05: detection runner pointer for the audio callback to wake.
+        /// Atomic so SetDetectionRunner() races safely with the callback.
+        /// Pitfall 13 alive flag transitively protects this — the callback
+        /// bails on !alive BEFORE dereferencing runner_ptr.
+        std::atomic<micmap::driver::DetectionRunner*> runner_ptr{nullptr};
     };
 
     /**
@@ -103,6 +129,13 @@ private:
     std::atomic<bool>                             shutdown_{false};
     std::atomic<bool>                             running_{false};
     std::atomic<bool>                             thread_finished_{false};
+
+    /// P7 D-05: ring lives inside AudioWorker (Open Question 3 recommendation
+    /// a). Header-only template instantiation — no impl-side cost. SPSC
+    /// invariants hold: producer = WASAPI capture cb (one thread), consumer =
+    /// DetectionRunner thread (one thread). Drop-OLDEST on overflow keeps the
+    /// audio thread non-blocking (Pitfall 12).
+    SampleRing<16, 480>                           ring_;
 };
 
 } // namespace micmap::driver

@@ -29,6 +29,7 @@
  */
 
 #include "audio_worker.hpp"
+#include "detection_runner.hpp"   // P7 D-05: full type for runner->NotifyOne()
 #include "driver_log.hpp"
 
 // P5 link-only restriction explicitly lifted in P6 — driver TUs may
@@ -53,6 +54,12 @@ namespace {
 // (so WASAPI's buffer never overflows) but skips DriverLog writes —
 // log-flood mitigation, T6 / Pitfall 6 carry.
 constexpr uint32_t kRmsBudget = 100;
+
+// P7 D-05 ring overflow diagnostic cadence (matches kRmsBudget shape from
+// D-08). On full ring, drop-OLDEST atomicity bumps drops_; we log every
+// 100th drop with the cumulative count so the smell of "ring overflowing
+// under load" surfaces without per-frame log flood.
+constexpr uint32_t kRingDropLogPeriod = 100;
 
 // 2 s shutdown watchdog (D-13) matching the v1.5 VREvent_Quit precedent.
 constexpr auto kShutdownWatchdog = std::chrono::seconds(2);
@@ -119,6 +126,19 @@ void AudioWorker::Stop() {
         thread_.detach();
     }
     running_.store(false, std::memory_order_release);
+}
+
+void AudioWorker::SetDetectionRunner(micmap::driver::DetectionRunner* runner) {
+    // P7 D-05 attach-setter. DeviceProvider calls this AFTER both AudioWorker
+    // and DetectionRunner are constructed and DetectionRunner::Start() has
+    // returned true. The audio callback acquire-loads runner_ptr per frame
+    // and skips NotifyOne when null, so this setter is racy-safe with the
+    // callback. Defensive against state_ == nullptr (only nulled in dtor).
+    if (state_) {
+        state_->runner_ptr.store(runner, std::memory_order_release);
+        DriverLog("MicMap: AudioWorker SetDetectionRunner=%p\n",
+                  static_cast<const void*>(runner));
+    }
 }
 
 void AudioWorker::ThreadEntry(AudioWorker* self) {
@@ -234,18 +254,48 @@ void AudioWorker::RunWorker() {
                   (devices[pick].name.find(L"Beyond") != std::wstring::npos) ? 1 : 0);
     }
 
-    // RMS callback wired with weak_ptr alive-flag (Pitfall 13 / D-15 / D-16).
-    // The audio callback fires on the WASAPI internal capture thread (per
-    // audio_capture.cpp captureLoop). The weak_ptr lock + alive check at
-    // the head guarantees no UAF after Stop() flips alive=false.
+    // P7 D-05 callback rewire. The weak_ptr<State> + alive-flag head is
+    // PRESERVED VERBATIM from P6 (Pitfall 13 / D-15 / D-16). Body replaced:
+    //   1. push frames into AudioWorker's owned ring (drop-OLDEST)
+    //   2. wake the DetectionRunner via NotifyOne() if attached
+    //   3. legacy RMS log gated behind MICMAP_DEBUG_RMS_LOG so production
+    //      driver does NOT flood vrserver.txt
+    // The callback fires on WASAPI's internal capture thread. The lambda
+    // captures a pointer to ring_ (lifetime = AudioWorker; reset in dtor
+    // AFTER Stop() flips alive=false, so callback bails first).
     std::weak_ptr<State> weak = state_;
+    SampleRing<16, 480>* ring_ptr = &ring_;
     capture_->setAudioCallback(
-        [weak](const float* samples, size_t count) {
+        [weak, ring_ptr](const float* samples, size_t count) {
             auto sp = weak.lock();
             if (!sp || !sp->alive.load(std::memory_order_acquire)) {
                 return;
             }
             sp->frames_seen.fetch_add(1, std::memory_order_relaxed);
+
+            // P7 D-05 step 2: push frames into ring (drop-OLDEST on full).
+            const bool dropped = ring_ptr->try_push(samples, count);
+            if (dropped) {
+                // Per-100-drops summary (D-08-shaped budget). Surfaces
+                // overflow without per-drop log flood.
+                const uint32_t total = ring_ptr->drops();
+                if ((total % kRingDropLogPeriod) == 1) {
+                    DriverLog("MicMap detection: ring overflow drops=%u\n", total);
+                }
+            }
+
+            // P7 D-05 step 3: wake the detection thread if attached.
+            // runner_ptr is nullptr until DeviceProvider::Init wires it
+            // after a successful DetectionRunner::Start(); skip is correct.
+            auto* runner = sp->runner_ptr.load(std::memory_order_acquire);
+            if (runner) {
+                runner->NotifyOne();
+            }
+
+#ifdef MICMAP_DEBUG_RMS_LOG
+            // P6 RMS log retained behind debug define (D-05 step 4).
+            // Production driver builds do NOT define MICMAP_DEBUG_RMS_LOG,
+            // so this block compiles to nothing — vrserver.txt stays clean.
             double sumSq = 0.0;
             for (size_t i = 0; i < count; ++i) {
                 const double s = static_cast<double>(samples[i]);
@@ -258,8 +308,7 @@ void AudioWorker::RunWorker() {
             if (emitted < kRmsBudget) {
                 DriverLog("MicMap audio: rms[%u]=%.6f\n", emitted, rms);
             }
-            // After budget: continue draining frames so WASAPI buffer never
-            // overflows, but skip DriverLog writes (D-08).
+#endif
         });
 
     if (!capture_->startCapture()) {
