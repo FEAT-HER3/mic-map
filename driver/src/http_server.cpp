@@ -23,10 +23,12 @@ namespace micmap::driver {
 static constexpr int kPortRangeStart = 27015;
 static constexpr int kPortRangeEnd = 27025;  // Try up to 10 ports
 
-HttpServer::HttpServer(CommandQueue& queue, int port, const std::string& host)
+HttpServer::HttpServer(CommandQueue& queue, int port, const std::string& host,
+                       std::function<bool()> driverDetectionActiveGetter)
     : queue_(queue)
     , port_(port)
     , host_(host)
+    , driverDetectionActiveGetter_(std::move(driverDetectionActiveGetter))
 {
     DriverLog("HttpServer created (host: %s, port: %d)\n", host_.c_str(), port_);
 }
@@ -152,8 +154,20 @@ void HttpServer::SetupRoutes() {
     });
 
     // GET /health — liveness + port-probe endpoint (used by DriverClient).
-    server_->Get("/health", [](const httplib::Request&, httplib::Response& res) {
-        res.set_content(R"({"status":"healthy"})", "application/json");
+    // P7 D-09: emit `driver_detection_active` so the client can suppress its
+    // own POST /button trigger when the driver owns the detection path. Field
+    // is true iff the getter (set by DeviceProvider via the 4th ctor arg)
+    // reports {flag enabled AND audio worker alive AND detection runner alive
+    // AND running}. When no getter was supplied at construction (test code or
+    // legacy v1.5 callers) the field defaults to false defensively — clients
+    // see "driver does not own detection" and run their own trigger path. P10
+    // (D-12) deletes the entire field + suppression scaffolding.
+    server_->Get("/health", [this](const httplib::Request&, httplib::Response& res) {
+        nlohmann::json body;
+        body["status"] = "healthy";
+        body["driver_detection_active"] =
+            driverDetectionActiveGetter_ ? driverDetectionActiveGetter_() : false;
+        res.set_content(body.dump(), "application/json");
     });
 
     // GET /port — numeric listening port as text.

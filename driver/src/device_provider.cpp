@@ -85,7 +85,25 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
     (void)micmap::bindings::PatchGenericHmdBindings(driverLogSink);
 
     commandQueue_ = std::make_unique<CommandQueue>();
-    httpServer_ = std::make_unique<HttpServer>(*commandQueue_);
+
+    // P7 D-09: pass a getter lambda so /health reports `driver_detection_active`
+    // reflecting the LIVE driver state. The lambda captures `this` and reads
+    // members AT REQUEST TIME — so even though HttpServer is constructed BEFORE
+    // the VRSettings reads + DetectionRunner construction (D-19 ordering), the
+    // field correctly transitions false → true once detection actually starts,
+    // and back to false during Cleanup. RESEARCH Open Question 1 recommendation
+    // (a). Deleted in P10 per D-12.
+    auto driverDetectionActiveGetter = [this]() {
+        return driverDetectionEnabled_
+            && audioWorker_
+            && detectionRunner_
+            && detectionRunner_->IsRunning();
+    };
+    httpServer_ = std::make_unique<HttpServer>(
+        *commandQueue_,
+        /*port=*/27015,
+        /*host=*/"127.0.0.1",
+        std::move(driverDetectionActiveGetter));
     if (!httpServer_->Start()) {
         DriverLog("MicMap: failed to start HTTP server\n");
         return VRInitError_Driver_Failed;

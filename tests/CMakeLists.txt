@@ -152,6 +152,18 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp")
     list(APPEND _p6_audio_worker_sources
         "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp")
 endif()
+# P7 07-05 follow-on (Rule 3 — blocking): audio_worker.cpp now references
+# DetectionRunner::NotifyOne() (D-05 detection wakeup path landed in 07-04),
+# so this test exe must compile detection_runner.cpp alongside audio_worker.cpp
+# to resolve the symbol. Same EXISTS-gated pattern as the P7 propagation /
+# stress tests below. Mirrors the source-list expansion pattern for
+# DeviceProviderLifecycleStress at line ~210. Latent in 07-04 because the
+# build-driver target uses the in-tree micmap_driver static lib which already
+# has detection_runner.obj — only the standalone test exe target lacks it.
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+    list(APPEND _p6_audio_worker_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+endif()
 if(OpenVR_FOUND)
     add_executable(test_audio_worker_lifecycle_headless ${_p6_audio_worker_sources})
     target_compile_features(test_audio_worker_lifecycle_headless PRIVATE cxx_std_17)
