@@ -133,8 +133,10 @@ private:
     /// P7 D-05: ring lives inside AudioWorker (Open Question 3 recommendation
     /// a). Header-only template instantiation — no impl-side cost. SPSC
     /// invariants hold: producer = WASAPI capture cb (one thread), consumer =
-    /// DetectionRunner thread (one thread). Drop-OLDEST on overflow keeps the
-    /// audio thread non-blocking (Pitfall 12).
+    /// DetectionRunner thread (one thread). Drop-NEWEST on overflow keeps the
+    /// audio thread non-blocking (Pitfall 12 + BL-01: producer never writes
+    /// tail_, eliminating the prior two-writer race on tail_ and slot
+    /// contents).
     SampleRing<16, 480>                           ring_;
 };
 

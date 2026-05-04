@@ -56,9 +56,9 @@ namespace {
 constexpr uint32_t kRmsBudget = 100;
 
 // P7 D-05 ring overflow diagnostic cadence (matches kRmsBudget shape from
-// D-08). On full ring, drop-OLDEST atomicity bumps drops_; we log every
-// 100th drop with the cumulative count so the smell of "ring overflowing
-// under load" surfaces without per-frame log flood.
+// D-08). On full ring, drop-NEWEST atomicity bumps drops_ (BL-01); we log
+// every 100th drop with the cumulative count so the smell of "ring
+// overflowing under load" surfaces without per-frame log flood.
 constexpr uint32_t kRingDropLogPeriod = 100;
 
 // 2 s shutdown watchdog (D-13) matching the v1.5 VREvent_Quit precedent.
@@ -256,7 +256,7 @@ void AudioWorker::RunWorker() {
 
     // P7 D-05 callback rewire. The weak_ptr<State> + alive-flag head is
     // PRESERVED VERBATIM from P6 (Pitfall 13 / D-15 / D-16). Body replaced:
-    //   1. push frames into AudioWorker's owned ring (drop-OLDEST)
+    //   1. push frames into AudioWorker's owned ring (drop-NEWEST per BL-01)
     //   2. wake the DetectionRunner via NotifyOne() if attached
     //   3. legacy RMS log gated behind MICMAP_DEBUG_RMS_LOG so production
     //      driver does NOT flood vrserver.txt
