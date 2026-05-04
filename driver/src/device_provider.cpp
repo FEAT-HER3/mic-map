@@ -162,12 +162,20 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
                       driverDetectionEnabled_ ? "true" : "false");
         }
 
+        // P7 REVIEW IN-03: distinguish UnsetSettingHasNoDefault from other
+        // errors so logs match the precedent set by the enable_driver_audio
+        // block above. Same fail-soft default-on-error semantics; just two
+        // log shapes instead of one collapsed "unset/error" message.
         err = vr::VRSettingsError_None;
         detectionDefaults_.sensitivity = vr::VRSettings()->GetFloat(
             "driver_micmap", "detection_sensitivity", &err);
-        if (err != vr::VRSettingsError_None) {
+        if (err == vr::VRSettingsError_UnsetSettingHasNoDefault) {
             detectionDefaults_.sensitivity = 0.7f;
-            DriverLog("MicMap: detection_sensitivity unset/error, defaulting to 0.7\n");
+            DriverLog("MicMap: detection_sensitivity unset, defaulting to 0.7\n");
+        } else if (err != vr::VRSettingsError_None) {
+            detectionDefaults_.sensitivity = 0.7f;
+            DriverLog("MicMap: VRSettings GetFloat(detection_sensitivity) error=%d, defaulting to 0.7\n",
+                      static_cast<int>(err));
         } else {
             DriverLog("MicMap: detection_sensitivity = %.3f\n",
                       detectionDefaults_.sensitivity);
@@ -176,9 +184,13 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
         err = vr::VRSettingsError_None;
         detectionDefaults_.threshold = vr::VRSettings()->GetFloat(
             "driver_micmap", "detection_threshold", &err);
-        if (err != vr::VRSettingsError_None) {
+        if (err == vr::VRSettingsError_UnsetSettingHasNoDefault) {
             detectionDefaults_.threshold = 0.6f;
-            DriverLog("MicMap: detection_threshold unset/error, defaulting to 0.6\n");
+            DriverLog("MicMap: detection_threshold unset, defaulting to 0.6\n");
+        } else if (err != vr::VRSettingsError_None) {
+            detectionDefaults_.threshold = 0.6f;
+            DriverLog("MicMap: VRSettings GetFloat(detection_threshold) error=%d, defaulting to 0.6\n",
+                      static_cast<int>(err));
         } else {
             DriverLog("MicMap: detection_threshold = %.3f\n",
                       detectionDefaults_.threshold);
@@ -187,9 +199,13 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
         err = vr::VRSettingsError_None;
         detectionDefaults_.cooldown_ms = vr::VRSettings()->GetInt32(
             "driver_micmap", "detection_cooldown_ms", &err);
-        if (err != vr::VRSettingsError_None) {
+        if (err == vr::VRSettingsError_UnsetSettingHasNoDefault) {
             detectionDefaults_.cooldown_ms = 1000;
-            DriverLog("MicMap: detection_cooldown_ms unset/error, defaulting to 1000\n");
+            DriverLog("MicMap: detection_cooldown_ms unset, defaulting to 1000\n");
+        } else if (err != vr::VRSettingsError_None) {
+            detectionDefaults_.cooldown_ms = 1000;
+            DriverLog("MicMap: VRSettings GetInt32(detection_cooldown_ms) error=%d, defaulting to 1000\n",
+                      static_cast<int>(err));
         } else {
             DriverLog("MicMap: detection_cooldown_ms = %d\n",
                       detectionDefaults_.cooldown_ms);
@@ -198,9 +214,13 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
         err = vr::VRSettingsError_None;
         detectionDefaults_.min_duration_ms = vr::VRSettings()->GetInt32(
             "driver_micmap", "detection_min_duration_ms", &err);
-        if (err != vr::VRSettingsError_None) {
+        if (err == vr::VRSettingsError_UnsetSettingHasNoDefault) {
             detectionDefaults_.min_duration_ms = 200;
-            DriverLog("MicMap: detection_min_duration_ms unset/error, defaulting to 200\n");
+            DriverLog("MicMap: detection_min_duration_ms unset, defaulting to 200\n");
+        } else if (err != vr::VRSettingsError_None) {
+            detectionDefaults_.min_duration_ms = 200;
+            DriverLog("MicMap: VRSettings GetInt32(detection_min_duration_ms) error=%d, defaulting to 200\n",
+                      static_cast<int>(err));
         } else {
             DriverLog("MicMap: detection_min_duration_ms = %d\n",
                       detectionDefaults_.min_duration_ms);
