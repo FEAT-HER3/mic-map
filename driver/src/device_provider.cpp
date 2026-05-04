@@ -99,6 +99,13 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
     // field correctly transitions false → true once detection actually starts,
     // and back to false during Cleanup. RESEARCH Open Question 1 recommendation
     // (a). Deleted in P10 per D-12.
+    // P7 REVIEW IN-03: this lambda reads driver state at request time
+    // (called from the HTTP thread on /health). During Cleanup there is a
+    // small window where detectionRunner_ is non-null but IsRunning()
+    // already returns false (Stop() flips running_=false BEFORE the
+    // unique_ptr.reset() destroys the object). That manifests as a
+    // transitional "false" on /health between the start of Cleanup and
+    // the destructor returning -- correct behavior, worth knowing.
     auto driverDetectionActiveGetter = [this]() {
         return driverDetectionEnabled_
             && audioWorker_
