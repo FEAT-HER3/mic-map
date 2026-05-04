@@ -297,13 +297,28 @@ void DetectionRunner::applyConfig(const DetectionConfig& cfg) {
         smCfg.minDetectionDuration = std::chrono::milliseconds(cfg.min_duration_ms);
         smCfg.cooldownDuration     = std::chrono::milliseconds(cfg.cooldown_ms);
         stateMachine_->configure(smCfg);
-        // P7 REVIEW WR-02: re-attach the trigger callback defensively. RunLoop
-        // sets it once on entry, but if IStateMachine::configure() ever clears
-        // internal callbacks (the contract is ambiguous on retention), the very
-        // first MIG-06 publish would silently disable triggering with no log,
-        // no metric -- just an inert detection path. Re-binding here is cheap
-        // (one std::function move) and makes the post-condition explicit:
-        // after applyConfig() returns, the trigger callback is wired.
+        // LOAD-BEARING: IStateMachine::configure() may clear internal
+        // callbacks; re-install required.
+        //
+        // P7 REVIEW WR-04: the IStateMachine contract is ambiguous about
+        // whether configure() preserves the trigger callback across a
+        // reconfigure. There are now THREE install sites by design:
+        //   1. Start()         -- via applyConfig(*cfg) for the seeded config
+        //   2. RunLoop entry   -- guards against any prior state lost across
+        //                         the thread boundary (stateMachine_ was
+        //                         constructed on the calling thread, callback
+        //                         install also happens there in step 1, but
+        //                         the cb is captured by value into the state
+        //                         machine; a defensive re-install is cheap).
+        //   3. applyConfig()   -- THIS site. Re-installed after configure()
+        //                         in case the impl clears callbacks.
+        // The behavior is functionally identical at all three sites (same
+        // lambda capturing `this`); the cost is one std::function move per
+        // publish, which happens at most once per MIG-06 settings change
+        // (rare). Future maintainer changing IStateMachine's callback
+        // retention contract: audit all three sites; pick one definitive
+        // home + a unit test that publishes a config mid-loop and asserts
+        // the next trigger still fires.
         stateMachine_->setTriggerCallback([this]() {
             commandQueue_.push(TapCommand{});
             const uint32_t n = triggers_.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -317,8 +332,10 @@ void DetectionRunner::ThreadEntry(DetectionRunner* self) {
 }
 
 void DetectionRunner::RunLoop() {
-    using clock = std::chrono::steady_clock;
-    auto last_tick = clock::now();
+    // P7 REVIEW WR-05: no `clock` alias here -- dt is computed from
+    // sample count rather than wall-clock now()-last_tick (see the
+    // analyze loop below). Removes scheduler jitter from state machine
+    // timing entirely.
 
     // Trigger callback -- fires from inside stateMachine_->update on rising
     // edge (Triggered transition). State machine cooldown is the natural
@@ -364,12 +381,23 @@ void DetectionRunner::RunLoop() {
         }
 
         // Active path: drain -> analyze -> update -> trigger fires inside update.
+        // P7 REVIEW WR-05: compute dt from sample count rather than wall
+        // clock. The previous wall-clock dt fed the entire idle duration
+        // (cv_.wait_for timeout, or the full Pause->Resume gap) into the
+        // state machine on the first post-wait update, prematurely
+        // satisfying cooldown timers and erasing scheduler-jitter
+        // determinism. Sample-count dt is what an offline analyzer would
+        // compute, matches v1.5 GUI semantics, and removes scheduler
+        // jitter from the timing entirely. sampleRate_ is the live
+        // WASAPI rate (WR-01); fallback rate of 1 prevents division by
+        // zero in the (impossible) sampleRate_=0 path -- if that ever
+        // fires, the dt collapses to block_count ms which is still a
+        // sane upper bound for a 480-frame block.
+        const uint32_t rate_for_dt = sampleRate_ ? sampleRate_ : 1;
         while (ring_.try_pop(block, block_count)) {
             auto result = detector_->analyze(block.data(), block_count);
-            const auto now = clock::now();
-            const auto dt  = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                 now - last_tick);
-            last_tick = now;
+            const auto dt = std::chrono::milliseconds(
+                static_cast<long long>(block_count) * 1000 / rate_for_dt);
             stateMachine_->update(result.confidence, dt);
         }
     }
