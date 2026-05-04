@@ -253,6 +253,18 @@ void DetectionRunner::applyConfig(const DetectionConfig& cfg) {
         smCfg.minDetectionDuration = std::chrono::milliseconds(cfg.min_duration_ms);
         smCfg.cooldownDuration     = std::chrono::milliseconds(cfg.cooldown_ms);
         stateMachine_->configure(smCfg);
+        // P7 REVIEW WR-02: re-attach the trigger callback defensively. RunLoop
+        // sets it once on entry, but if IStateMachine::configure() ever clears
+        // internal callbacks (the contract is ambiguous on retention), the very
+        // first MIG-06 publish would silently disable triggering with no log,
+        // no metric -- just an inert detection path. Re-binding here is cheap
+        // (one std::function move) and makes the post-condition explicit:
+        // after applyConfig() returns, the trigger callback is wired.
+        stateMachine_->setTriggerCallback([this]() {
+            commandQueue_.push(TapCommand{});
+            const uint32_t n = triggers_.fetch_add(1, std::memory_order_relaxed) + 1;
+            DriverLog("MicMap detection: TapCommand pushed (n=%u)\n", n);
+        });
     }
 }
 
