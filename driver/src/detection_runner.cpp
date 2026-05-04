@@ -218,6 +218,14 @@ void DetectionRunner::Stop() {
 }
 
 void DetectionRunner::Pause() {
+    // P7 REVIEW WR-02: Pause/Resume only act on a running thread. If the
+    // runner has not been Start()ed (or has already been Stop()ped), there
+    // is no thread to pause and no cv_ to notify -- the operation is a
+    // no-op. Without this guard, Pause-before-Start would set paused_ to
+    // true, and the unconditional `paused_.store(false)` in Start() would
+    // silently wipe the intent, leaving callers unable to express
+    // "construct in paused state".
+    if (!running_.load(std::memory_order_acquire)) return;
     // Idempotent -- exchange returns the previous value; if already paused, no-op.
     // RESEARCH Open Question 5: RunFrame may receive duplicate EnterStandby
     // events; the early-return prevents log spam + wakeup storms.
@@ -227,9 +235,23 @@ void DetectionRunner::Pause() {
 }
 
 void DetectionRunner::Resume() {
-    if (!paused_.exchange(false, std::memory_order_acq_rel)) return;
+    // P7 REVIEW WR-02: same guard as Pause -- Resume on a non-running
+    // runner is a no-op. The thread does not exist; nothing to wake.
+    if (!running_.load(std::memory_order_acquire)) return;
+    // P7 REVIEW WR-03: always notify on a state change AND on an
+    // already-resumed Resume. The cv predicate handles spurious wakeup
+    // safely; a redundant notify is cheap (one futex syscall) and
+    // matches caller expectations -- after Resume returns, the thread is
+    // unblocked promptly rather than potentially sleeping the full 50 ms
+    // wait_for window. The previous early-return-when-already-resumed
+    // shape made `Pause(); Resume();` toggles inside one frame yield the
+    // same wakeup latency as no-op, defeating the stated purpose of
+    // Resume notifying.
+    const bool was_paused = paused_.exchange(false, std::memory_order_acq_rel);
     cv_.notify_one();
-    DriverLog("MicMap detection: resumed\n");
+    if (was_paused) {
+        DriverLog("MicMap detection: resumed\n");
+    }
 }
 
 void DetectionRunner::publish(std::shared_ptr<const DetectionConfig> next) {
