@@ -250,6 +250,17 @@ void DeviceProvider::Cleanup() {
 
     DriverLog("MicMap driver cleaning up...\n");
 
+    // P7 REVIEW IN-01: clear the audio callback's runner pointer BEFORE
+    // resetting detectionRunner_. The audio callback already guards via
+    // weak_ptr<State> + state->alive, and the construction order in Init
+    // (audio worker first, then runner) means today's teardown is safe even
+    // without this clear. But pairing the SetDetectionRunner(runner.get())
+    // call in Init with a SetDetectionRunner(nullptr) here makes the intent
+    // self-evident locally and survives any future reordering.
+    if (audioWorker_) {
+        audioWorker_->SetDetectionRunner(nullptr);
+    }
+
     // P7 D-20 step 1: detectionRunner_.reset() FIRST (strict reverse
     // construction order — Pitfall 4). DetectionRunner's destructor signals
     // shutdown_, notify_all, joins the detection thread with a 2 s watchdog.
