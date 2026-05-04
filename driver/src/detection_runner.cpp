@@ -175,9 +175,22 @@ void DetectionRunner::Stop() {
         thread_.join();
         DriverLog("MicMap detection: thread joined cleanly\n");
     } else {
-        DriverLog("MicMap detection: did not exit within 2 s watchdog "
-                  "- detaching (T3 mitigation)\n");
-        thread_.detach();
+        // P7 REVIEW WR-01: do NOT detach. The detection thread holds a raw
+        // reference to AudioWorker's SampleRing (member ring_) and to its own
+        // detector_/stateMachine_/this. Detaching here lets DeviceProvider::
+        // Cleanup proceed to audioWorker_.reset() while the detection thread is
+        // still calling ring_.has_data() / try_pop -- a use-after-free on the
+        // ring AND on `this` (commandQueue_, triggers_, cv_, mu_) once
+        // ~DetectionRunner returns. The original T3 "never block vrserver.exe"
+        // rationale is valid for AudioWorker (whose teardown crosses COM /
+        // WASAPI), but DetectionRunner's only blocking surface is
+        // cv_.wait_for(50ms); shutdown_ has already been set + notified, so the
+        // worst additional wait is ~one timeout period after we get here. A
+        // watchdog overrun means something is genuinely wrong -- prefer the
+        // diagnosable hang over silent UAF.
+        DriverLog("MicMap detection: WARNING - did not exit within 2 s watchdog; "
+                  "joining anyway to avoid UAF on AudioWorker ring teardown\n");
+        thread_.join();
     }
     running_.store(false, std::memory_order_release);
 }
