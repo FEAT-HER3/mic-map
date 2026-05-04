@@ -33,7 +33,7 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
 
 - [x] **Phase 5: Shared Library Extraction** (3/3 plans) — completed 2026-05-02; `micmap_core_runtime` INTERFACE target landed; driver/client/mic_test linked; configure-time guard + CTest lints active; SC5 UAT signed off byte-identical on Bigscreen Beyond.
 - [x] **Phase 6: Driver-Side Audio Capture Spike** (4/4 plans) — completed 2026-05-03; WASAPI capture validated inside `driver_micmap.dll` on real Bigscreen Beyond + Win11 Pro (D-17(1)-(4) all PASS, spike GO); AudioWorker pattern (MTA worker thread, `weak_ptr<State>` UAF guard, 2s watchdog teardown) shipped behind `enable_driver_audio` flag default OFF.
-- [ ] **Phase 7: Driver-Side Detection Thread** — Detection runs in-process inside the driver; trigger collapses to direct CommandQueue push; client-side detection still active behind feature flag.
+- [x] **Phase 7: Driver-Side Detection Thread** — Detection runs in-process inside the driver; trigger collapses to direct CommandQueue push; client-side detection still active behind feature flag. (UAT GO 2026-05-04)
 - [ ] **Phase 8: IPC Contract Reshape** — New endpoints (`/state`, `/settings`, `/devices`, `/telemetry/level`); driver becomes sole `config.json` writer; client UI surfaces driver health by polling.
 - [ ] **Phase 9: Training Migration** — Driver becomes sole microphone owner during training; client is observer-only; `training_data.bin` ownership transfers to driver; `mic_test.exe --replay` lands.
 - [ ] **Phase 10: Cutover & Cleanup** — Flip the flag, delete `POST /button` and `IDriverClient::tap()`, ship FAIL cluster, tray-icon state glyphs, `--debug-trigger`, installer co-versioning bake.
