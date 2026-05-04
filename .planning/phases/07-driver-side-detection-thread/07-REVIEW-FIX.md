@@ -2,97 +2,215 @@
 phase: 07-driver-side-detection-thread
 fixed_at: 2026-05-04T00:00:00Z
 review_path: .planning/phases/07-driver-side-detection-thread/07-REVIEW.md
-iteration: 1
-findings_in_scope: 10
-fixed: 8
+iteration: 2
+findings_in_scope: 11
+fixed: 9
 skipped: 2
 status: partial
 ---
 
-# Phase 7: Code Review Fix Report
+# Phase 7: Code Review Fix Report (Adversarial Re-Review, Iteration 2)
 
-**Fixed at:** 2026-05-04
-**Source review:** `.planning/phases/07-driver-side-detection-thread/07-REVIEW.md`
-**Iteration:** 1
+**Fixed at:** 2026-05-04T00:00:00Z
+**Source review:** .planning/phases/07-driver-side-detection-thread/07-REVIEW.md
+**Iteration:** 2 (adversarial re-review of post-iteration-1 state)
 
 **Summary:**
-- Findings in scope: 10 (4 warnings + 6 info)
-- Fixed: 8
-- Skipped: 2 (both deferred with justification — no SKIP_CANNOT)
-
-**Build verification:** `cmake --build build-driver --config Debug` succeeds with no errors. All 17 tests pass via `ctest -C Debug --output-on-failure`, including the three Phase 7 driver tests:
-- `DetectionSettingsPropagation` — passed
-- `DeviceProviderLifecycleStress` — passed (25.47 s, 50-cycle handle-leak audit)
-- `AssertDetectionRunnerNoVrApi` — passed
+- Findings in scope: 11 (1 blocker, 6 warnings, 4 info)
+- Fixed: 9
+- Skipped: 2 (both info-level, deferred per review's own recommendation)
+- Build verification: cmake --build Debug succeeded, ctest 17/17 passed
+  (including DetectionSettingsPropagation, DeviceProviderLifecycleStress,
+  AssertDetectionRunnerNoVrApi)
 
 ## Fixed Issues
 
-### WR-01: Detached detection thread holds dangling reference to AudioWorker's ring
+### BL-01: SampleRing drop-NEWEST eliminates SPSC tail race
+
+**Files modified:** `driver/src/sample_ring.hpp`, `driver/src/audio_worker.cpp`, `driver/src/audio_worker.hpp`
+**Commit:** 2e98161
+**Applied fix:** Switched try_push from drop-OLDEST to drop-NEWEST per
+review's recommended Option A. The producer now never writes tail_; the
+consumer is the sole tail_ writer. On full ring, the new sample is
+discarded and drops_ counter is incremented. Eliminates the two-writer
+race on tail_ AND the data race on slot contents (producer writing
+slots_[head & kMask] while consumer reads slots_[tail & kMask] when
+full=true). Also: try_pop's tail_ load is now acquire (consumer-as-sole-
+writer discipline; fence-free on x86/x64) and the inaccurate
+"rigtorp/SPSCQueue" attribution comment was corrected. Updated callsite
+comments in audio_worker.cpp/.hpp to reflect drop-NEWEST.
+
+### WR-01: Live WASAPI sample rate plumbed through AudioWorker
+
+**Files modified:** `driver/src/audio_worker.hpp`, `driver/src/audio_worker.cpp`, `driver/src/device_provider.cpp`
+**Commit:** 903fe1f
+**Applied fix:** Added State::sample_rate atomic + AudioWorker::sample_rate()
+accessor. The worker thread publishes the rate (release-store) immediately
+after capture_->startCapture() succeeds, reading capture_->getSampleRate()
+which already exists in IAudioCapture. DeviceProvider::Init polls
+audioWorker_->sample_rate() for up to 500 ms before falling back to
+48000 with a clear WARNING log so the assumption is auditable in
+vrserver.txt. The poll is necessary because AudioWorker::Start spawns the
+worker thread asynchronously; the rate is not known synchronously when
+Init proceeds to construct DetectionRunner. Includes <chrono> + <thread>
+added to device_provider.cpp.
+
+### WR-02: Pause/Resume guard on running_
 
 **Files modified:** `driver/src/detection_runner.cpp`
-**Commit:** 0257a08
-**Applied fix:** Replaced `thread_.detach()` on watchdog overrun with `thread_.join()`. The detection thread's only blocking surface is `cv_.wait_for(50 ms)` after `shutdown_` is set + notified, so the worst additional wait is ~one timeout period. A 2 s overrun signals something is genuinely wrong; preferring a diagnosable hang over silent UAF on AudioWorker's ring + on `this` (commandQueue_, triggers_, cv_, mu_) once `~DetectionRunner` returns. Added a "WARNING - did not exit within 2 s watchdog; joining anyway to avoid UAF" log line. Implementation matches REVIEW.md option (a).
+**Commit:** 48eaa55 (combined with WR-03)
+**Applied fix:** Added `if (!running_.load()) return;` at the head of both
+Pause() and Resume(). When the runner has not been Start()ed (or has been
+Stop()ped), Pause/Resume now no-op cleanly instead of mutating paused_
+and emitting misleading "paused"/"resumed" log lines. Closes the
+"Pause-before-Start silently wiped by Start()'s unconditional
+paused_.store(false)" hole.
 
-### WR-02: setTriggerCallback re-applied implicitly on configure() — verify retention
+### WR-03: Resume always notifies cv_
 
 **Files modified:** `driver/src/detection_runner.cpp`
-**Commit:** 457cb59
-**Applied fix:** Defensively re-attach the trigger callback at the bottom of `applyConfig()` (inside the `if (stateMachine_)` block, after `stateMachine_->configure(smCfg)`). If a future change to `IStateMachine::configure()` ever clears internal callbacks, the trigger path stays wired silently. Cost is one `std::function` move per `applyConfig` call (rare event — only on `publish()` of a new DetectionConfig). RunLoop's existing one-shot bind on entry stays for clarity.
+**Commit:** 48eaa55 (combined with WR-02)
+**Applied fix:** Resume() now unconditionally calls cv_.notify_one()
+(under the running_ guard). The previous early-return-when-already-
+resumed shape made `Pause(); Resume();` toggles inside one frame yield
+the same wakeup latency as no-op (the thread could still sleep the full
+50 ms wait_for window). The cv predicate handles spurious wakeups safely
+and a redundant notify is cheap. The "resumed" log is suppressed only
+when the state did not actually change (was_paused == false).
 
-### WR-03: Ring drop log throttle skips most windows
+### WR-04: Trigger-callback install contract documented
 
-**Files modified:** `driver/src/audio_worker.cpp`
-**Commit:** 71368cd
-**Applied fix:** Changed `(total % kRingDropLogPeriod) == 1` to `total > 0 && (total % kRingDropLogPeriod) == 0`. The `total > 0` guard preserves "no log when there are no drops"; the `== 0` form ("every 100th drop") is robust under any future change to bump-by-N drop semantics. Behavior under today's bump-by-1 semantics: log fires at 100, 200, 300, ... instead of 1, 101, 201, ... — net difference is ~100 drops earlier latency on the *first* spam window before the burst threshold is reached, which is well within the diagnostic budget.
+**Files modified:** `driver/src/detection_runner.cpp`
+**Commit:** afecbb4 (combined with WR-05)
+**Applied fix:** Per the review's "if the contract truly is ambiguous,
+the current 'install everywhere' defense is acceptable, but document it
+explicitly" -- added a LOAD-BEARING comment in applyConfig listing all
+three install sites (Start, RunLoop entry, applyConfig) with rationale
+and an audit checklist for future maintainers who change
+IStateMachine's callback retention contract. Behavior unchanged; the
+maintenance hazard is now visible.
 
-### IN-01: `runner_ptr` setter does not clear on Stop
+### WR-05: dt computed from sample count, not wall clock
+
+**Files modified:** `driver/src/detection_runner.cpp`
+**Commit:** afecbb4 (combined with WR-04)
+**Applied fix:** Per the review's recommended Option 3 -- dt is now
+`block_count * 1000 / sampleRate_` (milliseconds), matching what an
+offline analyzer would compute. Removes scheduler jitter from state
+machine timing entirely. The previous wall-clock dt fed the entire idle
+duration (cv_.wait_for timeout, or full Pause->Resume gap) into the
+state machine on the first post-wait update, prematurely satisfying
+cooldown timers. Removed the now-unused `using clock = ...` alias and
+the `last_tick` variable. Includes a fallback `rate_for_dt = sampleRate_
+? sampleRate_ : 1` guard against division-by-zero in the (impossible)
+sampleRate_=0 path.
+
+**Note:** The dt change is a logic change in state-machine timing
+semantics. Build + DetectionSettingsPropagation tests pass, but the
+end-to-end "real trigger fires within expected wall-clock window"
+behavior is best-validated on hardware. **Requires human verification
+on the Phase 7 UAT harness (real Beyond mic + trained profile).**
+
+### WR-06: SHGetKnownFolderPath for AppData resolution
+
+**Files modified:** `driver/src/detection_runner.cpp`
+**Commit:** 6c99986
+**Applied fix:** Replaced SHGetFolderPathW (deprecated, MAX_PATH-bounded,
+silently truncates on long-path symlinks) with SHGetKnownFolderPath
+(long-path-aware, not deprecated). The returned PWSTR is freed via
+CoTaskMemFree on every code path (success, failure-but-pointer-set).
+Differentiated three log shapes:
+  1. "SHGetKnownFolderPath(FOLDERID_RoamingAppData) failed (hr=0x%08X) -
+     no profile load attempted (detection inert)"
+  2. "profile file does not exist at <path> - detection inert until valid profile"
+  3. "loadTrainingData failed for <path> - detection inert until valid profile"
+The previous "no training profile at <empty path> - detection inert"
+shape, which fired with an empty path on AppData failure, is gone.
+
+### IN-01: Stale "future-accessor" comment removed
+
+**Files modified:** `driver/src/device_provider.cpp` (covered by WR-01 commit)
+**Commit:** 903fe1f (rolled into WR-01)
+**Applied fix:** The comment `"AudioWorker does not currently expose
+getSampleRate() out to here; if a future plan adds an accessor, swap to
+audioWorker_->sample_rate()"` was deleted as part of the WR-01 rewrite
+that landed exactly that accessor. Replaced with a comment explaining
+the new poll-with-fallback logic.
+
+### IN-03: driverDetectionActiveGetter Cleanup-window semantics documented
 
 **Files modified:** `driver/src/device_provider.cpp`
-**Commit:** ba6fbdd
-**Applied fix:** Added `if (audioWorker_) audioWorker_->SetDetectionRunner(nullptr);` at the top of `DeviceProvider::Cleanup`, before the `detectionRunner_.reset()` call. The audio callback's existing `weak_ptr<State> + state->alive` guards already make this safe today; the explicit clear pairs with the `SetDetectionRunner(runner.get())` call in `Init` and survives any future reordering of the Cleanup steps.
-
-### IN-02: `loadTrainingData` non-Windows silent skip
-
-**Files modified:** `driver/src/detection_runner.cpp`
-**Commit:** 841940d
-**Applied fix:** Added an `#else` arm to the `#ifdef _WIN32` block that emits a single `"non-Windows build, skipping profile load (detection inert)"` log line. Functionally inert on Windows builds (driver is Windows-only per CLAUDE.md); makes test-stub builds explicit instead of silently leaving `profile_path` empty.
-
-### IN-03: detectionDefaults reads collapse Unset vs error log shapes
-
-**Files modified:** `driver/src/device_provider.cpp`
-**Commit:** 8af2da6
-**Applied fix:** Split each of the four `detection_*` reads (sensitivity / threshold / cooldown_ms / min_duration_ms) into three branches matching the precedent of `enable_driver_audio` + `enable_driver_detection` blocks above: `VRSettingsError_UnsetSettingHasNoDefault`, "any other error" (with error code in log), and success. Fail-soft defaults unchanged (0.7 / 0.6 / 1000 / 200).
-
-### IN-05: Hardcoded FFT size 2048
-
-**Files modified:** `driver/src/detection_runner.cpp`
-**Commit:** 0ebb017
-**Applied fix:** Added `constexpr int kDetectionFftSize = 2048;` to the anonymous namespace at top of file with a comment linking it to the v1.5 GUI default and noting Phase 8 (config read-back) will thread this through `DetectionConfig`. Replaced the inline `2048` in `createFFTDetector()` and the `"thread spawned"` log format string. Behavior unchanged.
-
-### IN-06: Redundant first-iteration applyConfig
-
-**Files modified:** `driver/src/detection_runner.cpp`
-**Commit:** 7e74256
-**Applied fix:** Added `lastObserved_ = cfg;` immediately after the `applyConfig(*cfg)` call inside `Start()`. The first RunLoop iteration's pointer-identity compare `cfg.get() != lastObserved_.get()` is now false, skipping the redundant re-apply. `publish()` correctness is unaffected because publish always installs a fresh `shared_ptr` whose `.get()` differs from this seeded value.
+**Commit:** b9f5829
+**Applied fix:** Added a one-line comment above the lambda noting that it
+reads driver state at request time and may report transitionally false
+during Cleanup (detectionRunner_ non-null but IsRunning() already false
+because Stop() flips running_ before unique_ptr.reset() destroys the
+object). Per review: "Add a one-line comment ... No code change needed."
 
 ## Skipped Issues
 
-### WR-04: HttpServer::Start uses sleep-poll to detect bind success
+### IN-02: Lint regex limitation in AssertDetectionRunnerNoVrApi.cmake
 
-**File:** `driver/src/http_server.cpp:64-92`
-**Reason:** SKIP_DEFERRED — REVIEW.md explicitly notes "this is pre-existing code (not Phase 7), but Phase 7 still touches the HttpServer surface (driverDetectionActiveGetter ctor param)." The proper fix (`std::promise<bool>` for bind-result synchronization) requires a non-trivial refactor of the bind-loop in `Start()` and a new private member on `HttpServer` to thread the promise/future across the `ServerThread()` -> caller boundary. This is a startup-path correctness change that pre-dates Phase 7, would touch all phases that exercise `HttpServer::Start` (effectively all of v1.5 plus the new `driverDetectionActiveGetter` integration), and has no Phase 7 regression risk under the current 200 ms sleep heuristic in CI / dev hardware. Recommended landing point: a dedicated maintenance phase or alongside any future change that already touches `HttpServer::Start`.
+**File:** `cmake/AssertDetectionRunnerNoVrApi.cmake:60-61`
+**Reason:** Skipped per review's own recommendation: "**Fix:** None
+required. Document the limitation in the file-header comment if the
+regex set diverges from the core lint in the future." The current regex
+mirrors lint_no_openvr_in_core.cmake byte-for-byte (intentional; one
+source of truth for the no-OpenVR rule), and the narrow three-file lint
+scope is sufficient for the current use case. No documentation change
+needed at this iteration; revisit if the core lint regex diverges.
 
-**Original issue:** 200 ms `sleep_for` after spawning `ServerThread` is racy with the bind/listen path's deterministic `running_ = true` assignment — on slow / loaded machines the bind may not have happened yet, leaving the caller to advance to the next port even though the current bind would have succeeded.
+### IN-04: tests/CMakeLists.txt EXISTS-guard refactor
 
-### IN-04: Hardcoded sample rate 48000 in DeviceProvider::Init
+**File:** `tests/CMakeLists.txt:190-255`
+**Reason:** Skipped per review's own recommendation: "Pure refactor, no
+behavior change. Defer until a Phase 8 / 9 test wants the same shape."
+The duplication is a known scaling concern but does not affect Phase 7
+correctness, build, or tests. The `gsd_define_phase_test()` extraction
+is best done in concert with the first Phase 8/9 test that exercises
+the same shape so the abstraction matches actual usage rather than
+being designed in isolation.
 
-**File:** `driver/src/device_provider.cpp:222`
-**Reason:** SKIP_DEFERRED — REVIEW.md explicitly classifies this as a "tracking item" and recommends "file an issue or P8 task to add `AudioWorker::sample_rate()`". The fix requires a new public accessor on `AudioWorker` (`uint32_t sample_rate() const noexcept`) that reads the rate observed after `capture_->startCapture()` returns, plus thread-safety considerations for read-during-construction. The comment in the source already acknowledges this: "if a future plan adds an accessor, swap to `audioWorker_->sample_rate()`". Recommended landing point: Phase 8 (config read-back) which will already be touching `DetectionConfig` plumbing and the AudioWorker / DetectionRunner interface.
+## Build & Test Verification
 
-**Original issue:** WASAPI shared-mode default is typically 48 kHz but can be 44.1 kHz on legacy hardware or 96 kHz on pro audio interfaces. The detection FFT bins, threshold curves, and state-machine timing assumptions all depend on the actual sample rate; mismatch produces confidence drift.
+```
+cmake -S . -B build-driver-fix -DOPENVR_SDK_PATH=...
+cmake --build build-driver-fix --config Debug
+# All targets compiled cleanly; no errors.
+ctest --test-dir build-driver-fix -C Debug --output-on-failure
+# 100% tests passed, 0 tests failed out of 17
+# - DetectionSettingsPropagation: PASS (0.08 s)
+# - DeviceProviderLifecycleStress: PASS (25.48 s)
+# - AssertDetectionRunnerNoVrApi: PASS (no vr:: leakage)
+# - AssertAudioWorkerNoVrApi: PASS
+```
+
+## Followups for Verifier / UAT
+
+- **WR-05 (sample-count dt) requires hardware UAT validation.** The unit
+  tests verify the state machine still updates correctly under the new
+  dt computation, but real-world cooldown / hold-window behavior with a
+  trained profile is best confirmed on the Phase 7 UAT harness
+  (Beyond mic + trained profile). The change is fail-safe in the
+  "fewer triggers" direction (sample-count dt is always less-than-or-
+  equal-to wall-clock dt for a given block).
+
+- **WR-01 fallback path is a quiet danger.** If AudioWorker fails to
+  publish sample_rate within 500 ms (capture init failed silently or
+  hung), the FFT detector is built against assumed 48000 Hz and the log
+  line says so. Watch for that WARNING in vrserver.txt during UAT --
+  it is the canonical "trained profile won't match" signal.
+
+- **BL-01 changes overflow semantics from drop-OLDEST to drop-NEWEST.**
+  Under sustained back-pressure (slow detection thread, scheduler stall,
+  Pause-then-quick-Resume), the most recent audio frame is now the one
+  discarded rather than the oldest queued frame. For a periodic noise-
+  cover detector this is indistinguishable in practice (the audio
+  fingerprint repeats across many 10 ms frames). Worth noting in case
+  the verifier sees a change in detection latency under stress.
 
 ---
 
-_Fixed: 2026-05-04_
-_Fixer: Claude (gsd-code-fixer)_
-_Iteration: 1_
+_Fixed: 2026-05-04T00:00:00Z_
+_Fixer: Claude (gsd-code-fixer, iteration 2)_
+_Iteration: 2 (adversarial re-review of post-iteration-1 state)_
