@@ -33,7 +33,13 @@
 
 #include <array>
 #include <chrono>
+#include <filesystem>
 #include <utility>
+
+#ifdef _WIN32
+#  include <windows.h>
+#  include <shlobj.h>
+#endif
 
 namespace micmap::driver {
 
@@ -87,6 +93,34 @@ bool DetectionRunner::Start() {
     if (!detector_) {
         DriverLog("MicMap detection: createFFTDetector returned null - Start failed\n");
         return false;
+    }
+
+    // P7 D-25(1) gap closure: load existing v1.5 training profile so detection
+    // can fire on real hardware. P7 is read-only consumer; P9 (Training
+    // Migration) makes the driver the sole writer of training_data.bin.
+    // Fail-soft: missing/corrupt profile leaves detector untrained, analyze()
+    // returns near-zero confidence, state machine never fires; driver stays
+    // alive so the v1.5 client POST /button fallback remains usable.
+    {
+        std::filesystem::path profile_path;
+#ifdef _WIN32
+        wchar_t path_buf[MAX_PATH];
+        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, path_buf))) {
+            profile_path = std::filesystem::path(path_buf) / L"MicMap" / L"training_data.bin";
+        }
+#endif
+        if (!profile_path.empty() && std::filesystem::exists(profile_path)) {
+            if (detector_->loadTrainingData(profile_path)) {
+                DriverLog("MicMap detection: loaded training profile from %s\n",
+                          profile_path.string().c_str());
+            } else {
+                DriverLog("MicMap detection: loadTrainingData failed for %s - detection inert until valid profile\n",
+                          profile_path.string().c_str());
+            }
+        } else {
+            DriverLog("MicMap detection: no training profile at %s - detection inert until valid profile\n",
+                      profile_path.string().c_str());
+        }
     }
 
     // StateMachineConfig field names per src/core/include/micmap/core/state_machine.hpp:17-21:
