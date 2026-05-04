@@ -38,7 +38,8 @@
 
 #ifdef _WIN32
 #  include <windows.h>
-#  include <shlobj.h>
+#  include <shlobj.h>         // SHGetKnownFolderPath; pulls in knownfolders.h
+#  include <objbase.h>        // CoTaskMemFree (P7 REVIEW WR-06)
 #endif
 
 namespace micmap::driver {
@@ -110,10 +111,34 @@ bool DetectionRunner::Start() {
     // alive so the v1.5 client POST /button fallback remains usable.
     {
         std::filesystem::path profile_path;
+        bool appdata_resolved = false;
 #ifdef _WIN32
-        wchar_t path_buf[MAX_PATH];
-        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, path_buf))) {
-            profile_path = std::filesystem::path(path_buf) / L"MicMap" / L"training_data.bin";
+        // P7 REVIEW WR-06: prefer SHGetKnownFolderPath (long-path-aware,
+        // not deprecated) over SHGetFolderPathW (deprecated; silently
+        // truncates on AppData paths exceeding MAX_PATH via symlinks).
+        // SHGetKnownFolderPath requires COM to be initialized; the
+        // vrserver Init thread initializes its own apartment before
+        // calling our Init, so we run inside that apartment. Verified
+        // against the SteamVR driver-host conventions (vrcompositor
+        // initializes MTA on the same thread it dispatches Init from).
+        PWSTR appdata = nullptr;
+        const HRESULT hr = SHGetKnownFolderPath(FOLDERID_RoamingAppData,
+                                                /*flags=*/0,
+                                                /*hToken=*/nullptr,
+                                                &appdata);
+        if (SUCCEEDED(hr) && appdata != nullptr && appdata[0] != L'\0') {
+            profile_path = std::filesystem::path(appdata) / L"MicMap" / L"training_data.bin";
+            appdata_resolved = true;
+        }
+        if (appdata != nullptr) {
+            // CoTaskMemFree must be called even on SHGetKnownFolderPath
+            // failure paths if the pointer was set; documented behavior.
+            CoTaskMemFree(appdata);
+        }
+        if (!appdata_resolved) {
+            DriverLog("MicMap detection: SHGetKnownFolderPath(FOLDERID_RoamingAppData) "
+                      "failed (hr=0x%08X) - no profile load attempted (detection inert)\n",
+                      static_cast<unsigned>(hr));
         }
 #else
         // P7 REVIEW IN-02: driver is Windows-only per CLAUDE.md, but keep
@@ -123,17 +148,24 @@ bool DetectionRunner::Start() {
         DriverLog("MicMap detection: non-Windows build, skipping profile load "
                   "(detection inert)\n");
 #endif
-        if (!profile_path.empty() && std::filesystem::exists(profile_path)) {
-            if (detector_->loadTrainingData(profile_path)) {
-                DriverLog("MicMap detection: loaded training profile from %s\n",
-                          profile_path.string().c_str());
+        // P7 REVIEW WR-06: differentiate the three log shapes so the
+        // diagnostic in vrserver.txt is actionable:
+        //   1. appdata path resolution failed (logged above; no further log here)
+        //   2. profile file does not exist at <path>
+        //   3. profile file exists but failed to load (corrupt / wrong format)
+        if (appdata_resolved) {
+            if (std::filesystem::exists(profile_path)) {
+                if (detector_->loadTrainingData(profile_path)) {
+                    DriverLog("MicMap detection: loaded training profile from %s\n",
+                              profile_path.string().c_str());
+                } else {
+                    DriverLog("MicMap detection: loadTrainingData failed for %s - detection inert until valid profile\n",
+                              profile_path.string().c_str());
+                }
             } else {
-                DriverLog("MicMap detection: loadTrainingData failed for %s - detection inert until valid profile\n",
+                DriverLog("MicMap detection: profile file does not exist at %s - detection inert until valid profile\n",
                           profile_path.string().c_str());
             }
-        } else {
-            DriverLog("MicMap detection: no training profile at %s - detection inert until valid profile\n",
-                      profile_path.string().c_str());
         }
     }
 
