@@ -152,6 +152,14 @@ bool DetectionRunner::Start() {
         return false;
     }
     applyConfig(*cfg);   // pushes sensitivity into detector if API exposes it
+    // P7 REVIEW IN-06: seed lastObserved_ here so the first RunLoop iteration
+    // does not redundantly re-apply the same config. applyConfig is
+    // idempotent so the prior behavior was harmless, but skipping the
+    // redundant call removes a trivially confusing log/work pattern at
+    // start-of-loop. publish() races are still observed correctly because
+    // RunLoop's pointer-identity compare uses cfg.get() != lastObserved_.get()
+    // -- a fresh shared_ptr from publish() differs from this seeded value.
+    lastObserved_ = cfg;
 
     shutdown_.store(false, std::memory_order_release);
     paused_.store(false, std::memory_order_release);
