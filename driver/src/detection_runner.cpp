@@ -108,6 +108,13 @@ bool DetectionRunner::Start() {
         if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, path_buf))) {
             profile_path = std::filesystem::path(path_buf) / L"MicMap" / L"training_data.bin";
         }
+#else
+        // P7 REVIEW IN-02: driver is Windows-only per CLAUDE.md, but keep
+        // non-Windows builds (test stubs) explicit -- log that we deliberately
+        // skip profile-path resolution rather than silently leaving
+        // profile_path empty.
+        DriverLog("MicMap detection: non-Windows build, skipping profile load "
+                  "(detection inert)\n");
 #endif
         if (!profile_path.empty() && std::filesystem::exists(profile_path)) {
             if (detector_->loadTrainingData(profile_path)) {
