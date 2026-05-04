@@ -279,7 +279,13 @@ void AudioWorker::RunWorker() {
                 // Per-100-drops summary (D-08-shaped budget). Surfaces
                 // overflow without per-drop log flood.
                 const uint32_t total = ring_ptr->drops();
-                if ((total % kRingDropLogPeriod) == 1) {
+                // P7 REVIEW WR-03: log on every kRingDropLogPeriod-th drop
+                // (== 0 with total > 0 guard). The previous `== 1` form fired
+                // only at total == 1, 101, 201, ...; under any future change to
+                // bump-by-N drop semantics, a window crossing (e.g. 99 -> 105
+                // in one burst) would mute the diagnostic entirely. The
+                // total > 0 guard preserves "no log when there are no drops".
+                if (total > 0 && (total % kRingDropLogPeriod) == 0) {
                     DriverLog("MicMap detection: ring overflow drops=%u\n", total);
                 }
             }
