@@ -22,6 +22,12 @@
 
 #include <openvr_driver.h>
 
+// P7 REVIEW WR-01: poll-with-timeout while AudioWorker publishes the
+// WASAPI-negotiated sample rate (worker thread runs startCapture
+// asynchronously; we wait briefly before falling back).
+#include <chrono>
+#include <thread>
+
 using namespace vr;
 using micmap::driver::VRInputErrorName;
 
@@ -236,10 +242,34 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
             DriverLog("MicMap: enable_driver_detection requires enable_driver_audio "
                       "— skipping detection construction\n");
         } else {
-            // WASAPI shared-mode default sample rate. AudioWorker does not
-            // currently expose getSampleRate() out to here; if a future plan
-            // adds an accessor, swap to audioWorker_->sample_rate().
-            const uint32_t sampleRate = 48000;
+            // P7 REVIEW WR-01: read the WASAPI-negotiated sample rate from
+            // AudioWorker. The worker thread spawned by audioWorker_->Start()
+            // publishes the rate after its own startCapture() succeeds; we
+            // poll briefly because Init runs on vrserver's thread and Start
+            // is asynchronous. If the rate is still 0 after the poll window
+            // (capture has not yet bound, or failed silently), fall back to
+            // 48000 with a clear log so the assumption is auditable in
+            // vrserver.txt instead of buried in code.
+            uint32_t sampleRate = 0;
+            {
+                using clock = std::chrono::steady_clock;
+                const auto deadline = clock::now() + std::chrono::milliseconds(500);
+                while (clock::now() < deadline) {
+                    sampleRate = audioWorker_->sample_rate();
+                    if (sampleRate != 0) break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+            }
+            if (sampleRate == 0) {
+                sampleRate = 48000;
+                DriverLog("MicMap: WARNING - AudioWorker did not publish a sample rate "
+                          "within 500 ms; FFT detector built against assumed %u Hz "
+                          "(actual device rate may differ; trained profile may not match)\n",
+                          sampleRate);
+            } else {
+                DriverLog("MicMap: detection sampleRate=%u Hz (live from AudioWorker)\n",
+                          sampleRate);
+            }
             detectionRunner_ = std::make_unique<DetectionRunner>(
                 audioWorker_->ring(),
                 *commandQueue_,

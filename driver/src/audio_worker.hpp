@@ -85,6 +85,15 @@ public:
     /// Defensive against state_ == nullptr (early-return).
     void SetDetectionRunner(micmap::driver::DetectionRunner* runner);
 
+    /// P7 REVIEW WR-01: returns the WASAPI-negotiated sample rate of the
+    /// currently-selected capture device. Returns 0 until the worker thread
+    /// has completed startCapture() (asynchronous; readers poll/fallback).
+    /// Stable for the lifetime of the worker thread (WASAPIAudioCapture
+    /// re-init on device change happens on the same thread; the value is
+    /// re-stored before any new audio frames are pushed). Lock-free atomic
+    /// load -- safe to call from any thread.
+    uint32_t sample_rate() const;
+
     /**
      * @brief Pitfall 13 alive-flag mitigation state.
      *
@@ -104,6 +113,15 @@ public:
         /// Pitfall 13 alive flag transitively protects this — the callback
         /// bails on !alive BEFORE dereferencing runner_ptr.
         std::atomic<micmap::driver::DetectionRunner*> runner_ptr{nullptr};
+        /// P7 REVIEW WR-01: WASAPI-negotiated sample rate, stored by the
+        /// worker thread immediately after startCapture() succeeds. 0 means
+        /// "not yet known" (worker thread has not reached startCapture, or
+        /// capture init failed). Read by AudioWorker::sample_rate() and by
+        /// DeviceProvider::Init when constructing DetectionRunner so the
+        /// FFT detector is built against the actual rate (consumer mics
+        /// commonly run 44100 / 48000 / 96000; Beyond mic endpoint can
+        /// present at 24000).
+        std::atomic<uint32_t> sample_rate{0};
     };
 
     /**

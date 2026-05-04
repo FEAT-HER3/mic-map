@@ -87,6 +87,10 @@ bool AudioWorker::Start() {
         state_->alive.store(true, std::memory_order_release);
         state_->rms_logs_emitted.store(0, std::memory_order_release);
         state_->frames_seen.store(0, std::memory_order_release);
+        // P7 REVIEW WR-01: clear the prior run's sample_rate so a
+        // restart-after-Stop sees 0 ("not yet known") until the new
+        // worker thread re-publishes the WASAPI-negotiated value.
+        state_->sample_rate.store(0, std::memory_order_release);
     }
     running_.store(true, std::memory_order_release);
     thread_ = std::thread(&AudioWorker::ThreadEntry, this);
@@ -126,6 +130,15 @@ void AudioWorker::Stop() {
         thread_.detach();
     }
     running_.store(false, std::memory_order_release);
+}
+
+uint32_t AudioWorker::sample_rate() const {
+    // P7 REVIEW WR-01: returns 0 until the worker thread has populated
+    // state_->sample_rate after a successful startCapture(). Callers that
+    // need the rate (DeviceProvider building DetectionRunner) must
+    // either poll-with-timeout or fall back to a documented default.
+    if (!state_) return 0;
+    return state_->sample_rate.load(std::memory_order_acquire);
 }
 
 void AudioWorker::SetDetectionRunner(micmap::driver::DetectionRunner* runner) {
@@ -330,7 +343,20 @@ void AudioWorker::RunWorker() {
         thread_finished_.store(true, std::memory_order_release);
         return;
     }
-    DriverLog("MicMap: audio worker capture started\n");
+    // P7 REVIEW WR-01: publish the WASAPI-negotiated sample rate now that
+    // capture is live. Readers (AudioWorker::sample_rate, DeviceProvider
+    // building DetectionRunner) get the actual device rate -- not the
+    // historical hardcoded 48000 assumption -- so the FFT detector binds
+    // to the correct frequency bins. release-store pairs with
+    // sample_rate()'s acquire-load.
+    if (state_) {
+        const uint32_t rate = capture_->getSampleRate();
+        state_->sample_rate.store(rate, std::memory_order_release);
+        DriverLog("MicMap: audio worker capture started (sampleRate=%u, channels=%u)\n",
+                  rate, static_cast<unsigned>(capture_->getChannels()));
+    } else {
+        DriverLog("MicMap: audio worker capture started\n");
+    }
 
     // Wait on shutdown signal. cv_.wait re-checks the predicate under the
     // mutex, so spurious wakeups don't escape the loop.
