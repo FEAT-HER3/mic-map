@@ -1,0 +1,73 @@
+UpdateCTestConfiguration  from :C:/Users/decid/Documents/projects/mic-map/build/DartConfiguration.tcl
+Test project C:/Users/decid/Documents/projects/mic-map/build
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 16
+    Start 16: DeviceProviderLifecycleStress
+
+16: Test command: C:\Users\decid\Documents\projects\mic-map\build\bin\Release\test_device_provider_lifecycle_stress.exe
+16: Working Directory: C:/Users/decid/Documents/projects/mic-map/build/tests
+16: Test timeout computed to be: 10000000
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: [MicMap Driver] MicMap: DeviceProvider::Init called with null IVRDriverContext — bailing out (headless test path)
+16: PASS lifecycle_stress_50_cycles base=104 after=104
+1/1 Test #16: DeviceProviderLifecycleStress ....   Passed   25.34 sec
+
+The following tests passed:
+	DeviceProviderLifecycleStress
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =  25.34 sec

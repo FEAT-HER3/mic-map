@@ -1,0 +1,7 @@
+Mon May 04 2026 02:58:01.242 [Info] - micmap: MicMap driver leaving standby
+Mon May 04 2026 02:58:01.242 [Info] - micmap: MicMap: UpdateBooleanComponent(down) OK (handle=7)
+Mon May 04 2026 02:58:01.395 [Info] - micmap: MicMap: UpdateBooleanComponent(up) OK (handle=7)
+Mon May 04 2026 02:58:03.216 [Info] - micmap: MicMap: UpdateBooleanComponent(down) OK (handle=7)
+Mon May 04 2026 02:58:03.371 [Info] - micmap: MicMap: UpdateBooleanComponent(up) OK (handle=7)
+Mon May 04 2026 02:58:04.640 [Info] - micmap: MicMap: UpdateBooleanComponent(down) OK (handle=7)
+Mon May 04 2026 02:58:04.796 [Info] - micmap: MicMap: UpdateBooleanComponent(up) OK (handle=7)

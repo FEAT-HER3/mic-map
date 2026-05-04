@@ -1,0 +1,6 @@
+Mon May 04 2026 01:04:25.049 [Info] - micmap: MicMap detection: TapCommand pushed (n=5)
+Mon May 04 2026 01:04:25.056 [Info] - micmap: MicMap: UpdateBooleanComponent(down) OK (handle=7)
+Mon May 04 2026 01:04:25.217 [Info] - micmap: MicMap: UpdateBooleanComponent(up) OK (handle=7)
+Mon May 04 2026 01:04:27.359 [Info] - micmap: MicMap detection: TapCommand pushed (n=6)
+Mon May 04 2026 01:04:27.363 [Info] - micmap: MicMap: UpdateBooleanComponent(down) OK (handle=7)
+Mon May 04 2026 01:04:27.524 [Info] - micmap: MicMap: UpdateBooleanComponent(up) OK (handle=7)

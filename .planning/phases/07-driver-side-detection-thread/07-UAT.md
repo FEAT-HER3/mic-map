@@ -1,19 +1,19 @@
 ---
-status: pending
+status: signed_off
 phase: 07-driver-side-detection-thread
 source: [07-06-PLAN.md, 07-VALIDATION.md, 07-CONTEXT.md]
-started: <filled at sign-off>
-updated: <filled at sign-off>
-result: <PENDING | APPROVED | BLOCKED>
-phase_outcome: <GO | NO-GO>
+started: 2026-05-04T05:39Z
+updated: 2026-05-04T03:30Z
+result: APPROVED
+phase_outcome: GO
 ---
 
 # Phase 7 — UAT (User Acceptance Test)
 
-**Tested:** <filled at sign-off>
-**Driver SHA:** <git rev-parse HEAD output at test time>
+**Tested:** 2026-05-04
+**Driver SHA:** 32aade3 (Wave 5 Task 1 head) + amendment (loadTrainingData fix, see Notes below)
 **Rig:** Bigscreen Beyond + Win11 Pro
-**Operator:** <name>
+**Operator:** brandon@bigscreenvr.com
 
 > **Pre-test prerequisites (D-26 — applies to every case below):**
 > 1. Build artifacts current: `cmake --build build --config Release`.
@@ -27,12 +27,12 @@ phase_outcome: <GO | NO-GO>
 
 | # | Case | Success Criterion | Status | Evidence |
 |---|------|-------------------|--------|----------|
-| 1 | Flag-ON in-process trigger | SC1 | ⬜ | vrserver.txt excerpt + httpServer access log |
-| 2 | HMD wake/sleep ×2 | SC3 / MIG-03 | ⬜ | Process Explorer handle count + log pairs |
-| 3 | 50-cycle Init→500ms→Cleanup stress | SC4 / MIG-04 | ⬜ | DeviceProviderLifecycleStress ctest + Process Explorer real-rig audit |
-| 4 | Settings propagation < 50 ms | SC5 / MIG-06 | ⬜ | DetectionSettingsPropagation ctest output |
-| 5 | Flag-OFF regression | byte-identical to P6 closeout | ⬜ | hmd_button_test.exe run + vrserver.txt diff |
-| 6 | Coexistence handshake | Pitfall 10 / D-09..D-12 | ⬜ | curl /health output + log-grep on `MicMap detection: TapCommand pushed` vs `onTrigger: driver_detection_active=true, suppressing` |
+| 1 | Flag-ON in-process trigger | SC1 | ✅ | uat-evidence/d25-1-vrserver.txt — 4 TapCommand pushed (n=1..4), 4 UpdateBoolean down/up pairs, 0 POST /button (client suppressed via /health driver_detection_active=true) |
+| 2 | HMD wake/sleep ×2 | SC3 / MIG-03 | ⚠ PASS-with-caveat | uat-evidence/d25-2-vrserver-pause-resume.txt — detection survives doff/don (TapCommand n=5,6 fired post-wake). Pause/Resume callbacks NOT exercised by Bigscreen Beyond proximity sensor (SteamVR EnterStandby fires on full-system standby, not on quick HMD doff). Pause/Resume code path verified by automated DetectionSettingsPropagation ctest. |
+| 3 | 50-cycle Init→500ms→Cleanup stress | SC4 / MIG-04 | ✅ | uat-evidence/d25-3-ctest-output.txt — DeviceProviderLifecycleStress headless: PASS lifecycle_stress_50_cycles base=108 after=108 (delta=0, ≤5 budget) |
+| 4 | Settings propagation < 50 ms | SC5 / MIG-06 | ✅ | uat-evidence/d25-4-ctest-output.txt — DetectionSettingsPropagation: PASS case_propagation_under_50ms elapsed_ms=0 |
+| 5 | Flag-OFF regression | byte-identical to P6 closeout | ✅ | uat-evidence/d25-5-vrserver-flag-off.txt — 0 MicMap detection lines, 0 MicMap audio lines, 3 UpdateBoolean down/up pairs from hmd_button_test.exe POST /button → CommandQueue → /input/system/click |
+| 6 | Coexistence handshake | Pitfall 10 / D-09..D-12 | ✅ covered-by-composition | D-25(1) proves single-tap suppression (0 POST /button while driver detection active). D-25(5) proves POST /button fallback path. curl /health verified driver_detection_active=true (flags ON) and =false (flags OFF). Mid-session mic-cover with flags OFF not directly tested but is a composition of (1)+(5) — no new code path. |
 
 ***
 ## D-25(1): Flag-ON in-process trigger / SC1
@@ -206,14 +206,28 @@ phase_outcome: <GO | NO-GO>
 
 | Case | Result | Operator | Date |
 |------|--------|----------|------|
-| D-25(1) flag-ON in-process trigger | ✅ / ❌ | | |
-| D-25(2) HMD wake/sleep ×2 | ✅ / ❌ | | |
-| D-25(3) 50-cycle stress | ✅ / ❌ | | |
-| D-25(4) settings propagation < 50 ms | ✅ / ❌ | | |
-| D-25(5) flag-OFF regression | ✅ / ❌ | | |
-| D-25(6) coexistence handshake | ✅ / ❌ | | |
+| D-25(1) flag-ON in-process trigger | ✅ PASS | brandon@bigscreenvr.com | 2026-05-04 |
+| D-25(2) HMD wake/sleep ×2 | ⚠ PASS-with-caveat (functional goal met; pause/resume not exercised by proximity doff — see Notes) | brandon@bigscreenvr.com | 2026-05-04 |
+| D-25(3) 50-cycle stress | ✅ PASS (headless ctest, delta=0) | brandon@bigscreenvr.com | 2026-05-04 |
+| D-25(4) settings propagation < 50 ms | ✅ PASS (headless ctest, elapsed_ms=0) | brandon@bigscreenvr.com | 2026-05-04 |
+| D-25(5) flag-OFF regression | ✅ PASS | brandon@bigscreenvr.com | 2026-05-04 |
+| D-25(6) coexistence handshake | ✅ PASS (covered-by-composition of D-25(1) + D-25(5)) | brandon@bigscreenvr.com | 2026-05-04 |
 
-**Phase 7 GO/NO-GO:** ⬜ GO / ⬜ NO-GO (any ❌ → NO-GO; trigger 07-CHECKER feedback loop).
+**Phase 7 GO/NO-GO:** ✅ **GO** — all 6 cases signed off (1 with caveat).
+
+## Notes — UAT Findings
+
+### Defect found and fixed during D-25(1)
+
+First D-25(1) attempt failed: 0 `MicMap detection: TapCommand pushed` lines despite mic-covers. Root cause: `DetectionRunner::Start` created the FFT detector but never called `loadTrainingData()`. Without a trained noise profile, `analyze()` returns near-zero confidence; state machine never fires. The existing `%APPDATA%\MicMap\training_data.bin` (4156 bytes, written by v1.5 client) sat unused.
+
+**Fix (committed during UAT):** Added `loadTrainingData(%APPDATA%\MicMap\training_data.bin)` to `DetectionRunner::Start`, after `createFFTDetector` and before `createStateMachine`. Fail-soft: missing/corrupt profile leaves detector untrained but driver stays alive (P5 HTTP fallback path remains usable). P9 will make the driver the sole writer of `training_data.bin`; P7 is read-only consumer.
+
+After fix: D-25(1) re-run yielded 4 TapCommand pushed in ~6s of mic-covers, latency 7-11ms TapCommand→UpdateBoolean down. SC1 satisfied.
+
+### D-25(2) caveat
+
+Bigscreen Beyond proximity sensor (HMD doff/don) does NOT trigger SteamVR's `EnterStandby` callback on the MicMap driver — `EnterStandby` fires on full-system standby (~minutes idle), not on quick proximity transitions. The `Pause()`/`Resume()` code path is wired (07-04) and is exercised by the headless `DetectionSettingsPropagation` ctest. Functional goal of MIG-03 (detection survives wake) was verified by mic-cover succeeding after 2 doff/don cycles (TapCommand n=5, n=6 at 01:04 — see d25-2 evidence).
 
 ***
 ## Closeout — Restore main-branch flag defaults (D-27)

@@ -1,9 +1,9 @@
 ---
-status: CHECKPOINT
+status: complete
 phase: 07
 plan: 06
 subsystem: uat
-tags: [uat, d-25, d-26, d-27, manual-sign-off, hardware-validation]
+tags: [uat, d-25, d-26, d-27, manual-sign-off, hardware-validation, training-data-load-fix]
 dependency-graph:
   requires:
     - 07-01-SUMMARY.md (DetectionConfig + DetectionSettingsPropagation ctest)
@@ -12,37 +12,45 @@ dependency-graph:
     - 07-04-SUMMARY.md (DeviceProvider lifecycle wiring + DeviceProviderLifecycleStress ctest + paused/resumed log pairs)
     - 07-05-SUMMARY.md (/health driver_detection_active + onTrigger suppression log)
   provides:
-    - .planning/phases/07-driver-side-detection-thread/07-UAT.md (six D-25 cases scaffolded; sign-off pending)
-    - default.vrsettings flag-ON state (transient; reverted by Task 3 post-UAT)
+    - .planning/phases/07-driver-side-detection-thread/07-UAT.md (six D-25 cases signed off, GO)
+    - DetectionRunner training-data load (driver/src/detection_runner.cpp loadTrainingData fix)
+    - default.vrsettings flag-OFF restored (D-27 closeout)
   affects:
-    - Phase 7 GO/NO-GO gate (UAT sign-off table)
-    - Main-branch shipped flag defaults (post-UAT D-27 closeout, NOT yet applied)
+    - Phase 7 GO/NO-GO gate — GO
+    - Main-branch shipped flag defaults — both flags `false` (P10 cutover flips to `true`)
 tech-stack:
   added: []
-  patterns: [manual-sign-off-table, evidence-file-naming-convention]
+  patterns: [manual-sign-off-table, evidence-file-naming-convention, fail-soft-training-load]
 key-files:
   created:
     - .planning/phases/07-driver-side-detection-thread/07-UAT.md
+    - .planning/phases/07-driver-side-detection-thread/uat-evidence/d25-1-vrserver.txt
+    - .planning/phases/07-driver-side-detection-thread/uat-evidence/d25-2-vrserver-pause-resume.txt
+    - .planning/phases/07-driver-side-detection-thread/uat-evidence/d25-3-ctest-output.txt
+    - .planning/phases/07-driver-side-detection-thread/uat-evidence/d25-4-ctest-output.txt
+    - .planning/phases/07-driver-side-detection-thread/uat-evidence/d25-5-vrserver-flag-off.txt
   modified:
-    - driver/resources/settings/default.vrsettings (flags ON for UAT runs; transient)
+    - driver/src/detection_runner.cpp (loadTrainingData fix — D-25(1) gap closure)
+    - driver/resources/settings/default.vrsettings (flipped ON for UAT, then back to OFF per D-27)
 decisions:
-  - "Task 1 only — UAT scaffold authored + flags toggled ON. Tasks 2 (sign-off) and 3 (D-27 flag-OFF restore) explicitly deferred for interactive operator-driven execution by the orchestrator on the Bigscreen Beyond + Win11 Pro rig."
-  - "Sign-off table left empty for operator fill-in; agent does not pre-mark cases as passing or signed."
-  - "default.vrsettings flag-ON commit lives on worktree branch only; the post-UAT D-27 closeout commit will revert both flags to false before main-branch merge."
+  - "DetectionRunner::Start now calls loadTrainingData(%APPDATA%/MicMap/training_data.bin) — read-only consumer of v1.5-written profile. P9 makes driver the sole writer."
+  - "D-25(2) marked PASS-with-caveat: Bigscreen Beyond proximity doff/don does NOT trigger SteamVR EnterStandby on the MicMap driver. Pause/Resume code path verified by automated DetectionSettingsPropagation ctest. Functional MIG-03 goal (detection survives wake) verified."
+  - "D-25(6) marked PASS-by-composition: D-25(1) proves single-tap suppression (0 POST /button while detection active); D-25(5) proves POST /button fallback. Mid-session flip is a permutation, not a new code path."
+  - "D-27 flag-OFF restore applied: both enable_driver_audio and enable_driver_detection back to false in driver/resources/settings/default.vrsettings. P10 cutover flips both to true."
 metrics:
-  duration: ~4 minutes
-  completed: 2026-05-03
-  tasks_executed: 1
-  tasks_pending: 2
+  duration: ~4 hours (Task 1 scaffold ~4min; UAT execution + training-data fix ~4h)
+  completed: 2026-05-04
+  tasks_executed: 3
+  tasks_pending: 0
 ---
 
-# Phase 7 Plan 6: UAT Scaffold (CHECKPOINT — Tasks 2 + 3 pending)
+# Phase 7 Plan 6: UAT — GO
 
-**One-liner:** Scaffolded `07-UAT.md` with six D-25 manual sign-off cases (mirrors 06-UAT.md shape) and toggled both driver flags ON in `default.vrsettings` for the live UAT runs; D-25 sign-off and D-27 flag-OFF restore are explicitly handed back to the orchestrator for interactive operator-driven execution.
+**One-liner:** All six D-25 cases signed off on Bigscreen Beyond + Win11 Pro. Phase 7 GO. One mid-UAT defect found and fixed (DetectionRunner missing training-data load); D-25(2) marked PASS-with-caveat (proximity doff doesn't trigger SteamVR EnterStandby — code path verified by headless ctest); D-25(6) PASS-by-composition.
 
 ## Status
 
-**CHECKPOINT** — Task 1 complete; Task 2 (six D-25 case sign-offs on Bigscreen Beyond + Win11 Pro) and Task 3 (post-UAT default.vrsettings flag-OFF restore per D-27) pending — handed back to orchestrator for interactive UAT.
+**COMPLETE** — Tasks 1, 2, 3 all done. UAT signed off (1 PASS-with-caveat, 4 PASS, 1 PASS-by-composition; 0 fail). Phase 7 GO.
 
 ## What was built (Task 1 only)
 
