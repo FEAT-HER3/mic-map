@@ -59,6 +59,13 @@ constexpr auto kWatchdogPoll     = std::chrono::milliseconds(25);
 // rather than by the timeout when the ring is empty.
 constexpr auto kWakeTimeout      = std::chrono::milliseconds(50);
 
+// P7 REVIEW IN-05: detection FFT bin size. Matches the v1.5 GUI default
+// (apps/micmap/main.cpp via ConfigManager.detection.fftSize). P8 (config
+// read-back) threads this through DetectionConfig so the driver and the
+// GUI app share a single source of truth; until then this constant is
+// the authoritative driver-side value.
+constexpr int kDetectionFftSize  = 2048;
+
 } // namespace
 
 DetectionRunner::DetectionRunner(SampleRing<16, 480>& ring,
@@ -89,7 +96,7 @@ bool DetectionRunner::Start() {
     // factory calls; the threading discipline lives in the loop body,
     // not in setup).
     auto cfg = std::atomic_load_explicit(&activeConfig_, std::memory_order_acquire);
-    detector_ = micmap::detection::createFFTDetector(sampleRate_, /*fftSize=*/2048);
+    detector_ = micmap::detection::createFFTDetector(sampleRate_, kDetectionFftSize);
     if (!detector_) {
         DriverLog("MicMap detection: createFFTDetector returned null - Start failed\n");
         return false;
@@ -153,8 +160,8 @@ bool DetectionRunner::Start() {
 
     running_.store(true, std::memory_order_release);
     thread_ = std::thread(&DetectionRunner::ThreadEntry, this);
-    DriverLog("MicMap detection: thread spawned (sampleRate=%u, fftSize=2048)\n",
-              sampleRate_);
+    DriverLog("MicMap detection: thread spawned (sampleRate=%u, fftSize=%d)\n",
+              sampleRate_, kDetectionFftSize);
     return thread_.joinable();
 }
 
