@@ -230,7 +230,13 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/http_server.cpp"
-        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
+        # P8 08-02: device_provider Init now references config_io +
+        # makeDriverLogSink + AppConfig ADL hooks. The test must compile
+        # those TUs alongside device_provider.cpp to resolve the symbols.
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
 if(OpenVR_FOUND)
     add_executable(test_device_provider_lifecycle_stress ${_p7_stress_sources})
