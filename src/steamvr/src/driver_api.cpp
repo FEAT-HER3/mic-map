@@ -272,8 +272,13 @@ public:
             MICMAP_LOG_DEBUG("Trying port ", port, "...");
 
             httplib::Client client(host_, port);
-            client.set_connection_timeout(1);  // 1 second timeout
-            client.set_read_timeout(1);
+            // 100ms per-port: keeps full-range scan (11 ports) under 1.1s on
+            // worst-case ECONNREFUSED so the Driver Health indicator can flip
+            // red within one /health 1Hz tick after driver death (HEALTH-01).
+            // Loopback ECONNREFUSED returns RST in microseconds; this only
+            // bounds the slow path (firewall drop / very-high port).
+            client.set_connection_timeout(0, 100000);
+            client.set_read_timeout(0, 100000);
 
             // Try to get status
             auto res = client.Get("/health");
@@ -462,6 +467,11 @@ public:
         auto res = client.Get("/state");
         if (!res || res->status != 200) {
             lastError_ = "GET /state failed";
+            // Cache invalidation: a transport-level failure (no res) means the
+            // driver is gone or the listener moved. Drop the cached connection
+            // so the next pollDriverHealth /health probe re-scans ports and
+            // surfaces NotFound -> red indicator (HEALTH-01).
+            if (!res) connected_ = false;
             return std::nullopt;
         }
         try {
@@ -493,6 +503,7 @@ public:
         auto res = client.Get("/settings");
         if (!res || res->status != 200) {
             lastError_ = "GET /settings failed";
+            if (!res) connected_ = false;
             return std::nullopt;
         }
         try {
@@ -512,6 +523,7 @@ public:
         auto res = client.Get("/devices");
         if (!res || res->status != 200) {
             lastError_ = "GET /devices failed";
+            if (!res) connected_ = false;
             return std::nullopt;
         }
         try {
@@ -542,6 +554,7 @@ public:
         auto res = client.Get("/telemetry/level");
         if (!res || res->status != 200) {
             lastError_ = "GET /telemetry/level failed";
+            if (!res) connected_ = false;
             return std::nullopt;
         }
         try {
