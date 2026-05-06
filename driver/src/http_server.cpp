@@ -342,7 +342,7 @@ void HttpServer::SetupRoutes() {
         try { body = nlohmann::json::parse(req.body); }
         catch (const nlohmann::json::exception&) {
             res.status = 400;
-            res.set_content(R"({"field":"(structural)","reason":"malformed JSON body"})",
+            res.set_content(R"json({"field":"(structural)","reason":"malformed JSON body"})json",
                             "application/json");
             return;
         }
@@ -350,7 +350,7 @@ void HttpServer::SetupRoutes() {
         // Defensive: reject non-object top-level so from_json sees a stable shape.
         if (!body.is_object()) {
             res.status = 400;
-            res.set_content(R"({"field":"(structural)","reason":"top-level must be a JSON object"})",
+            res.set_content(R"json({"field":"(structural)","reason":"top-level must be a JSON object"})json",
                             "application/json");
             return;
         }
