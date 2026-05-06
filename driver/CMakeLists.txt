@@ -27,6 +27,7 @@ add_library(driver_micmap SHARED
     src/audio_worker.cpp     # P6 D-05: driver-side audio capture worker
     src/detection_runner.cpp # P7 D-17: driver-side detection thread
     src/sinks/driver_log_sink.cpp  # P8 LIB-04 / D-19: ILogSink wrapper around SafeDriverLog
+    src/config_json.cpp      # P8 D-03: AppConfig to_json/from_json ADL hooks (driver TU)
 )
 
 # Include directories

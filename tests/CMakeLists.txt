@@ -28,10 +28,19 @@ add_executable(test_placeholder test_placeholder.cpp)
 target_compile_features(test_placeholder PRIVATE cxx_std_17)
 add_test(NAME test_placeholder COMMAND test_placeholder)
 
-# Config manager round-trip, corruption, clamp, missing-file, and retention tests
-add_executable(test_config_manager test_config_manager.cpp)
+# Config manager round-trip, corruption, clamp, missing-file, and retention tests.
+# P8 D-02: ConfigManagerImpl + createConfigManager() relocated from src/core
+# into apps/micmap/src/config_manager_impl.cpp to keep micmap_core JSON-free.
+# Test compiles config_manager_impl.cpp directly (single-TU link, mirrors the
+# test_tray_balloon_once pattern that inlines first_launch_balloon.cpp).
+add_executable(test_config_manager
+    test_config_manager.cpp
+    ${CMAKE_SOURCE_DIR}/apps/micmap/src/config_manager_impl.cpp)
 target_compile_features(test_config_manager PRIVATE cxx_std_17)
-target_link_libraries(test_config_manager PRIVATE micmap::core)
+target_link_libraries(test_config_manager PRIVATE micmap::core nlohmann_json)
+if(WIN32)
+    target_link_libraries(test_config_manager PRIVATE shell32)
+endif()
 add_test(NAME test_config_manager COMMAND test_config_manager)
 
 # SVR-05: CommandQueue thread-safety / drop-oldest / depth-8 coverage
@@ -278,6 +287,15 @@ add_test(NAME AssertHttpServerNoVrApi
     COMMAND ${CMAKE_COMMAND}
         -DHTTP_SERVER_DIR=${CMAKE_SOURCE_DIR}/driver/src
         -P ${CMAKE_SOURCE_DIR}/cmake/AssertHttpServerNoVrApi.cmake)
+
+# P8 D-02 / Pitfall 15: assert nlohmann/json absent under the 4 shared-lib
+# roots. Wired in 08-02 (this plan) AFTER ConfigManagerImpl was relocated out
+# of src/core/src/config_manager.cpp into apps/micmap/src/config_manager_impl.cpp.
+# Full 4-root scope: src/audio + src/detection + src/core + src/common per D-02.
+add_test(NAME AssertNoJsonInCore
+    COMMAND ${CMAKE_COMMAND}
+        -DSRC_ROOTS=${CMAKE_SOURCE_DIR}/src/audio$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/detection$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/core$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/common
+        -P ${CMAKE_SOURCE_DIR}/cmake/AssertNoJsonInCore.cmake)
 
 # Test executable registrations follow the EXISTS-gated source-list pattern
 # from the P7 DetectionSettingsPropagation registration above. Each test
