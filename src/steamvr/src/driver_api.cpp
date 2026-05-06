@@ -1,15 +1,24 @@
 /**
- * @file vr_input.cpp
- * @brief VR input implementation using OpenVR SDK
+ * @file driver_api.cpp
+ * @brief MicMap driver HTTP IPC client + VR input implementation
+ *        (P8 D-22 rename of vr_input.cpp).
  *
- * This module connects to SteamVR as a background application for the sole
- * purpose of monitoring Quit/SteamVRConnected/SteamVRDisconnected events.
- * All button edges go through IDriverClient (POST /button) which the driver
- * translates into /input/system/click edges on the HMD property container
- * (Plan 01-03).
+ * Two surfaces co-located here historically:
+ *
+ * 1) DriverApi (formerly DriverClient): the client-side HTTP wrapper for
+ *    the driver's POST /button + GET /health endpoints. connect() now
+ *    returns the 3-state ConnectResult enum (Pitfall 6 fix — distinguishes
+ *    ECONNREFUSED from read/write timeouts via httplib::Error::Connection,
+ *    available since cpp-httplib v0.20.1).
+ *
+ * 2) OpenVRInput / StubVRInput: the SteamVR-background lifecycle monitor.
+ *    Used solely to observe Quit / SteamVRConnected / SteamVRDisconnected
+ *    events. All button edges flow through IDriverApi (POST /button) which
+ *    the driver translates into /input/system/click edges on the HMD
+ *    property container (Plan 01-03).
  */
 
-#include "micmap/steamvr/vr_input.hpp"
+#include "micmap/steamvr/driver_api.hpp"
 #include "micmap/steamvr/vr_input_events.hpp"
 #include "micmap/common/logger.hpp"
 
@@ -39,22 +48,22 @@ class StubVRInput : public IVRInput {
 public:
     StubVRInput() = default;
     ~StubVRInput() override = default;
-    
+
     bool initialize() override {
         MICMAP_LOG_INFO("Initializing VR input (stub implementation)");
         initialized_ = true;
         return true;
     }
-    
+
     void shutdown() override {
         MICMAP_LOG_INFO("Shutting down VR input (stub)");
         initialized_ = false;
     }
-    
+
     bool isInitialized() const override {
         return initialized_;
     }
-    
+
     bool isVRAvailable() const override {
         // Stub always returns false - no real VR
         return false;
@@ -63,20 +72,20 @@ public:
     void pollEvents() override {
         // Stub implementation - no events to poll
     }
-    
+
     void setEventCallback(VREventCallback callback) override {
         std::lock_guard<std::mutex> lock(callbackMutex_);
         eventCallback_ = std::move(callback);
     }
-    
+
     std::string getRuntimeName() const override {
         return "Stub VR Runtime";
     }
-    
+
     std::string getLastError() const override {
         return lastError_;
     }
-    
+
 protected:
     // IN-07: intentional test injection seam. StubVRInput::pollEvents is a
     // no-op (the stub has no SteamVR runtime to pull events from), so this
@@ -103,38 +112,48 @@ protected:
 };
 
 // ============================================================================
-// Driver Client Implementation
+// Driver API Implementation
 // ============================================================================
 
 /**
- * @brief HTTP client for communicating with the MicMap driver
+ * @brief HTTP client for communicating with the MicMap driver.
+ *
+ * P8 D-22 rename of DriverClient. connect() now returns the 3-state
+ * ConnectResult enum (Pitfall 6 — distinguishes ECONNREFUSED from
+ * read/write timeouts so HEALTH-01's red/green indicator can avoid
+ * false-negative flicker on a slow but live driver).
  */
-class DriverClient : public IDriverClient {
+class DriverApi : public IDriverApi {
 public:
-    DriverClient(const std::string& host, int startPort, int endPort)
+    DriverApi(const std::string& host, int startPort, int endPort)
         : host_(host)
         , startPort_(startPort)
         , endPort_(endPort)
     {
-        MICMAP_LOG_DEBUG("DriverClient created (host: ", host_,
+        MICMAP_LOG_DEBUG("DriverApi created (host: ", host_,
                          ", ports: ", startPort_, "-", endPort_, ")");
     }
 
-    ~DriverClient() override {
+    ~DriverApi() override {
         disconnect();
     }
 
-    bool connect() override {
+    ConnectResult connect() override {
         if (connected_) {
-            return true;
+            return ConnectResult::Connected;
         }
 
         MICMAP_LOG_INFO("Connecting to MicMap driver...");
 
-        // Try each port in the range
+        // Pitfall 6: track whether any port-attempt saw a Read/Write
+        // timeout (driver alive but slow) so we can return Timeout vs.
+        // NotFound at the end. HEALTH-01 relies on this distinction —
+        // NotFound -> red, Timeout -> keep prior state.
+        bool sawTimeout = false;
+
         for (int port = startPort_; port <= endPort_; ++port) {
             MICMAP_LOG_DEBUG("Trying port ", port, "...");
-            
+
             httplib::Client client(host_, port);
             client.set_connection_timeout(1);  // 1 second timeout
             client.set_read_timeout(1);
@@ -145,13 +164,44 @@ public:
                 port_ = port;
                 connected_ = true;
                 MICMAP_LOG_INFO("Connected to MicMap driver on port ", port_);
-                return true;
+                return ConnectResult::Connected;
             }
+
+            if (!res) {
+                using E = httplib::Error;
+                switch (res.error()) {
+                    case E::Connection:
+                        // ECONNREFUSED — driver not listening on this
+                        // port; try the next one.
+                        continue;
+                    case E::Read:
+                    case E::Write:
+                        sawTimeout = true;
+                        continue;
+                    default:
+                        // DNS, malformed URL, unclassified — fold into
+                        // sawTimeout so the caller still sees a non-NotFound
+                        // result if every other port also fails. Strict
+                        // OtherError-vs-Timeout discrimination is left to
+                        // a future refinement; HEALTH-01 only needs
+                        // NotFound vs not-NotFound.
+                        sawTimeout = true;
+                        continue;
+                }
+            }
+            // res truthy but non-200 — driver replied with an unexpected
+            // status; keep going (counts as live but unhealthy).
+            sawTimeout = true;
         }
 
-        lastError_ = "Could not connect to MicMap driver on any port";
+        if (sawTimeout) {
+            lastError_ = "Driver responded slowly (timeout) on at least one port";
+            MICMAP_LOG_WARNING(lastError_);
+            return ConnectResult::Timeout;
+        }
+        lastError_ = "Driver not listening on any port (ECONNREFUSED on all ports)";
         MICMAP_LOG_WARNING(lastError_);
-        return false;
+        return ConnectResult::NotFound;
     }
 
     void disconnect() override {
@@ -169,7 +219,7 @@ public:
     bool tap() override {
         if (!ensureConnected()) {
             lastError_ = "Not connected to driver";
-            MICMAP_LOG_ERROR("DriverClient::tap() failed: ", lastError_);
+            MICMAP_LOG_ERROR("DriverApi::tap() failed: ", lastError_);
             return false;
         }
 
@@ -183,18 +233,18 @@ public:
 
         if (!res) {
             lastError_ = "HTTP request failed";
-            MICMAP_LOG_ERROR("DriverClient::tap() failed: ", lastError_);
+            MICMAP_LOG_ERROR("DriverApi::tap() failed: ", lastError_);
             connected_ = false;  // Mark as disconnected to retry
             return false;
         }
 
         if (res->status != 200) {
             lastError_ = "Server returned status " + std::to_string(res->status);
-            MICMAP_LOG_ERROR("DriverClient::tap() failed: ", lastError_);
+            MICMAP_LOG_ERROR("DriverApi::tap() failed: ", lastError_);
             return false;
         }
 
-        MICMAP_LOG_DEBUG("DriverClient::tap() successful");
+        MICMAP_LOG_DEBUG("DriverApi::tap() successful");
         return true;
     }
 
@@ -219,7 +269,7 @@ public:
     }
 
     // P7 D-10: poll /health for `driver_detection_active`; cache 1 s.
-    // See vr_input.hpp doc-block on IDriverClient::isDriverDetectionActive
+    // See driver_api.hpp doc-block on IDriverApi::isDriverDetectionActive
     // for the full contract (returns false defensively on any error so the
     // client falls back to its own trigger path; D-11 state-machine cooldown
     // is the belt-and-suspenders backstop). Deleted in P10 per D-12.
@@ -268,7 +318,7 @@ private:
         if (connected_) {
             return true;
         }
-        return connect();
+        return connect() == ConnectResult::Connected;
     }
 
     std::string host_;
@@ -299,7 +349,7 @@ private:
  * - Connecting to SteamVR as a background application (VRApplication_Background)
  * - Polling lifecycle events (SteamVR quit, connection, etc.)
  *
- * Does NOT handle button presses — those flow through IDriverClient to the
+ * Does NOT handle button presses — those flow through IDriverApi to the
  * MicMap driver which owns /input/system/click on the HMD container.
  */
 class OpenVRInput : public IVRInput {
@@ -307,73 +357,73 @@ public:
     OpenVRInput() {
         MICMAP_LOG_DEBUG("Created OpenVR input handler");
     }
-    
+
     ~OpenVRInput() override {
         shutdown();
     }
-    
+
     bool initialize() override {
         if (initialized_) {
             return true;
         }
-        
+
         MICMAP_LOG_INFO("Initializing OpenVR input");
-        
+
         // Check if SteamVR is running
         if (!vr::VR_IsRuntimeInstalled()) {
             lastError_ = "OpenVR runtime is not installed";
             MICMAP_LOG_ERROR(lastError_);
             return false;
         }
-        
+
         if (!vr::VR_IsHmdPresent()) {
             lastError_ = "No HMD detected";
             MICMAP_LOG_WARNING(lastError_);
             // Continue anyway - we might be running without HMD for testing
         }
-        
+
         // Initialize OpenVR as a background application
         // VRApplication_Background allows us to run without rendering
         vr::EVRInitError initError = vr::VRInitError_None;
         vrSystem_ = vr::VR_Init(&initError, vr::VRApplication_Background);
-        
+
         if (initError != vr::VRInitError_None) {
-            lastError_ = std::string("Failed to initialize OpenVR: ") + 
+            lastError_ = std::string("Failed to initialize OpenVR: ") +
                         vr::VR_GetVRInitErrorAsEnglishDescription(initError);
             MICMAP_LOG_ERROR(lastError_);
             vrSystem_ = nullptr;
             return false;
         }
-        
+
         initialized_ = true;
         MICMAP_LOG_INFO("OpenVR initialized successfully");
-        
+
         // Notify connection
         notifyEvent(VREventType::SteamVRConnected);
-        
+
         return true;
     }
-    
+
     void shutdown() override {
         if (!initialized_) {
             return;
         }
-        
+
         MICMAP_LOG_INFO("Shutting down OpenVR input");
 
         vrSystem_ = nullptr;
-        
+
         vr::VR_Shutdown();
-        
+
         initialized_ = false;
-        
+
         notifyEvent(VREventType::SteamVRDisconnected);
     }
-    
+
     bool isInitialized() const override {
         return initialized_;
     }
-    
+
     bool isVRAvailable() const override {
         // Check if SteamVR is running
         return vr::VR_IsRuntimeInstalled() && vr::VR_IsHmdPresent();
@@ -383,26 +433,26 @@ public:
         if (!initialized_ || !vrSystem_) {
             return;
         }
-        
+
         vr::VREvent_t event;
         while (vrSystem_->PollNextEvent(&event, sizeof(event))) {
             processVREvent(event);
         }
     }
-    
+
     void setEventCallback(VREventCallback callback) override {
         std::lock_guard<std::mutex> lock(callbackMutex_);
         eventCallback_ = std::move(callback);
     }
-    
+
     std::string getRuntimeName() const override {
         return "OpenVR (SteamVR)";
     }
-    
+
     std::string getLastError() const override {
         return lastError_;
     }
-    
+
 private:
     // Adapters that let OpenVRInput::processVREvent delegate to the free
     // processVREventImpl(IVRSystemSeam&, IEventSink&, uint32_t) without
@@ -452,7 +502,7 @@ private:
             eventCallback_(event);
         }
     }
-    
+
     bool initialized_ = false;
     vr::IVRSystem* vrSystem_ = nullptr;
     std::string lastError_;
@@ -479,12 +529,12 @@ std::unique_ptr<IVRInput> createStubVRInput() {
     return std::make_unique<StubVRInput>();
 }
 
-std::unique_ptr<IDriverClient> createDriverClient(
+std::unique_ptr<IDriverApi> createDriverApi(
     const std::string& host,
     int startPort,
     int endPort)
 {
-    return std::make_unique<DriverClient>(host, startPort, endPort);
+    return std::make_unique<DriverApi>(host, startPort, endPort);
 }
 
 } // namespace micmap::steamvr

@@ -21,7 +21,7 @@
 #pragma comment(lib, "comctl32.lib")
 #endif
 
-#include "micmap/steamvr/vr_input.hpp"
+#include "micmap/steamvr/driver_api.hpp"   // P8 D-22: renamed from vr_input.hpp
 #include "micmap/common/logger.hpp"
 
 #include <string>
@@ -47,7 +47,7 @@ constexpr int ID_TIMER = 211;
 // Global state
 struct AppState {
     std::shared_ptr<steamvr::IVRInput> vrInput;
-    std::unique_ptr<steamvr::IDriverClient> driverClient;
+    std::unique_ptr<steamvr::IDriverApi> driverClient;
 
     bool driverConnected = false;
     int driverPort = 0;
@@ -107,7 +107,7 @@ std::wstring Utf8ToWide(const std::string& s) {
 
 void EnsureDriverClient() {
     if (!g_state.driverClient) {
-        g_state.driverClient = steamvr::createDriverClient("127.0.0.1", 27015, 27025);
+        g_state.driverClient = steamvr::createDriverApi("127.0.0.1", 27015, 27025);   // P8 D-22 rename
     }
 }
 
@@ -454,7 +454,9 @@ void OnSendTapClicked() {
 
     if (!g_state.driverClient->isConnected()) {
         AddLogEntry(L"Driver not connected, attempting to connect...");
-        if (!g_state.driverClient->connect()) {
+        // P8 Pitfall 6: connect() returns ConnectResult; treat any non-Connected
+        // outcome as the legacy false for this UI flow.
+        if (g_state.driverClient->connect() != steamvr::ConnectResult::Connected) {
             std::wstring err = Utf8ToWide(g_state.driverClient->getLastError());
             AddLogEntry(L"Connect failed: " + err);
             SetLastResult(L"Tap FAILED: " + err, false);
@@ -490,7 +492,8 @@ void OnTestDriverClicked() {
     g_state.driverClient->disconnect();
 
     AddLogEntry(L"Attempting to connect to driver HTTP server...");
-    if (g_state.driverClient->connect()) {
+    // P8 Pitfall 6: connect() returns ConnectResult.
+    if (g_state.driverClient->connect() == steamvr::ConnectResult::Connected) {
         g_state.driverConnected = true;
         g_state.driverPort = g_state.driverClient->getPort();
         AddLogEntry(L"Connected to driver on port " +
@@ -527,7 +530,8 @@ void OnReconnectDriverClicked() {
     }
 
     g_state.driverClient->disconnect();
-    if (g_state.driverClient->connect()) {
+    // P8 Pitfall 6: connect() returns ConnectResult.
+    if (g_state.driverClient->connect() == steamvr::ConnectResult::Connected) {
         g_state.driverPort = g_state.driverClient->getPort();
         AddLogEntry(L"Reconnected on port " +
                     std::to_wstring(g_state.driverPort));

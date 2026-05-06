@@ -29,7 +29,7 @@
 #include "resource.h"
 #include "micmap/audio/audio_capture.hpp"
 #include "micmap/detection/noise_detector.hpp"
-#include "micmap/steamvr/vr_input.hpp"
+#include "micmap/steamvr/driver_api.hpp"   // P8 D-22: renamed from vr_input.hpp
 #include "micmap/core/state_machine.hpp"
 #include "micmap/core/config_manager.hpp"
 #include "micmap/common/logger.hpp"
@@ -68,7 +68,7 @@ struct MicMapApp {
     std::unique_ptr<steamvr::IVRInput> vrInput;
     std::unique_ptr<core::IStateMachine> stateMachine;
     std::unique_ptr<core::IConfigManager> configManager;
-    std::unique_ptr<steamvr::IDriverClient> driverClient;
+    std::unique_ptr<steamvr::IDriverApi> driverClient;
 
     std::vector<audio::AudioDevice> devices;
     int selectedDeviceIndex = 0;
@@ -265,7 +265,7 @@ bool MicMapApp::initialize() {
     }
 
     // Initialize driver client (non-blocking - will connect in background)
-    driverClient = steamvr::createDriverClient();
+    driverClient = steamvr::createDriverApi();   // P8 D-22 rename
 
     // Initialize VR input (don't initialize yet - will do async).
     // VR input is only used for SteamVR-quit lifecycle notifications now;
@@ -519,7 +519,7 @@ void MicMapApp::onTrigger() {
     }
     // P7 D-10: suppress local trigger when driver owns the detection path.
     // State machine cooldown is the belt-and-suspenders backstop per D-11.
-    // The /health poll is cached for 1 s in DriverClient so the latency
+    // The /health poll is cached for 1 s in DriverApi so the latency
     // overhead per onTrigger is bounded. Deleted in P10 per D-12.
     if (driverClient->isDriverDetectionActive()) {
         MICMAP_LOG_DEBUG("onTrigger: driver_detection_active=true, suppressing");
@@ -946,11 +946,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
     // driverClient->connect() / vrInput->initialize() calls. Without this
     // seeding, the main loop's reconnect branch would fire ~2s into boot
     // while the initial thread's connect() was still running, launching a
-    // *second* concurrent connect() on the same IDriverClient instance.
+    // *second* concurrent connect() on the same IDriverApi instance.
     std::packaged_task<void()> connectTask([]() {
         if (g_app.initialConnectCancel.load()) return;
         if (g_app.driverClient) {
-            g_app.driverClient->connect();
+            // P8 Pitfall 6: connect() now returns ConnectResult. Treat any
+            // non-Connected outcome as the legacy false (caller code paths
+            // already key off isConnected() for downstream gating).
+            auto r = g_app.driverClient->connect();
+            if (r != steamvr::ConnectResult::Connected) {
+                MICMAP_LOG_WARNING("driverClient->connect() returned non-Connected: ",
+                                   r == steamvr::ConnectResult::NotFound ? "NotFound" :
+                                   r == steamvr::ConnectResult::Timeout  ? "Timeout"  : "OtherError");
+            }
         }
     });
     std::packaged_task<void()> vrInitTask([]() {
@@ -1021,7 +1029,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
                 if (!g_app.driverConnectFuture.valid() ||
                     g_app.driverConnectFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
                     g_app.driverConnectFuture = std::async(std::launch::async, []() {
-                        g_app.driverClient->connect();
+                        // P8 Pitfall 6: connect() returns ConnectResult; the
+                        // reconnect loop only cares whether a successful
+                        // /health was observed. Other branches surface as
+                        // a debug log; the loop itself self-corrects on the
+                        // next interval if the driver comes up later.
+                        auto r = g_app.driverClient->connect();
+                        if (r != steamvr::ConnectResult::Connected) {
+                            MICMAP_LOG_DEBUG("reconnect: connect() returned non-Connected (",
+                                             r == steamvr::ConnectResult::NotFound ? "NotFound" :
+                                             r == steamvr::ConnectResult::Timeout  ? "Timeout"  : "OtherError",
+                                             ")");
+                        }
                     });
                 }
             }

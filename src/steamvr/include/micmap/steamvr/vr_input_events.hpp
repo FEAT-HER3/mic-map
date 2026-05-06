@@ -14,7 +14,7 @@
  * can delegate to it unambiguously without name-lookup gymnastics.
  */
 
-#include "micmap/steamvr/vr_input.hpp"  // for VREventType
+#include "micmap/steamvr/driver_api.hpp"  // for VREventType (P8 D-22 rename)
 
 #include <cstdint>
 
