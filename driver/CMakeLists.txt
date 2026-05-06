@@ -29,6 +29,7 @@ add_library(driver_micmap SHARED
     src/sinks/driver_log_sink.cpp  # P8 LIB-04 / D-19: ILogSink wrapper around SafeDriverLog
     src/config_json.cpp      # P8 D-03: AppConfig to_json/from_json ADL hooks (driver TU)
     src/config_io.cpp        # P8 D-10/D-14: driver-side config.json read (3-attempt retry) + atomic save
+    src/settings_validator.cpp  # P8 D-14/D-15: PUT /settings field validation (first-failed-field)
 )
 
 # Include directories
