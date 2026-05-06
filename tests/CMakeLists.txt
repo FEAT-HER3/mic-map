@@ -395,7 +395,8 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
-        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp")
 endif()
 if(OpenVR_FOUND)
     add_executable(test_get_settings_shape ${_p8_get_settings_shape_sources})
@@ -507,7 +508,8 @@ endif()
 set(_p8_init_config_share_violation_sources driver/init_config_share_violation_test.cpp)
 if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
     list(APPEND _p8_init_config_share_violation_sources
-        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp")  # P8 D-03: ADL hooks needed by loadConfigJson
 endif()
 if(OpenVR_FOUND)
     add_executable(test_init_config_share_violation ${_p8_init_config_share_violation_sources})
@@ -556,7 +558,8 @@ endif()
 set(_p8_config_io_atomic_persist_sources driver/config_io_atomic_persist_test.cpp)
 if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
     list(APPEND _p8_config_io_atomic_persist_sources
-        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp")  # P8 D-03: ADL hooks needed by saveConfigJson
 endif()
 add_executable(test_config_io_atomic_persist ${_p8_config_io_atomic_persist_sources})
 target_compile_features(test_config_io_atomic_persist PRIVATE cxx_std_17)

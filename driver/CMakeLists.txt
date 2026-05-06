@@ -28,6 +28,7 @@ add_library(driver_micmap SHARED
     src/detection_runner.cpp # P7 D-17: driver-side detection thread
     src/sinks/driver_log_sink.cpp  # P8 LIB-04 / D-19: ILogSink wrapper around SafeDriverLog
     src/config_json.cpp      # P8 D-03: AppConfig to_json/from_json ADL hooks (driver TU)
+    src/config_io.cpp        # P8 D-10/D-14: driver-side config.json read (3-attempt retry) + atomic save
 )
 
 # Include directories

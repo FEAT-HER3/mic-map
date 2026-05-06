@@ -8,8 +8,7 @@
  *        wire format identical to v1.5 client-written config.json on disk.
  */
 
-#include "micmap/core/config_manager.hpp"
-#include <nlohmann/json.hpp>
+#include "config_json.hpp"   // P8 D-03: declarations of the ADL hooks defined here
 #include <chrono>
 #include <cstdint>
 #include <ctime>
