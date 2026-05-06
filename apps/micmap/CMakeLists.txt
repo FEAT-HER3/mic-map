@@ -5,6 +5,8 @@
 set(MICMAP_SOURCES
     main.cpp
     first_launch_balloon.cpp
+    src/config_json.cpp           # P8 D-03: AppConfig to_json/from_json ADL hooks (client TU)
+    src/config_manager_impl.cpp   # P8 D-02: ConfigManagerImpl relocated from src/core to keep micmap_core JSON-free
 )
 
 # ---- app.vrmanifest generation (Plan 03-02 — D-19) -----------------------
@@ -49,6 +51,7 @@ target_link_libraries(micmap
         micmap_steamvr
         imgui
         micmap::bindings
+        nlohmann_json   # P8 D-02/D-03: client TU now compiles config_json.cpp + config_manager_impl.cpp
 )
 
 target_compile_features(micmap PRIVATE cxx_std_17)

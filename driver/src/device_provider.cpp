@@ -20,7 +20,17 @@
 #include "driver_log.hpp"
 #include "vr_error.hpp"
 
+// P8 LIB-04 / D-19 / D-20 — driver-side composition root deps.
+#include "config_io.hpp"                   // loadConfigJson + getDriverConfigPath + getDriverAppDataDir
+#include "sinks/driver_log_sink.hpp"       // makeDriverLogSink
+#include "micmap/common/log_sink.hpp"      // makeFileLogSink + makeMultiSinkLogger
+#include "micmap/common/logger.hpp"        // Logger::setLogger + MICMAP_LOG_*
+
 #include <openvr_driver.h>
+
+#include <memory>
+#include <utility>
+#include <vector>
 
 // P7 REVIEW WR-01: poll-with-timeout while AudioWorker publishes the
 // WASAPI-negotiated sample rate (worker thread runs startCapture
@@ -82,7 +92,38 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
 
     VR_INIT_SERVER_DRIVER_CONTEXT(pDriverContext);
 
+    // P8 LIB-04 / D-19 / D-20 / Pitfall 3: composition root for the driver
+    // logger. Hoisted to FIRST step in Init AFTER VR_INIT (so DriverLogSink's
+    // SafeDriverLog has a valid context) and BEFORE the first DriverLog call
+    // below. Once setLogger lands the MultiSinkLogger, every MICMAP_LOG_*
+    // call from any TU (driver, shared lib, bindings) fans to vrserver.txt
+    // via DriverLogSink AND to %APPDATA%\MicMap\micmap-driver.log via
+    // FileLogSink.
+    {
+        namespace mc = micmap::common;
+        std::vector<std::shared_ptr<mc::ILogSink>> sinks;
+        sinks.push_back(makeDriverLogSink());
+        sinks.push_back(mc::makeFileLogSink(getDriverAppDataDir() / L"micmap-driver.log"));
+        mc::Logger::setLogger(mc::makeMultiSinkLogger(std::move(sinks)));
+    }
+
     DriverLog("MicMap driver initializing (sidecar mode)\n");
+
+    // P8 D-10 / IPC-05: driver Init reads config.json once with 3-attempt
+    // SHARING_VIOLATION retry. After this point the in-memory snapshot is
+    // authoritative for the rest of the session - driver never re-reads
+    // from disk (PUT /settings updates the snapshot + persists; clients
+    // reading config see the in-memory value via GET /settings).
+    {
+        core::AppConfig initial{};   // ctor defaults
+        const auto cfgPath = getDriverConfigPath();
+        if (!loadConfigJson(cfgPath, initial)) {
+            DriverLog("MicMap: loadConfigJson rejected path (programmer error); using defaults\n");
+        }
+        auto sp = std::make_shared<const core::AppConfig>(std::move(initial));
+        std::atomic_store_explicit(&configSnapshot_, sp, std::memory_order_release);
+        DriverLog("MicMap: config snapshot published from %s\n", cfgPath.string().c_str());
+    }
 
     // Ensure SteamVR's generic-HMD bindings route /user/head/input/system to
     // dashboard + lasermouse leftclick. Best-effort; logs its own outcome.
@@ -505,6 +546,31 @@ void DeviceProvider::writeValue(bool v) {
               static_cast<unsigned long long>(hSystemClick_));
     lastWrittenValue_ = v;
     isPressed_ = v;
+}
+
+// P8 D-15 — atomic-snapshot accessors. Mechanism mirrors P7
+// detection_runner.cpp:85,99 (atomic_load_explicit / atomic_store_explicit on
+// std::shared_ptr<const T>). Single-mutator (HTTP PUT thread via
+// applyValidatedConfig) / multi-reader (HTTP GET thread, detection thread,
+// audio thread) — generalized from the P7 DetectionConfig pattern.
+
+std::shared_ptr<const core::AppConfig> DeviceProvider::getConfigSnapshot() const {
+    return std::atomic_load_explicit(&configSnapshot_, std::memory_order_acquire);
+}
+
+bool DeviceProvider::applyValidatedConfig(core::AppConfig candidate) {
+    // Pitfall 2 / RESEARCH: persist-first. Disk write must succeed BEFORE
+    // the in-memory snapshot swap, so a crashed PUT leaves both observable
+    // states consistent (either old-or-new - never new-in-memory + old-on-disk).
+    const auto path = getDriverConfigPath();
+    if (!saveConfigJson(path, candidate)) {
+        MICMAP_LOG_ERROR("applyValidatedConfig: saveConfigJson failed for ", path.string());
+        return false;
+    }
+    auto next = std::make_shared<const core::AppConfig>(std::move(candidate));
+    std::atomic_store_explicit(&configSnapshot_, next, std::memory_order_release);
+    MICMAP_LOG_INFO("applyValidatedConfig: snapshot updated and persisted to ", path.string());
+    return true;
 }
 
 } // namespace micmap::driver

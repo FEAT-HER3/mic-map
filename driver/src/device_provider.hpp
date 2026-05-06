@@ -22,6 +22,11 @@
                                   // command_queue.hpp + sample_ring.hpp + std
                                   // headers — no shared-lib pull-in.
 
+#include "micmap/core/config_manager.hpp"   // P8 D-15: AppConfig schema for
+                                            // atomic snapshot (header is
+                                            // JSON-free so AssertNoJsonInCore
+                                            // is unaffected).
+
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -108,6 +113,31 @@ private:
     bool                              driverDetectionEnabled_{false};
     DetectionConfig                   detectionDefaults_{};
     std::unique_ptr<DetectionRunner>  detectionRunner_;
+
+    // P8 D-15 / Pattern A: AppConfig atomic snapshot. Single mutator (HTTP
+    // PUT /settings handler in 08-04); multi-reader (HTTP GET /settings,
+    // detection thread for runtime config reads, audio thread for
+    // device-config reads). Mechanism mirrors P7 detection_runner.cpp:85,99
+    // exactly - std::atomic_load_explicit / atomic_store_explicit on a
+    // std::shared_ptr<const T>. C++17 free-function form (deprecated in
+    // C++20 but still present).
+    std::shared_ptr<const core::AppConfig> configSnapshot_;
+
+public:
+    /// @brief P8 D-15: Lock-free read of the current AppConfig snapshot.
+    ///        Safe to call from any thread. Returns nullptr only between
+    ///        ctor and Init's first publish (which happens before
+    ///        HttpServer::Start so HTTP handlers always see a non-null
+    ///        snapshot).
+    std::shared_ptr<const core::AppConfig> getConfigSnapshot() const;
+
+    /// @brief P8 D-14 / Pitfall 2: persist-first apply for PUT /settings.
+    ///        Calls saveConfigJson FIRST; on disk success swaps the atomic
+    ///        snapshot. Returns false on disk failure (HTTP 500 in 08-04).
+    ///        Validation (08-04 settings_validator) runs BEFORE this method.
+    bool applyValidatedConfig(core::AppConfig candidate);
+
+private:
 
     // HMD-side component state
     vr::VRInputComponentHandle_t hSystemClick_{vr::k_ulInvalidInputComponentHandle};

@@ -28,10 +28,19 @@ add_executable(test_placeholder test_placeholder.cpp)
 target_compile_features(test_placeholder PRIVATE cxx_std_17)
 add_test(NAME test_placeholder COMMAND test_placeholder)
 
-# Config manager round-trip, corruption, clamp, missing-file, and retention tests
-add_executable(test_config_manager test_config_manager.cpp)
+# Config manager round-trip, corruption, clamp, missing-file, and retention tests.
+# P8 D-02: ConfigManagerImpl + createConfigManager() relocated from src/core
+# into apps/micmap/src/config_manager_impl.cpp to keep micmap_core JSON-free.
+# Test compiles config_manager_impl.cpp directly (single-TU link, mirrors the
+# test_tray_balloon_once pattern that inlines first_launch_balloon.cpp).
+add_executable(test_config_manager
+    test_config_manager.cpp
+    ${CMAKE_SOURCE_DIR}/apps/micmap/src/config_manager_impl.cpp)
 target_compile_features(test_config_manager PRIVATE cxx_std_17)
-target_link_libraries(test_config_manager PRIVATE micmap::core)
+target_link_libraries(test_config_manager PRIVATE micmap::core nlohmann_json)
+if(WIN32)
+    target_link_libraries(test_config_manager PRIVATE shell32)
+endif()
 add_test(NAME test_config_manager COMMAND test_config_manager)
 
 # SVR-05: CommandQueue thread-safety / drop-oldest / depth-8 coverage
@@ -221,7 +230,13 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/http_server.cpp"
-        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
+        # P8 08-02: device_provider Init now references config_io +
+        # makeDriverLogSink + AppConfig ADL hooks. The test must compile
+        # those TUs alongside device_provider.cpp to resolve the symbols.
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
 if(OpenVR_FOUND)
     add_executable(test_device_provider_lifecycle_stress ${_p7_stress_sources})
@@ -278,6 +293,15 @@ add_test(NAME AssertHttpServerNoVrApi
     COMMAND ${CMAKE_COMMAND}
         -DHTTP_SERVER_DIR=${CMAKE_SOURCE_DIR}/driver/src
         -P ${CMAKE_SOURCE_DIR}/cmake/AssertHttpServerNoVrApi.cmake)
+
+# P8 D-02 / Pitfall 15: assert nlohmann/json absent under the 4 shared-lib
+# roots. Wired in 08-02 (this plan) AFTER ConfigManagerImpl was relocated out
+# of src/core/src/config_manager.cpp into apps/micmap/src/config_manager_impl.cpp.
+# Full 4-root scope: src/audio + src/detection + src/core + src/common per D-02.
+add_test(NAME AssertNoJsonInCore
+    COMMAND ${CMAKE_COMMAND}
+        -DSRC_ROOTS=${CMAKE_SOURCE_DIR}/src/audio$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/detection$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/core$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/common
+        -P ${CMAKE_SOURCE_DIR}/cmake/AssertNoJsonInCore.cmake)
 
 # Test executable registrations follow the EXISTS-gated source-list pattern
 # from the P7 DetectionSettingsPropagation registration above. Each test
@@ -377,7 +401,8 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
-        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp")
 endif()
 if(OpenVR_FOUND)
     add_executable(test_get_settings_shape ${_p8_get_settings_shape_sources})
@@ -489,7 +514,8 @@ endif()
 set(_p8_init_config_share_violation_sources driver/init_config_share_violation_test.cpp)
 if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
     list(APPEND _p8_init_config_share_violation_sources
-        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp")  # P8 D-03: ADL hooks needed by loadConfigJson
 endif()
 if(OpenVR_FOUND)
     add_executable(test_init_config_share_violation ${_p8_init_config_share_violation_sources})
@@ -538,7 +564,8 @@ endif()
 set(_p8_config_io_atomic_persist_sources driver/config_io_atomic_persist_test.cpp)
 if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
     list(APPEND _p8_config_io_atomic_persist_sources
-        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp")  # P8 D-03: ADL hooks needed by saveConfigJson
 endif()
 add_executable(test_config_io_atomic_persist ${_p8_config_io_atomic_persist_sources})
 target_compile_features(test_config_io_atomic_persist PRIVATE cxx_std_17)

@@ -12,11 +12,13 @@ target_include_directories(micmap_core
         $<INSTALL_INTERFACE:include>
 )
 
+# P8 D-02: nlohmann_json removed from micmap_core PRIVATE link libs.
+# ConfigManagerImpl relocated to apps/micmap/src/config_manager_impl.cpp;
+# src/core/src/config_manager.cpp is now an empty TU. AssertNoJsonInCore
+# lint covers all 4 shared-lib roots (audio + detection + core + common).
 target_link_libraries(micmap_core
     PUBLIC
         micmap_common
-    PRIVATE
-        nlohmann_json
 )
 
 target_compile_features(micmap_core PUBLIC cxx_std_17)
