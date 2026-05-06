@@ -372,4 +372,37 @@ std::unique_ptr<IDriverApi> createDriverApi(
     int startPort = 27015,
     int endPort = 27025);
 
+/**
+ * @brief P8 HEALTH-06 / 08-05 — RAII handle to a level-meter polling thread.
+ *
+ * The polling thread joins on destruction; reset() (or unique_ptr::reset())
+ * stops the thread and waits for join. The visibility predicate is invoked
+ * on every loop iteration to switch between 5 Hz (visible) and 0.5 Hz
+ * (iconic / tray) cadences per UI-SPEC §Poll cadences.
+ */
+class ILevelMeterPolling {
+public:
+    virtual ~ILevelMeterPolling() = default;
+};
+
+/**
+ * @brief P8 HEALTH-06 / 08-05 — start a background polling loop that invokes
+ *        `onSample(float)` at 5 Hz when `visible()` returns true and 0.5 Hz
+ *        when `visible()` returns false. The float passed to `onSample` is
+ *        the most-recent driver-reported normalized RMS (or 0.0f when no
+ *        driver is reachable / no driver was injected).
+ *
+ * The returned unique_ptr is the RAII stop handle: when it is reset/destroyed
+ * the thread is signalled to stop and joined (synchronous teardown).
+ *
+ * The function shape — two callables, no driver pointer threaded through —
+ * exists so the Wave 0 RED scaffold (tests/test_client_level_meter_cadence.cpp)
+ * can drive the cadence in isolation without needing a live driver. In
+ * production main.cpp does its level-meter polling inline through
+ * MicMapApp::pollDriverHealth() (which honors the same UI-SPEC cadences).
+ */
+std::unique_ptr<ILevelMeterPolling> startLevelMeterPolling(
+    std::function<bool()> visible,
+    std::function<void(float)> onSample);
+
 } // namespace micmap::steamvr

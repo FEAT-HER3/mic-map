@@ -86,7 +86,14 @@ add_executable(test_tray_balloon_once
 target_compile_features(test_tray_balloon_once PRIVATE cxx_std_17)
 target_include_directories(test_tray_balloon_once PRIVATE
     ${CMAKE_SOURCE_DIR}/apps/micmap)
-target_link_libraries(test_tray_balloon_once PRIVATE micmap::core micmap::common)
+# P8 08-05: first_launch_balloon.cpp now references IDriverApi::putSettings
+# in the persistence path (called only when caller passes a non-null
+# IDriverApi*; the test passes nullptr). The symbol is still referenced at
+# link time, so micmap::steamvr is required.
+target_link_libraries(test_tray_balloon_once PRIVATE
+    micmap::core
+    micmap::common
+    micmap::steamvr)
 if(WIN32)
     target_link_libraries(test_tray_balloon_once PRIVATE shell32)
 endif()
@@ -302,6 +309,20 @@ add_test(NAME AssertNoJsonInCore
     COMMAND ${CMAKE_COMMAND}
         -DSRC_ROOTS=${CMAKE_SOURCE_DIR}/src/audio$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/detection$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/core$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/common
         -P ${CMAKE_SOURCE_DIR}/cmake/AssertNoJsonInCore.cmake)
+
+# P8 D-07 / IPC-05: assert client TUs do not write config.json. Driver is
+# sole writer; client edits flow through PUT /settings. Registered now in
+# 08-05 AFTER the saveDefault() callsites in apps/micmap/main.cpp:498 and
+# apps/micmap/first_launch_balloon.cpp:42 are deleted (this plan's Task 2).
+# CLIENT_ROOTS = apps/micmap + src/steamvr per the lint-script header.
+# The relocated ConfigManagerImpl (apps/micmap/src/config_manager_impl.cpp)
+# is excluded by basename inside the lint script — the impl itself is fine,
+# only client *callers* are forbidden (see lint script comment). P10 deletes
+# the impl outright when configManager is removed from the client.
+add_test(NAME AssertNoConfigWriteInClient
+    COMMAND ${CMAKE_COMMAND}
+        -DCLIENT_ROOTS=${CMAKE_SOURCE_DIR}/apps/micmap$<SEMICOLON>${CMAKE_SOURCE_DIR}/src/steamvr
+        -P ${CMAKE_SOURCE_DIR}/cmake/AssertNoConfigWriteInClient.cmake)
 
 # Test executable registrations follow the EXISTS-gated source-list pattern
 # from the P7 DetectionSettingsPropagation registration above. Each test
