@@ -23,6 +23,7 @@
 
 // P8 LIB-04 / D-19 / D-20 — driver-side composition root deps.
 #include "config_io.hpp"                   // loadConfigJson + getDriverConfigPath + getDriverAppDataDir
+#include "settings_validator.hpp"          // P8 D-14: validateSettings invoked from configMutator lambda
 #include "sinks/driver_log_sink.hpp"       // makeDriverLogSink
 #include "micmap/common/log_sink.hpp"      // makeFileLogSink + makeMultiSinkLogger
 #include "micmap/common/logger.hpp"        // Logger::setLogger + MICMAP_LOG_*
@@ -232,15 +233,46 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
         return fresh;
     };
 
+    // P8 D-14 / IPC-04 — configMutator persists then publishes (Pitfall 2
+    // ordering inside applyValidatedConfig). Validation is performed BY THE
+    // PUT /settings handler before this lambda is invoked, so by contract
+    // every candidate reaching here has already passed validateSettings.
+    // We re-run validateSettings as a defensive belt-and-suspenders check
+    // (cheap; cf. Pitfall 1 -- the in-process snapshot must never accept
+    // an out-of-range value). On invalid input we refuse to persist and
+    // return false; the handler maps that to HTTP 500 (treated as disk
+    // failure since the route is supposed to gate validation upstream).
+    auto configMutator = [this](const core::AppConfig& candidate) -> bool {
+        if (validateSettings(candidate).has_value()) {
+            MICMAP_LOG_ERROR("configMutator: validateSettings rejected candidate "
+                             "(handler-side validation should have caught this)");
+            return false;
+        }
+        return applyValidatedConfig(candidate);
+    };
+
+    // P8 D-16 / HEALTH-05 — POST /state/clear-error invokes this lambda.
+    // COW-publish: read current snapshot, copy, set last_error=nullopt,
+    // atomic_store. Concurrent error fire after the clear simply overwrites
+    // null with the new error (documented race per D-16; no error history).
+    auto errorClearer = [this]() {
+        DriverState next;
+        if (auto current = getStateSnapshot()) {
+            next = *current;
+        }
+        next.last_error = std::nullopt;
+        publishDriverState(std::move(next));
+    };
+
     httpServer_ = std::make_unique<HttpServer>(
         *commandQueue_,
         /*port=*/27015,
         /*host=*/"127.0.0.1",
         std::move(driverDetectionActiveGetter),
         std::move(configGetter),
-        /*configMutator=*/nullptr,           // 08-04 wires PUT /settings
+        std::move(configMutator),            // P8 D-14 — PUT /settings persist+publish
         std::move(stateGetter),
-        /*errorClearer=*/nullptr,            // 08-04 wires POST /state/clear-error
+        std::move(errorClearer),             // P8 D-16 — POST /state/clear-error
         std::move(rmsGetter),
         std::move(deviceLister));
     if (!httpServer_->Start()) {

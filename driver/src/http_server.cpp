@@ -12,6 +12,7 @@
 #include "driver_log.hpp"
 #include "driver_state.hpp"           // P8 D-23: full DriverState type for stateGetter dereferences
 #include "config_json.hpp"            // P8 D-03 / IPC-04: ADL hooks for AppConfig <-> json conversion
+#include "settings_validator.hpp"     // P8 D-14 / IPC-04: validateSettings runs in PUT /settings handler
 #include "micmap/core/config_manager.hpp"  // P8 IPC-04: AppConfig type used in /settings handler
 
 // Include httplib - header-only library
@@ -322,6 +323,88 @@ void HttpServer::SetupRoutes() {
         body["rms_normalized"] = rms;
         body["dbfs"]           = dbfs;
         res.set_content(body.dump(), "application/json");
+    });
+
+    // ============================================================
+    // P8 D-14 / D-16 — write-side IPC. PUT /settings runs validateSettings
+    // BEFORE configMutator (Pitfall 1: explicit reject, no silent clamp);
+    // configMutator persists then publishes (Pitfall 2 ordering inside
+    // DeviceProvider::applyValidatedConfig). POST /state/clear-error calls
+    // errorClearer which COW-publishes a DriverState with last_error=nullopt.
+    // ============================================================
+
+    // PUT /settings — IPC-04. All-or-nothing apply: validate first, then
+    // persist+publish. On validation failure return HTTP 400 with structured
+    // {"field":"<dot-path>","reason":"<human>"} envelope and DO NOT mutate
+    // any state (D-14). On disk-write failure return HTTP 500 (Pitfall 2).
+    server_->Put("/settings", [this](const httplib::Request& req, httplib::Response& res) {
+        nlohmann::json body;
+        try { body = nlohmann::json::parse(req.body); }
+        catch (const nlohmann::json::exception&) {
+            res.status = 400;
+            res.set_content(R"({"field":"(structural)","reason":"malformed JSON body"})",
+                            "application/json");
+            return;
+        }
+
+        // Defensive: reject non-object top-level so from_json sees a stable shape.
+        if (!body.is_object()) {
+            res.status = 400;
+            res.set_content(R"({"field":"(structural)","reason":"top-level must be a JSON object"})",
+                            "application/json");
+            return;
+        }
+
+        core::AppConfig candidate{};
+        try {
+            body.get_to(candidate);   // ADL: from_json(const json&, AppConfig&)
+        } catch (const nlohmann::json::exception& e) {
+            res.status = 400;
+            nlohmann::json err;
+            err["field"]  = "(structural)";
+            err["reason"] = std::string("from_json failed: ") + e.what();
+            res.set_content(err.dump(), "application/json");
+            return;
+        }
+
+        // P8 D-14: validate FIRST. Independent of configMutator so the 400
+        // envelope carries the dot-path field name even when the test scaffold
+        // wires a mutator that also runs validateSettings (their result is
+        // dead code -- this handler-side reject wins).
+        if (auto verr = validateSettings(candidate); verr.has_value()) {
+            res.status = 400;
+            nlohmann::json err;
+            err["field"]  = verr->field;
+            err["reason"] = verr->reason;
+            res.set_content(err.dump(), "application/json");
+            return;
+        }
+
+        if (!configMutator_) {
+            res.status = 503;
+            res.set_content(R"({"error":"settings mutator unavailable"})",
+                            "application/json");
+            return;
+        }
+
+        // Pitfall 2: configMutator persists then atomic_stores. Returning
+        // false signals disk failure -- the in-memory snapshot is unchanged
+        // (DeviceProvider::applyValidatedConfig early-returns before swap).
+        if (!configMutator_(candidate)) {
+            res.status = 500;
+            res.set_content(R"({"error":"failed to persist config to disk"})",
+                            "application/json");
+            return;
+        }
+        res.set_content(R"({"status":"ok"})", "application/json");
+    });
+
+    // POST /state/clear-error — HEALTH-05 / D-16. Monotonic null assignment;
+    // no error history. Concurrent error fire after the clear simply overwrites
+    // null with the new error (documented race per D-16 / threat T-08-04-06).
+    server_->Post("/state/clear-error", [this](const httplib::Request&, httplib::Response& res) {
+        if (errorClearer_) errorClearer_();
+        res.set_content(R"({"status":"ok"})", "application/json");
     });
 }
 
