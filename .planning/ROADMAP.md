@@ -104,7 +104,14 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
   4. `netstat -an` confirms every driver HTTP route (`/health`, `/port`, `/state`, `/settings`, `/devices`, `/telemetry/level`) binds to `127.0.0.1` only — never `0.0.0.0` (Pitfall 7 mitigation).
   5. The HTTP-thread → CommandQueue → RunFrame v1.5 SVR-05 boundary survives unchanged: HTTP handlers for `PUT /settings` mutate the atomic snapshot directly (data-only) and never call any `vr::*` API; verified by inspection.
   6. Driver writes its own log to `%APPDATA%\MicMap\micmap-driver.log` via injected `FileLogSink`; client writes to `%APPDATA%\MicMap\micmap.log` via injected `StdoutLogSink`+`FileLogSink`; no `#ifdef MICMAP_DRIVER_BUILD` inside `micmap_core_runtime` (LIB-04).
-**Plans**: TBD
+**Plans**: 7 plans
+- [ ] 08-00-PLAN.md — Wave 0: 4 new CMake source-grep lints (AssertNoJsonInCore, AssertHttpServerLocalhostOnly, AssertHttpServerNoVrApi, AssertNoConfigWriteInClient) + 14 RED-tolerant test scaffolds + EXISTS-gated ctest registrations
+- [ ] 08-01-PLAN.md — Wave 1: cpp-httplib v0.14.3 → v0.20.1 (D-05); IDriverClient → IDriverApi rename + Pitfall 6 ECONNREFUSED-vs-timeout fix (D-22); LIB-04 logger sinks (ILogSink + FileLogSink + StdoutLogSink + DriverLogSink + MultiSinkLogger); client WinMain composition root
+- [ ] 08-02-PLAN.md — Wave 2: nlohmann/json into driver TUs (D-01) + AssertNoJsonInCore lint go-live (3-of-4 roots; src/core deferred to P11) + driver-side config_io.{hpp,cpp} (loadConfigJson 3-attempt SHARING_VIOLATION retry + saveConfigJson via ReplaceFileW, D-10/D-14) + DeviceProvider AppConfig snapshot member + driver-side composition root logger
+- [ ] 08-03-PLAN.md — Wave 3: GET /state, /settings, /devices, /telemetry/level (read-side IPC); HttpServer ctor evolves to 5 read callbacks; AudioWorker rms_normalized atomic + enumerateDevicesForHttp; DeviceProvider stateSnapshot_ + DetectionRunner state-event publisher; IDriverApi 4 new client methods
+- [ ] 08-04-PLAN.md — Wave 4: settings_validator (D-14/D-15); PUT /settings with Pitfall 2 persist-first; POST /state/clear-error (HEALTH-05/D-16); HttpServer ctor extends to 7 callbacks; IDriverApi.putSettings + clearError
+- [ ] 08-05-PLAN.md — Wave 5: client UI Driver Health pane (HEALTH-01..07); settings + device picker rewire through PUT /settings (D-09 ladder); driver-loaded gate; saveDefault deletion + AssertNoConfigWriteInClient ctest go-live (single-writer cutover); manual UAT D-27(1)..(4) checkpoint
+- [ ] 08-06-PLAN.md — Wave 6: full UAT D-27(1)..(7) + D-28 stress on Bigscreen Beyond + Win11 Pro; success-criteria audit; default.vrsettings enable_driver_detection=false preservation (D-30); 08-UAT.md sign-off
 **UI hint**: yes
 **Research flag**: STANDARD — extends existing cpp-httplib pattern from v1.5 Phase 1; same CommandQueue discipline.
 
@@ -159,7 +166,7 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
 | 5. Shared Library Extraction | v1.6 | 3/3 | Complete | 2026-05-02 |
 | 6. Driver-Side Audio Capture Spike | v1.6 | 4/4 | Complete | 2026-05-03 |
 | 7. Driver-Side Detection Thread | v1.6 | 0/6 | Planned | — |
-| 8. IPC Contract Reshape | v1.6 | 0/0 | Not started | — |
+| 8. IPC Contract Reshape | v1.6 | 0/7 | Planned | — |
 | 9. Training Migration | v1.6 | 0/0 | Not started | — |
 | 10. Cutover & Cleanup | v1.6 | 0/0 | Not started | — |
 | 11. Documentation | v1.6 | 0/0 | Not started | — |
