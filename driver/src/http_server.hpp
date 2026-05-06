@@ -12,18 +12,28 @@
 #include <string>
 #include <thread>
 #include <atomic>
+#include <chrono>       // P8 D-17: deviceCacheLastFetch_ steady_clock::time_point
 #include <memory>
+#include <mutex>        // P8 D-17: deviceCacheMu_ serializes the 1 s cache refill
 #include <functional>   // P7 D-09: std::function<bool()> driverDetectionActiveGetter ctor param
+#include <vector>       // P8 D-17: deviceLister callback returns std::vector<DeviceInfo>
+
+#include "device_info.hpp"  // P8 D-17 / IPC-03: DeviceInfo struct used in deviceLister callback
 
 // Forward declare httplib types to avoid including the header here
 namespace httplib {
     class Server;
 }
 
+// Forward declarations for callback signatures.
+namespace micmap::core { struct AppConfig; }
+
 namespace micmap::driver {
 
 // Forward declaration
 class CommandQueue;
+struct DriverState;     // P8 D-23: full type lives in driver_state.hpp; only the
+                        // ctor signature needs the forward decl here.
 
 /**
  * @brief HTTP server for receiving press/release commands.
@@ -61,10 +71,37 @@ public:
      *        DeviceProvider passes a lambda capturing `this` + the
      *        detectionRunner_/audioWorker_/driverDetectionEnabled_ members.
      */
+    /**
+     * @brief Phase 8 ctor expansion (D-23 / D-24 / IPC-01..04 / IPC-07).
+     *
+     * Six new optional callbacks (one per route family). All default to
+     * nullptr so existing test code + the v1.5 callsites compile unchanged
+     * until DeviceProvider supplies them. Positional ordering matches the
+     * Wave 0 RED scaffolds in tests/driver/get_*_test.cpp + state_clear_error_test.cpp:
+     *
+     *   driverDetectionActiveGetter (P7 D-09 — retained verbatim until P10)
+     *   configGetter   (GET /settings — atomic-shared_ptr load on AppConfig)
+     *   configMutator  (PUT /settings — bodies land in 08-04; ctor param ships now)
+     *   stateGetter    (GET /state    — atomic-shared_ptr load on DriverState)
+     *   errorClearer   (POST /state/clear-error — body lands in 08-04; ctor param ships now)
+     *   rmsGetter      (GET /telemetry/level — atomic<float> load on AudioWorker)
+     *   deviceLister   (GET /devices  — DeviceProvider's 1 s cache lambda)
+     *
+     * SVR-05 / D-24 / Pitfall 3: every callback runs on the HTTP thread; none
+     * may call OpenVR API surface or push to CommandQueue. Lints
+     * AssertHttpServerNoVrApi + AssertHttpServerLocalhostOnly enforce these
+     * invariants at ctest time.
+     */
     explicit HttpServer(CommandQueue& queue,
                         int port = 27015,
                         const std::string& host = "127.0.0.1",
-                        std::function<bool()> driverDetectionActiveGetter = nullptr);
+                        std::function<bool()> driverDetectionActiveGetter = nullptr,
+                        std::function<std::shared_ptr<const core::AppConfig>()> configGetter = nullptr,
+                        std::function<bool(const core::AppConfig&)>             configMutator = nullptr,
+                        std::function<std::shared_ptr<const DriverState>()>     stateGetter = nullptr,
+                        std::function<void()>                                   errorClearer = nullptr,
+                        std::function<float()>                                  rmsGetter = nullptr,
+                        std::function<std::vector<DeviceInfo>()>                deviceLister = nullptr);
 
     ~HttpServer();
 
@@ -92,6 +129,28 @@ private:
     // detection wiring (test code or legacy v1.5 callers — field is then
     // hardcoded to false). Deleted in P10 per D-12.
     std::function<bool()> driverDetectionActiveGetter_;
+
+    // P8 D-23 / D-24 / IPC-01..04 — read-side and write-side callbacks for the
+    // 4 new GET routes (this plan) and the 2 new write routes (08-04). Each
+    // is checked for null before use (defensive default-empty payload when
+    // unset). Lock-free atomic-snapshot loads via the shared_ptr<const T>
+    // factories in DeviceProvider (configGetter / stateGetter).
+    std::function<std::shared_ptr<const core::AppConfig>()> configGetter_;
+    std::function<bool(const core::AppConfig&)>             configMutator_;
+    std::function<std::shared_ptr<const DriverState>()>     stateGetter_;
+    std::function<void()>                                   errorClearer_;
+    std::function<float()>                                  rmsGetter_;
+    std::function<std::vector<DeviceInfo>()>                deviceLister_;
+
+    // P8 D-17 / IPC-03 — 1 s cache for /devices. Applied uniformly inside
+    // HttpServer (regardless of who supplies the underlying lister) so
+    // poll storms are absorbed even in test scaffolds that pass a raw
+    // deviceLister directly. The mutex serializes refills; cache hits
+    // do an unguarded read of the std::vector copy returned to the caller.
+    mutable std::mutex                          deviceCacheMu_;
+    std::chrono::steady_clock::time_point       deviceCacheLastFetch_{};
+    std::vector<DeviceInfo>                     deviceCache_;
+    bool                                        deviceCacheSeeded_{false};
 };
 
 } // namespace micmap::driver

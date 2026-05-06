@@ -311,13 +311,19 @@ add_test(NAME AssertNoJsonInCore
 
 # IPC-01 — GET /state shape. RED until Plan 08-03 lands driver_state.hpp +
 # the GET /state route on HttpServer.
+# 08-03 expansion: device_provider.cpp now references config_io / config_json /
+# sinks/driver_log_sink at Init (composition root + initial AppConfig load).
+# Pull those TUs in too so the test exe links cleanly.
 set(_p8_get_state_sources driver/get_state_shape_test.cpp)
 if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
     list(APPEND _p8_get_state_sources
         "${CMAKE_SOURCE_DIR}/driver/src/http_server.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
-        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
 if(OpenVR_FOUND)
     add_executable(test_get_state_shape ${_p8_get_state_sources})
@@ -339,13 +345,17 @@ endif()
 
 # IPC-02 — GET /telemetry/level. RED until Plan 08-03 lands the rmsGetter
 # ctor parameter on HttpServer + the route handler.
+# 08-03 expansion: device_provider.cpp pulls in config_io + config_json + sink TUs.
 set(_p8_get_telemetry_level_sources driver/get_telemetry_level_test.cpp)
 if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
     list(APPEND _p8_get_telemetry_level_sources
         "${CMAKE_SOURCE_DIR}/driver/src/http_server.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
-        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
 if(OpenVR_FOUND)
     add_executable(test_get_telemetry_level ${_p8_get_telemetry_level_sources})
@@ -366,13 +376,17 @@ else()
 endif()
 
 # IPC-03 / D-17 — GET /devices 1 s cache. RED until Plan 08-03.
+# 08-03 expansion: device_provider.cpp pulls in config_io + config_json + sink TUs.
 set(_p8_get_devices_cache_sources driver/get_devices_cache_test.cpp)
 if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
     list(APPEND _p8_get_devices_cache_sources
         "${CMAKE_SOURCE_DIR}/driver/src/http_server.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
-        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
 if(OpenVR_FOUND)
     add_executable(test_get_devices_cache ${_p8_get_devices_cache_sources})
@@ -402,7 +416,8 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
-        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp")
+        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")  # P8 D-19 LIB-04 TU
 endif()
 if(OpenVR_FOUND)
     add_executable(test_get_settings_shape ${_p8_get_settings_shape_sources})

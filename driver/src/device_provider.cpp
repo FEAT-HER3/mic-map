@@ -19,6 +19,7 @@
 #include "detection_runner.hpp"  // P7 D-19 — DetectionRunner full type for ctor/dtor
 #include "driver_log.hpp"
 #include "vr_error.hpp"
+#include "device_info.hpp"       // P8 D-17: DeviceInfo for the deviceLister lambda
 
 // P8 LIB-04 / D-19 / D-20 — driver-side composition root deps.
 #include "config_io.hpp"                   // loadConfigJson + getDriverConfigPath + getDriverAppDataDir
@@ -26,9 +27,16 @@
 #include "micmap/common/log_sink.hpp"      // makeFileLogSink + makeMultiSinkLogger
 #include "micmap/common/logger.hpp"        // Logger::setLogger + MICMAP_LOG_*
 
+#include <micmap/audio/audio_capture.hpp>  // P8 D-17: AudioDevice struct (full type for the cache lambda)
+
 #include <openvr_driver.h>
 
+#ifdef _WIN32
+#  include <windows.h>     // P8 D-17: WideCharToMultiByte for UTF-16 -> UTF-8 conversion
+#endif
+
 #include <memory>
+#include <mutex>          // P8 D-17: std::mutex for the device-list cache
 #include <utility>
 #include <vector>
 
@@ -159,11 +167,82 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
             && detectionRunner_
             && detectionRunner_->IsRunning();
     };
+
+    // P8 D-23 / D-24 — read-side IPC callbacks. configGetter / stateGetter
+    // wrap the existing atomic-shared_ptr loads on configSnapshot_ /
+    // stateSnapshot_. rmsGetter forwards to AudioWorker's rms_normalized()
+    // (returns 0.0f when audioWorker_ is unset). deviceLister wraps a
+    // 1-second cache around AudioWorker::enumerateDevicesForHttp().
+    auto configGetter = [this]() -> std::shared_ptr<const core::AppConfig> {
+        return getConfigSnapshot();
+    };
+    auto stateGetter = [this]() -> std::shared_ptr<const DriverState> {
+        return getStateSnapshot();
+    };
+    auto rmsGetter = [this]() -> float {
+        return audioWorker_ ? audioWorker_->rms_normalized() : 0.0f;
+    };
+
+    // P8 D-17 / IPC-03 — deviceLister returns a fresh WASAPI enumeration on
+    // each invocation. The 1-second cache that absorbs poll storms lives
+    // INSIDE HttpServer (deviceCache_ + deviceCacheMu_) so it applies
+    // uniformly regardless of who supplies the lister (production +
+    // Wave 0 test scaffolds). UTF-16 -> UTF-8 conversion happens here so
+    // HttpServer's payload code stays free of WASAPI surface.
+    auto deviceLister = [this]() -> std::vector<DeviceInfo> {
+        std::vector<DeviceInfo> fresh;
+        if (!audioWorker_) return fresh;
+        auto rawDevices = audioWorker_->enumerateDevicesForHttp();
+        fresh.reserve(rawDevices.size());
+#ifdef _WIN32
+        for (const auto& d : rawDevices) {
+            DeviceInfo info;
+            // UTF-16 -> UTF-8 conversion for the JSON payload. Matches the
+            // v1.5 wstring-to-utf8 idiom used in apps/micmap/src/
+            // config_manager_impl.cpp (lifted from src/core in 08-02).
+            if (!d.id.empty()) {
+                int idLen = ::WideCharToMultiByte(
+                    CP_UTF8, 0, d.id.c_str(), static_cast<int>(d.id.size()),
+                    nullptr, 0, nullptr, nullptr);
+                if (idLen > 0) {
+                    info.id.resize(static_cast<size_t>(idLen));
+                    ::WideCharToMultiByte(
+                        CP_UTF8, 0, d.id.c_str(), static_cast<int>(d.id.size()),
+                        info.id.data(), idLen, nullptr, nullptr);
+                }
+            }
+            if (!d.name.empty()) {
+                int nLen = ::WideCharToMultiByte(
+                    CP_UTF8, 0, d.name.c_str(), static_cast<int>(d.name.size()),
+                    nullptr, 0, nullptr, nullptr);
+                if (nLen > 0) {
+                    info.name.resize(static_cast<size_t>(nLen));
+                    ::WideCharToMultiByte(
+                        CP_UTF8, 0, d.name.c_str(), static_cast<int>(d.name.size()),
+                        info.name.data(), nLen, nullptr, nullptr);
+                }
+            }
+            info.isDefault = d.isDefault;
+            fresh.push_back(std::move(info));
+        }
+#else
+        // Non-Windows builds (test stubs): no WASAPI, no devices.
+        (void)rawDevices;
+#endif
+        return fresh;
+    };
+
     httpServer_ = std::make_unique<HttpServer>(
         *commandQueue_,
         /*port=*/27015,
         /*host=*/"127.0.0.1",
-        std::move(driverDetectionActiveGetter));
+        std::move(driverDetectionActiveGetter),
+        std::move(configGetter),
+        /*configMutator=*/nullptr,           // 08-04 wires PUT /settings
+        std::move(stateGetter),
+        /*errorClearer=*/nullptr,            // 08-04 wires POST /state/clear-error
+        std::move(rmsGetter),
+        std::move(deviceLister));
     if (!httpServer_->Start()) {
         DriverLog("MicMap: failed to start HTTP server\n");
         return VRInitError_Driver_Failed;
