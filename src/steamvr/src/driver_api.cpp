@@ -24,7 +24,10 @@
 
 #include <chrono>
 #include <cstdint>
+#include <ctime>
+#include <iomanip>
 #include <mutex>
+#include <sstream>
 
 #ifdef MICMAP_HAS_OPENVR
 #include <openvr.h>
@@ -36,6 +39,75 @@
 #include <nlohmann/json.hpp>   // P7 D-10: parse /health driver_detection_active
 
 namespace micmap::steamvr {
+
+namespace {
+
+// P8 IPC-04 — manual AppConfig deserialization from /settings JSON. We
+// parse field-by-field instead of leaning on nlohmann ADL because the ADL
+// hooks ship in apps/micmap/src/config_json.cpp (compiled into micmap.exe
+// only); micmap_steamvr cannot rely on them being linked in (hmd_button_test
+// also consumes IDriverApi via micmap_steamvr). Manual parse keeps this TU
+// self-contained and avoids duplicate-symbol risk if the hooks were lifted
+// into src/steamvr.
+core::AppConfig parseAppConfigFromJson(const nlohmann::json& j) {
+    core::AppConfig cfg{};
+    cfg.version = j.value("version", 1);
+    if (j.contains("audio") && j["audio"].is_object()) {
+        const auto& a = j["audio"];
+        cfg.audio.bufferSizeMs = a.value("bufferSizeMs", cfg.audio.bufferSizeMs);
+        // deviceNamePattern + deviceId are wstring -- we leave them at
+        // ctor defaults here; a future plan threads UTF-8 -> UTF-16 if any
+        // client code actually needs to introspect them. The level meter UI
+        // and the audio-device picker only care about the WASAPI listing
+        // returned by getDevices(), not these fields.
+    }
+    if (j.contains("detection") && j["detection"].is_object()) {
+        const auto& d = j["detection"];
+        cfg.detection.sensitivity   = d.value("sensitivity",   cfg.detection.sensitivity);
+        cfg.detection.minDurationMs = d.value("minDurationMs", cfg.detection.minDurationMs);
+        cfg.detection.cooldownMs    = d.value("cooldownMs",    cfg.detection.cooldownMs);
+        cfg.detection.fftSize       = d.value("fftSize",       cfg.detection.fftSize);
+    }
+    if (j.contains("steamvr") && j["steamvr"].is_object()) {
+        const auto& s = j["steamvr"];
+        cfg.steamvr.dashboardClickEnabled =
+            s.value("dashboardClickEnabled", cfg.steamvr.dashboardClickEnabled);
+        cfg.steamvr.customActionBinding =
+            s.value("customActionBinding", cfg.steamvr.customActionBinding);
+    }
+    if (j.contains("training") && j["training"].is_object()) {
+        const auto& t = j["training"];
+        cfg.training.dataFile = t.value("dataFile", cfg.training.dataFile);
+        // lastTrainedTimestamp left as nullopt -- the UI surface that
+        // surfaces this value reads it via the on-disk file directly,
+        // not via /settings.
+    }
+    cfg.shownTrayNotification =
+        j.value("shownTrayNotification", cfg.shownTrayNotification);
+    return cfg;
+}
+
+// P8 IPC-01 — ISO-8601 "%Y-%m-%dT%H:%M:%SZ" parser for last_trigger_at.
+// Returns nullopt on parse failure or non-string input.
+std::optional<std::chrono::system_clock::time_point> parseIso8601Z(
+    const nlohmann::json& field)
+{
+    if (!field.is_string()) return std::nullopt;
+    const std::string s = field.get<std::string>();
+    std::tm tm_buf{};
+    std::istringstream ss(s);
+    ss >> std::get_time(&tm_buf, "%Y-%m-%dT%H:%M:%SZ");
+    if (ss.fail()) return std::nullopt;
+#ifdef _WIN32
+    auto t = ::_mkgmtime(&tm_buf);
+#else
+    auto t = ::timegm(&tm_buf);
+#endif
+    if (t == static_cast<std::time_t>(-1)) return std::nullopt;
+    return std::chrono::system_clock::from_time_t(t);
+}
+
+} // namespace
 
 // ============================================================================
 // Stub VR Input Implementation (for testing without SteamVR)
@@ -324,6 +396,119 @@ public:
 
     std::string getLastError() const override {
         return lastError_;
+    }
+
+    // ============================================================
+    // Phase 8 read-side methods — IPC-01..04 / D-23.
+    //
+    // Each follows the v1.5 httplib::Client shape used by tap()/getStatus():
+    // ensureConnected(); short connect+read timeout; GET; parse on 200; set
+    // lastError_ + return nullopt on any failure. The 250 ms timeout is the
+    // UI-SPEC poll cadence floor for /state and /telemetry/level (poll @ 30 Hz);
+    // /settings + /devices use a more generous 500 ms because the driver-side
+    // WASAPI enumeration can briefly block on COM/IMMNotificationClient pings.
+    // ============================================================
+
+    std::optional<DriverStateView> getState() override {
+        if (!ensureConnected()) return std::nullopt;
+        httplib::Client client(host_, port_);
+        client.set_connection_timeout(0, 250000);
+        client.set_read_timeout(0, 250000);
+        auto res = client.Get("/state");
+        if (!res || res->status != 200) {
+            lastError_ = "GET /state failed";
+            return std::nullopt;
+        }
+        try {
+            auto j = nlohmann::json::parse(res->body);
+            DriverStateView v;
+            v.driver_loaded   = j.value("driver_loaded",   false);
+            v.steamvr_running = j.value("steamvr_running", false);
+            v.detection_state = j.value("detection_state", std::string{"idle"});
+            if (j.contains("last_trigger_at")) {
+                v.last_trigger_at = parseIso8601Z(j["last_trigger_at"]);
+            }
+            if (j.contains("last_error") && j["last_error"].is_string()) {
+                v.last_error = j["last_error"].get<std::string>();
+            }
+            v.audio_device_id    = j.value("audio_device_id",    std::string{});
+            v.audio_device_state = j.value("audio_device_state", std::string{"ok"});
+            return v;
+        } catch (const nlohmann::json::exception& e) {
+            lastError_ = std::string("GET /state parse: ") + e.what();
+            return std::nullopt;
+        }
+    }
+
+    std::optional<core::AppConfig> getSettings() override {
+        if (!ensureConnected()) return std::nullopt;
+        httplib::Client client(host_, port_);
+        client.set_connection_timeout(0, 500000);   // 500 ms (UI-SPEC settings cadence)
+        client.set_read_timeout(0, 500000);
+        auto res = client.Get("/settings");
+        if (!res || res->status != 200) {
+            lastError_ = "GET /settings failed";
+            return std::nullopt;
+        }
+        try {
+            auto j = nlohmann::json::parse(res->body);
+            return parseAppConfigFromJson(j);
+        } catch (const nlohmann::json::exception& e) {
+            lastError_ = std::string("GET /settings parse: ") + e.what();
+            return std::nullopt;
+        }
+    }
+
+    std::optional<std::vector<DeviceInfoView>> getDevices() override {
+        if (!ensureConnected()) return std::nullopt;
+        httplib::Client client(host_, port_);
+        client.set_connection_timeout(0, 500000);
+        client.set_read_timeout(0, 500000);
+        auto res = client.Get("/devices");
+        if (!res || res->status != 200) {
+            lastError_ = "GET /devices failed";
+            return std::nullopt;
+        }
+        try {
+            auto j = nlohmann::json::parse(res->body);
+            std::vector<DeviceInfoView> out;
+            if (j.contains("devices") && j["devices"].is_array()) {
+                out.reserve(j["devices"].size());
+                for (const auto& d : j["devices"]) {
+                    DeviceInfoView v;
+                    v.id        = d.value("id",        std::string{});
+                    v.name      = d.value("name",      std::string{});
+                    v.isDefault = d.value("isDefault", false);
+                    out.push_back(std::move(v));
+                }
+            }
+            return out;
+        } catch (const nlohmann::json::exception& e) {
+            lastError_ = std::string("GET /devices parse: ") + e.what();
+            return std::nullopt;
+        }
+    }
+
+    std::optional<TelemetryLevel> getTelemetryLevel() override {
+        if (!ensureConnected()) return std::nullopt;
+        httplib::Client client(host_, port_);
+        client.set_connection_timeout(0, 250000);
+        client.set_read_timeout(0, 250000);
+        auto res = client.Get("/telemetry/level");
+        if (!res || res->status != 200) {
+            lastError_ = "GET /telemetry/level failed";
+            return std::nullopt;
+        }
+        try {
+            auto j = nlohmann::json::parse(res->body);
+            TelemetryLevel v;
+            v.rms_normalized = j.value("rms_normalized", 0.0f);
+            v.dbfs           = j.value("dbfs",           -60.0f);
+            return v;
+        } catch (const nlohmann::json::exception& e) {
+            lastError_ = std::string("GET /telemetry/level parse: ") + e.what();
+            return std::nullopt;
+        }
     }
 
 private:

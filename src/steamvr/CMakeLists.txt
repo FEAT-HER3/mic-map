@@ -24,6 +24,12 @@ target_include_directories(micmap_steamvr
 target_link_libraries(micmap_steamvr
     PUBLIC
         micmap_common
+        # P8 IPC-04 / D-23: driver_api.hpp exposes core::AppConfig in
+        # IDriverApi::getSettings() return type. Linkage is PUBLIC so
+        # consumers (apps/micmap, apps/hmd_button_test, tests) transitively
+        # get the include dir for micmap/core/config_manager.hpp. micmap_core
+        # is JSON-free per AssertNoJsonInCore so this remains lint-clean.
+        micmap_core
     PRIVATE
         httplib::httplib
         # P7 07-05 Rule-3 fix: vr_input.cpp now parses /health JSON to extract

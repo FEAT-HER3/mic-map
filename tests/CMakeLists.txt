@@ -547,13 +547,19 @@ else()
 endif()
 
 # HEALTH-05 / D-16 — POST /state/clear-error. RED until Plan 08-04.
+# 08-03 expansion: device_provider.cpp pulls in config_io + config_json +
+# sinks/driver_log_sink (composition root + initial AppConfig load) -- include
+# those TUs in the test exe's source list.
 set(_p8_state_clear_error_sources driver/state_clear_error_test.cpp)
 if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
     list(APPEND _p8_state_clear_error_sources
         "${CMAKE_SOURCE_DIR}/driver/src/http_server.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
-        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
 if(OpenVR_FOUND)
     add_executable(test_state_clear_error ${_p8_state_clear_error_sources})
