@@ -149,7 +149,7 @@ Each REQ-ID maps to exactly one phase. 45/45 requirements mapped. No orphans, no
 | IPC-03 | Phase 8 | Pending |
 | IPC-04 | Phase 8 | Pending |
 | IPC-05 | Phase 8 | Pending |
-| IPC-06 | Phase 8 | Pending |
+| IPC-06 | Phase 9 | Pending |
 | IPC-07 | Phase 8 | Pending |
 | IPC-08 | Phase 8 | Pending |
 | HEALTH-01 | Phase 8 | Pending |

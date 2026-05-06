@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Feature Migration
 status: completed
-stopped_at: Phase 8 context gathered
-last_updated: "2026-05-05T11:32:11.189Z"
+stopped_at: Phase 8 UI-SPEC approved
+last_updated: "2026-05-05T22:39:00.748Z"
 last_activity: 2026-05-04 -- Phase 07 marked complete
 progress:
   total_phases: 7
@@ -101,9 +101,9 @@ Items carried forward from v1.5 that are NOT in v1.6 scope (see PROJECT.md and R
 
 ## Session Continuity
 
-Last session: 2026-05-05T11:32:11.182Z
-Stopped at: Phase 8 context gathered
-Resume file: .planning/phases/08-ipc-contract-reshape/08-CONTEXT.md
+Last session: 2026-05-05T22:39:00.741Z
+Stopped at: Phase 8 UI-SPEC approved
+Resume file: .planning/phases/08-ipc-contract-reshape/08-UI-SPEC.md
 
 **Next action:** `/gsd-discuss-phase 7` — gather context for Driver-Side Detection Thread (MIG-02, MIG-03, MIG-04, MIG-06).
 

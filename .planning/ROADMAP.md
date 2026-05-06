@@ -96,7 +96,7 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
 ### Phase 8: IPC Contract Reshape
 **Goal**: New IPC surface — `GET /state`, `GET /telemetry/level`, `GET /devices`, `GET /settings`, `PUT /settings`, plus a `POST /state/clear-error` endpoint. Driver becomes the sole writer of `%APPDATA%\MicMap\config.json` (single-writer rule, file-watching rejected per Pitfall 5). `IDriverClient` renamed to `IDriverApi`. Client UI surfaces driver health by polling. Logger sinks injected at construction (LIB-04). `POST /button` persists until Phase 10.
 **Depends on**: Phase 5 (driver-side endpoints can be built before Phase 7 lands; full integration after Phase 7)
-**Requirements**: IPC-01, IPC-02, IPC-03, IPC-04, IPC-05, IPC-06, IPC-07, IPC-08, LIB-04, HEALTH-01, HEALTH-02, HEALTH-03, HEALTH-04, HEALTH-05, HEALTH-06, HEALTH-07
+**Requirements**: IPC-01, IPC-02, IPC-03, IPC-04, IPC-05, IPC-07, IPC-08, LIB-04, HEALTH-01, HEALTH-02, HEALTH-03, HEALTH-04, HEALTH-05, HEALTH-06, HEALTH-07
 **Success Criteria** (what must be TRUE):
   1. Editing the sensitivity slider in the client UI sends `PUT /settings` with the full `AppConfig`; driver validates atomically (HTTP 400 with `{"field":"...","reason":"..."}` on rejection, no partial state mutation), persists via `ReplaceFileW`, and the new value is observable in `GET /settings` on the next poll.
   2. Driver is the sole writer of `config.json`: `grep -rn 'config.json' apps/micmap/src/ src/steamvr/src/` shows no client-side write path; client edits flow exclusively through `PUT /settings`.
@@ -118,7 +118,7 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
 ### Phase 9: Training Migration
 **Goal**: Driver becomes the sole owner of the microphone end-to-end during training; client becomes the observer that visualizes progress and confirms thresholds. New endpoints: `POST /training/start`, `GET /training/progress`, `POST /training/finalize`, `POST /training/cancel`, `POST /training/recompute`. `training_data.bin` ownership transfers to driver. `mic_test.exe --replay <wav>` enables reproducible regression testing.
 **Depends on**: Phase 7 (driver owns audio), Phase 8 (IPC surface with `/state` and `/settings`)
-**Requirements**: TRAIN-01, TRAIN-02, TRAIN-03, TRAIN-04, TRAIN-05, TRAIN-06, TEST-04
+**Requirements**: TRAIN-01, TRAIN-02, TRAIN-03, TRAIN-04, TRAIN-05, TRAIN-06, TEST-04, IPC-06
 **Success Criteria** (what must be TRUE):
   1. User clicks "Train" in the client; driver enters training mode (detection mutex-paused), collects ~150 samples while client polls `GET /training/progress` at 5–10 Hz and renders a live progress bar; on `POST /training/finalize` driver writes `training_data.bin` atomically and returns to detection mode using the new thresholds — verified end-to-end on real Bigscreen Beyond + Win11 hardware.
   2. Anti-feature TRAIN-AF-01 enforced: client never opens its own WASAPI capture during training; `grep -rn 'IAudioCapture\|createAudioCapture' apps/micmap/src/` returns no calls to `start()` during training mode (single-owner WASAPI invariant).
@@ -188,9 +188,9 @@ All 45 v1.6 requirements mapped to exactly one phase. No orphans, no duplicates.
 |---------|-------|--------|
 | LIB (4) | 4 | LIB-01..03 → P5; LIB-04 → P8 |
 | MIG (6) | 6 | MIG-01 → P6; MIG-02..04, MIG-06 → P7; MIG-05 → P10 |
-| IPC (8) | 8 | IPC-01..08 → P8 |
+| IPC (8) | 8 | IPC-01..05, IPC-07..08 → P8; IPC-06 → P9 |
 | HEALTH (8) | 8 | HEALTH-01..07 → P8; HEALTH-08 → P10 |
-| TRAIN (6) | 6 | TRAIN-01..06 → P9 |
+| TRAIN (6) | 6 | TRAIN-01..06 → P9 (with IPC-06 grouped here) |
 | TEST (5) | 5 | TEST-04 → P9; TEST-01, TEST-02, TEST-03, TEST-05 → P10 |
 | FAIL (5) | 5 | FAIL-01..05 → P10 |
 | INST (1) | 1 | INST-09 → P10 |
