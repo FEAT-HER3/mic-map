@@ -91,6 +91,9 @@ bool AudioWorker::Start() {
         // restart-after-Stop sees 0 ("not yet known") until the new
         // worker thread re-publishes the WASAPI-negotiated value.
         state_->sample_rate.store(0, std::memory_order_release);
+        // P8 D-18: same logic for rms_normalized -- a fresh Start should
+        // not surface a stale RMS from the prior run via /telemetry/level.
+        state_->rms_normalized.store(0.0f, std::memory_order_release);
     }
     running_.store(true, std::memory_order_release);
     thread_ = std::thread(&AudioWorker::ThreadEntry, this);
@@ -139,6 +142,29 @@ uint32_t AudioWorker::sample_rate() const {
     // either poll-with-timeout or fall back to a documented default.
     if (!state_) return 0;
     return state_->sample_rate.load(std::memory_order_acquire);
+}
+
+float AudioWorker::rms_normalized() const {
+    // P8 D-18 / IPC-02 / HEALTH-06: lock-free read of the most recent
+    // audio-callback-computed RMS. Returns 0.0f if state_ is null (only
+    // possible after dtor) or before the first audio frame is processed.
+    if (!state_) return 0.0f;
+    return state_->rms_normalized.load(std::memory_order_acquire);
+}
+
+std::vector<micmap::audio::AudioDevice> AudioWorker::enumerateDevicesForHttp() const {
+    // P8 D-17 / IPC-03: thread-safe wrapper around capture_->enumerateDevices()
+    // for the GET /devices HTTP handler. capture_ is owned by the worker
+    // thread (constructed inside RunWorker after CoInitializeEx, destroyed at
+    // the end of RunWorker before CoUninitialize). The HTTP thread can race
+    // with capture_ teardown only if DeviceProvider::Cleanup destroys the
+    // HttpServer AFTER audioWorker_ -- so DeviceProvider sequences
+    // httpServer_->Stop() FIRST in Cleanup (P8 amendment to D-13). With that
+    // ordering, no in-flight HTTP handler can observe a teardown-in-progress
+    // capture_ pointer. Fall back to empty vector if capture_ is not yet
+    // constructed (worker thread still spinning up).
+    if (!capture_) return {};
+    return capture_->enumerateDevices();
 }
 
 void AudioWorker::SetDetectionRunner(micmap::driver::DetectionRunner* runner) {
@@ -311,10 +337,12 @@ void AudioWorker::RunWorker() {
                 runner->NotifyOne();
             }
 
-#ifdef MICMAP_DEBUG_RMS_LOG
-            // P6 RMS log retained behind debug define (D-05 step 4).
-            // Production driver builds do NOT define MICMAP_DEBUG_RMS_LOG,
-            // so this block compiles to nothing — vrserver.txt stays clean.
+            // P8 D-18 / IPC-02 / HEALTH-06: ALWAYS compute rolling RMS so
+            // GET /telemetry/level has live data on every callback (~10 ms
+            // cadence at WASAPI shared mode default period). The previous
+            // P6 shape gated the entire computation behind MICMAP_DEBUG_RMS_LOG
+            // -- now only the DriverLog spam stays gated; the math + atomic
+            // store run unconditionally.
             double sumSq = 0.0;
             for (size_t i = 0; i < count; ++i) {
                 const double s = static_cast<double>(samples[i]);
@@ -322,6 +350,12 @@ void AudioWorker::RunWorker() {
             }
             const float rms = static_cast<float>(
                 std::sqrt(sumSq / static_cast<double>(std::max<size_t>(count, 1))));
+            sp->rms_normalized.store(rms, std::memory_order_release);
+
+#ifdef MICMAP_DEBUG_RMS_LOG
+            // P6 RMS log retained behind debug define (D-05 step 4).
+            // Production driver builds do NOT define MICMAP_DEBUG_RMS_LOG,
+            // so this block compiles to nothing — vrserver.txt stays clean.
             const uint32_t emitted =
                 sp->rms_logs_emitted.fetch_add(1, std::memory_order_relaxed);
             if (emitted < kRmsBudget) {

@@ -125,6 +125,12 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
         DriverLog("MicMap: config snapshot published from %s\n", cfgPath.string().c_str());
     }
 
+    // P8 D-23: publish initial DriverState so GET /state always observes a
+    // non-null snapshot, even before the first detection-machine transition
+    // or trigger fire. Default ctor leaves detection_state="idle",
+    // last_trigger_at=nullopt, last_error=nullopt, audio_device_state="ok".
+    publishDriverState(DriverState{});
+
     // Ensure SteamVR's generic-HMD bindings route /user/head/input/system to
     // dashboard + lasermouse leftclick. Best-effort; logs its own outcome.
     // Takes effect on the NEXT SteamVR start (vrcompositor caches bindings
@@ -318,11 +324,31 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
                 DriverLog("MicMap: detection sampleRate=%u Hz (live from AudioWorker)\n",
                           sampleRate);
             }
+            // P8 D-23: pass a DriverStatePublisher lambda so DetectionRunner
+            // pushes detection_state + last_trigger_at into the DriverState
+            // atomic snapshot. The lambda starts from the current snapshot
+            // for COW preservation -- last_trigger_at survives through
+            // detection_state transitions, last_error / audio_device_state
+            // set elsewhere survive through trigger fires.
+            auto detectionStatePublisher =
+                [this](std::string ds,
+                       std::optional<std::chrono::system_clock::time_point> trig) {
+                    DriverState next;
+                    if (auto current = getStateSnapshot()) {
+                        next = *current;
+                    }
+                    next.detection_state = std::move(ds);
+                    if (trig.has_value()) {
+                        next.last_trigger_at = trig;
+                    }
+                    publishDriverState(std::move(next));
+                };
             detectionRunner_ = std::make_unique<DetectionRunner>(
                 audioWorker_->ring(),
                 *commandQueue_,
                 sampleRate,
-                detectionDefaults_);
+                detectionDefaults_,
+                std::move(detectionStatePublisher));
             if (!detectionRunner_->Start()) {
                 DriverLog("MicMap: DetectionRunner::Start failed — continuing without detection\n");
                 detectionRunner_.reset();   // do NOT fail Init
@@ -347,6 +373,19 @@ void DeviceProvider::Cleanup() {
     }
 
     DriverLog("MicMap driver cleaning up...\n");
+
+    // P8 D-13 amendment: stop the HTTP server FIRST so no in-flight handler
+    // can race with audioWorker_/detectionRunner_ teardown. The GET /devices
+    // handler dereferences audioWorker_->enumerateDevicesForHttp() and the
+    // GET /telemetry/level handler dereferences audioWorker_->rms_normalized()
+    // on the HTTP thread; httpServer_->Stop() joins that thread synchronously,
+    // so once it returns no handler can observe the resets below. The .reset()
+    // pointer-clear that used to live with the existing v1.5 sequence is
+    // moved to the END (after the rest of the chain) since the server is
+    // already stopped here.
+    if (httpServer_) {
+        httpServer_->Stop();
+    }
 
     // P7 REVIEW IN-01: clear the audio callback's runner pointer BEFORE
     // resetting detectionRunner_. The audio callback already guards via
@@ -382,9 +421,9 @@ void DeviceProvider::Cleanup() {
         audioWorker_.reset();
     }
 
-    // D-13 step 3-onwards: existing v1.5 sequence unchanged.
+    // P8 D-13 amendment continued: HTTP server is already stopped above; just
+    // release the unique_ptr now to free the listener socket.
     if (httpServer_) {
-        httpServer_->Stop();
         httpServer_.reset();
     }
     commandQueue_.reset();
@@ -556,6 +595,18 @@ void DeviceProvider::writeValue(bool v) {
 
 std::shared_ptr<const core::AppConfig> DeviceProvider::getConfigSnapshot() const {
     return std::atomic_load_explicit(&configSnapshot_, std::memory_order_acquire);
+}
+
+// P8 D-23 — DriverState atomic-snapshot accessors. Same atomic_load_explicit /
+// atomic_store_explicit on std::shared_ptr<const T> mechanism as configSnapshot_
+// (P7 detection_runner.cpp:85,99 pattern, generalized).
+std::shared_ptr<const DriverState> DeviceProvider::getStateSnapshot() const {
+    return std::atomic_load_explicit(&stateSnapshot_, std::memory_order_acquire);
+}
+
+void DeviceProvider::publishDriverState(DriverState next) {
+    auto sp = std::make_shared<const DriverState>(std::move(next));
+    std::atomic_store_explicit(&stateSnapshot_, sp, std::memory_order_release);
 }
 
 bool DeviceProvider::applyValidatedConfig(core::AppConfig candidate) {
