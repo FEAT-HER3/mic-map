@@ -44,7 +44,7 @@ void processVREventImpl(IVRSystemSeam& system, IEventSink& sink, uint32_t eventT
         return;
     }
     // Default branch: other event types are a no-op here. Button edges go
-    // through IDriverClient; dashboard-state polling is not needed by the
+    // through IDriverApi; dashboard-state polling is not needed by the
     // app layer (the driver owns /input/system/click on the HMD container).
 }
 

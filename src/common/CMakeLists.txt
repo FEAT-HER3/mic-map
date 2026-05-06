@@ -4,6 +4,12 @@
 add_library(micmap_common STATIC
     src/logger.cpp
     src/cli_flags.cpp
+    # P8 LIB-04 / D-19 / D-21: composition-root logger sinks. ILogSink
+    # interface in include/micmap/common/log_sink.hpp; MultiSinkLogger
+    # fans out to a vector of sinks under a single mutex.
+    src/sinks/file_log_sink.cpp
+    src/sinks/stdout_log_sink.cpp
+    src/multi_sink_logger.cpp
 )
 
 target_include_directories(micmap_common

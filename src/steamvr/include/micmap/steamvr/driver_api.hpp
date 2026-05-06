@@ -1,25 +1,35 @@
 #pragma once
 
 /**
- * @file vr_input.hpp
- * @brief VR input handling for SteamVR integration
+ * @file driver_api.hpp
+ * @brief MicMap driver HTTP IPC surface (P8 D-22 rename of vr_input.hpp).
  *
- * This module provides:
- * - IVRInput: connection + Quit-lifecycle monitoring against SteamVR via OpenVR
- *   (used by apps to detect SteamVR shutdown and to know whether the runtime
- *   is available). No dashboard-state branching — the MicMap driver owns
- *   /input/system/click directly (Plan 01-03) and the app simply pushes edges
- *   over HTTP via IDriverClient.
- * - IDriverClient: HTTP surface that sends a single tap() to the driver's
- *   POST /button endpoint. The driver handles the full press+release
- *   sequence internally (D-04 / D-05 semantics).
+ * This header is the single source of truth for the client -> driver HTTP
+ * contract. It exposes:
+ *
+ * - IDriverApi: API client for the MicMap driver HTTP IPC surface. Sends
+ *   tap() over POST /button and probes /health for connectivity + driver
+ *   detection-active status. The 3-state ConnectResult enum on connect()
+ *   distinguishes ECONNREFUSED (driver not running) from read/write
+ *   timeouts (driver up but slow), per Pitfall 6.
+ *
+ * - IVRInput: connection + Quit-lifecycle monitoring against SteamVR via
+ *   OpenVR (used by apps to detect SteamVR shutdown and to know whether
+ *   the runtime is available). Co-located here historically; both surfaces
+ *   are owned by micmap_steamvr. No dashboard-state branching — the
+ *   MicMap driver owns /input/system/click directly (Plan 01-03) and the
+ *   app simply pushes edges over HTTP via IDriverApi.
+ *
+ * Phase 8 D-22 rename: file was vr_input.hpp; the prior driver-side
+ * client class and factory now use the API naming (IDriverApi /
+ * createDriverApi).
  */
 
 #include <memory>
 #include <functional>
 #include <string>
 #include <vector>
-#include <chrono>   // P7 D-10: DriverClient::isDriverDetectionActive cache TTL
+#include <chrono>   // P7 D-10: DriverApi::isDriverDetectionActive cache TTL
 
 namespace micmap::steamvr {
 
@@ -58,7 +68,7 @@ using VREventCallback = std::function<void(const VREvent&)>;
  * - Polling for VR lifecycle events (Quit, SteamVRConnected/Disconnected)
  *
  * Button presses are NOT sent through this interface; they go through
- * IDriverClient -> POST /button to the MicMap driver.
+ * IDriverApi -> POST /button to the MicMap driver.
  */
 class IVRInput {
 public:
@@ -102,19 +112,19 @@ public:
      * Events are delivered via the callback set with setEventCallback().
      */
     virtual void pollEvents() = 0;
-    
+
     /**
      * @brief Set event callback
      * @param callback Callback function for VR events
      */
     virtual void setEventCallback(VREventCallback callback) = 0;
-    
+
     /**
      * @brief Get the VR runtime name
      * @return Runtime name string (e.g., "OpenVR", "SteamVR")
      */
     virtual std::string getRuntimeName() const = 0;
-    
+
     /**
      * @brief Get the last error message
      * @return Error message string, empty if no error
@@ -142,20 +152,46 @@ std::unique_ptr<IVRInput> createOpenVRInput();
 std::unique_ptr<IVRInput> createStubVRInput();
 
 /**
- * @brief Interface for communicating with the MicMap driver
+ * @brief 3-state result of IDriverApi::connect() (P8 / Pitfall 6).
  *
- * This client connects to the MicMap OpenVR driver's HTTP server
- * to send button injection commands.
+ * The HEALTH-01 driver-loaded indicator is red on Connection (no driver
+ * listening) and stays in the prior state on Timeout (driver up but slow
+ * read). Differentiation is via httplib::Result::error() ==
+ * httplib::Error::Connection (added in cpp-httplib v0.20.1, bumped in
+ * 08-00 Task 4).
  */
-class IDriverClient {
+enum class ConnectResult {
+    Connected,    ///< Successful /health 200 from the driver
+    NotFound,     ///< Connection refused on every port in the range (driver not loaded)
+    Timeout,      ///< At least one port-attempt saw httplib::Error::Read or Write (driver may be alive but slow)
+    OtherError    ///< Unclassified failure (DNS, malformed URL, etc.)
+};
+
+/**
+ * @brief API client for the MicMap driver HTTP IPC surface.
+ *
+ * Connects to the MicMap OpenVR driver's HTTP server to send button
+ * injection commands and probe driver health/detection-active state.
+ * Phase 8 D-22 rename (prior name was the I-prefixed driver client).
+ */
+class IDriverApi {
 public:
-    virtual ~IDriverClient() = default;
+    virtual ~IDriverApi() = default;
 
     /**
-     * @brief Connect to the driver
-     * @return True if connection was successful
+     * @brief Connect to the driver (port-scan + /health probe).
+     * @return ConnectResult — 3-state outcome (Pitfall 6).
+     *
+     * Connected: a /health 200 was observed on some port in the range;
+     * the cached connection state and chosen port are valid for tap().
+     * NotFound: every attempted port returned ECONNREFUSED — the driver
+     * is not running. The HEALTH-01 indicator turns red.
+     * Timeout: at least one port-attempt saw a Read/Write timeout
+     * (driver up but slow); the HEALTH-01 indicator stays in its prior
+     * state to avoid false-negative flicker.
+     * OtherError: unclassified (DNS failure, malformed URL, etc.).
      */
-    virtual bool connect() = 0;
+    virtual ConnectResult connect() = 0;
 
     /**
      * @brief Disconnect from the driver
@@ -222,16 +258,17 @@ public:
 };
 
 /**
- * @brief Create a driver client
+ * @brief Create a driver API client
  * @param host Host to connect to (default: 127.0.0.1)
  * @param startPort Starting port to try (default: 27015)
  * @param endPort Ending port to try (default: 27025)
- * @return Unique pointer to driver client interface
+ * @return Unique pointer to driver API interface
  *
  * The client will try ports in the range [startPort, endPort] to find
- * the driver's HTTP server.
+ * the driver's HTTP server. P8 D-22 rename (prior factory name was the
+ * createDriver-prefixed client form).
  */
-std::unique_ptr<IDriverClient> createDriverClient(
+std::unique_ptr<IDriverApi> createDriverApi(
     const std::string& host = "127.0.0.1",
     int startPort = 27015,
     int endPort = 27025);

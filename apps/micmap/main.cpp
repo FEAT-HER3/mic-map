@@ -17,6 +17,7 @@
 #include <tlhelp32.h>
 #include <d3d11.h>
 #include <dwmapi.h>
+#include <ShlObj.h>     // P8 LIB-04 / D-20: SHGetFolderPathW for %APPDATA%\\MicMap log path
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "shell32.lib")
@@ -29,10 +30,11 @@
 #include "resource.h"
 #include "micmap/audio/audio_capture.hpp"
 #include "micmap/detection/noise_detector.hpp"
-#include "micmap/steamvr/vr_input.hpp"
+#include "micmap/steamvr/driver_api.hpp"   // P8 D-22: renamed from vr_input.hpp
 #include "micmap/core/state_machine.hpp"
 #include "micmap/core/config_manager.hpp"
 #include "micmap/common/logger.hpp"
+#include "micmap/common/log_sink.hpp"   // P8 LIB-04 / D-19: composition-root sinks
 #include "micmap/common/cli_flags.hpp"
 #include "micmap/steamvr/manifest_registrar.hpp"
 #include "micmap/bindings/bindings_patcher.hpp"
@@ -49,6 +51,7 @@
 #include <thread>
 #include <future>
 #include <filesystem>
+#include <vector>      // P8 LIB-04: composition-root sink list
 
 using namespace micmap;
 
@@ -68,7 +71,7 @@ struct MicMapApp {
     std::unique_ptr<steamvr::IVRInput> vrInput;
     std::unique_ptr<core::IStateMachine> stateMachine;
     std::unique_ptr<core::IConfigManager> configManager;
-    std::unique_ptr<steamvr::IDriverClient> driverClient;
+    std::unique_ptr<steamvr::IDriverApi> driverClient;
 
     std::vector<audio::AudioDevice> devices;
     int selectedDeviceIndex = 0;
@@ -265,7 +268,7 @@ bool MicMapApp::initialize() {
     }
 
     // Initialize driver client (non-blocking - will connect in background)
-    driverClient = steamvr::createDriverClient();
+    driverClient = steamvr::createDriverApi();   // P8 D-22 rename
 
     // Initialize VR input (don't initialize yet - will do async).
     // VR input is only used for SteamVR-quit lifecycle notifications now;
@@ -519,7 +522,7 @@ void MicMapApp::onTrigger() {
     }
     // P7 D-10: suppress local trigger when driver owns the detection path.
     // State machine cooldown is the belt-and-suspenders backstop per D-11.
-    // The /health poll is cached for 1 s in DriverClient so the latency
+    // The /health poll is cached for 1 s in DriverApi so the latency
     // overhead per onTrigger is bounded. Deleted in P10 per D-12.
     if (driverClient->isDriverDetectionActive()) {
         MICMAP_LOG_DEBUG("onTrigger: driver_detection_active=true, suppressing");
@@ -793,6 +796,29 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, int nCmdShow) {
+    // P8 LIB-04 / D-19 / D-20 / Pitfall 8: composition-root logger wiring.
+    // Hoisted to FIRST step in WinMain so the very first MICMAP_LOG_* call
+    // — including failures inside the CLI register/unregister fork below
+    // and CreateWindowW failures further down — lands in the file sink,
+    // not just stderr (Pitfall 8 — client-side equivalent of the driver-
+    // side Pitfall 3 mandate that lands in 08-02).
+    {
+        namespace mc = micmap::common;
+        // Resolve %APPDATA%\\MicMap\\micmap.log (mirrors src/core/src/config_manager.cpp:33-49).
+        std::filesystem::path logPath;
+        wchar_t appdata[MAX_PATH];
+        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appdata))) {
+            logPath = std::filesystem::path(appdata) / L"MicMap" / L"micmap.log";
+        } else {
+            logPath = std::filesystem::current_path() / L".micmap" / L"micmap.log";
+        }
+        std::vector<std::shared_ptr<mc::ILogSink>> sinks;
+        sinks.push_back(mc::makeStdoutLogSink());
+        sinks.push_back(mc::makeFileLogSink(logPath));
+        mc::Logger::setLogger(mc::makeMultiSinkLogger(std::move(sinks)));
+        MICMAP_LOG_INFO("MicMap client logger wired (file: ", logPath.string(), ")");
+    }
+
     // Phase 3 D-01: parse CLI flags FIRST, before anything else. Use the
     // wide-char argv from CommandLineToArgvW (Pitfall 8: free it the moment
     // CliFlags is populated — no argv pointers stored).
@@ -946,11 +972,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
     // driverClient->connect() / vrInput->initialize() calls. Without this
     // seeding, the main loop's reconnect branch would fire ~2s into boot
     // while the initial thread's connect() was still running, launching a
-    // *second* concurrent connect() on the same IDriverClient instance.
+    // *second* concurrent connect() on the same IDriverApi instance.
     std::packaged_task<void()> connectTask([]() {
         if (g_app.initialConnectCancel.load()) return;
         if (g_app.driverClient) {
-            g_app.driverClient->connect();
+            // P8 Pitfall 6: connect() now returns ConnectResult. Treat any
+            // non-Connected outcome as the legacy false (caller code paths
+            // already key off isConnected() for downstream gating).
+            auto r = g_app.driverClient->connect();
+            if (r != steamvr::ConnectResult::Connected) {
+                MICMAP_LOG_WARNING("driverClient->connect() returned non-Connected: ",
+                                   r == steamvr::ConnectResult::NotFound ? "NotFound" :
+                                   r == steamvr::ConnectResult::Timeout  ? "Timeout"  : "OtherError");
+            }
         }
     });
     std::packaged_task<void()> vrInitTask([]() {
@@ -1021,7 +1055,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
                 if (!g_app.driverConnectFuture.valid() ||
                     g_app.driverConnectFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
                     g_app.driverConnectFuture = std::async(std::launch::async, []() {
-                        g_app.driverClient->connect();
+                        // P8 Pitfall 6: connect() returns ConnectResult; the
+                        // reconnect loop only cares whether a successful
+                        // /health was observed. Other branches surface as
+                        // a debug log; the loop itself self-corrects on the
+                        // next interval if the driver comes up later.
+                        auto r = g_app.driverClient->connect();
+                        if (r != steamvr::ConnectResult::Connected) {
+                            MICMAP_LOG_DEBUG("reconnect: connect() returned non-Connected (",
+                                             r == steamvr::ConnectResult::NotFound ? "NotFound" :
+                                             r == steamvr::ConnectResult::Timeout  ? "Timeout"  : "OtherError",
+                                             ")");
+                        }
                     });
                 }
             }
