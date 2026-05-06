@@ -190,6 +190,24 @@ struct TelemetryLevel {
 };
 
 /**
+ * @brief P8 D-09 / IPC-04 — 4-state result of IDriverApi::putSettings().
+ *
+ * Status outcomes the UI must distinguish (per UI-SPEC):
+ *   Ok                — driver returned 200; new config is persisted + published.
+ *   ValidationFailed  — driver returned 400 with {"field","reason"} envelope.
+ *                       errorField/errorReason carry the dot-path + human text
+ *                       so the settings panel can highlight the offending input.
+ *   ConnectionFailed  — httplib reported Error::Connection (driver not running).
+ *   OtherError        — transport timeout, HTTP 5xx, malformed body, etc.
+ */
+struct PutSettingsResult {
+    enum Status { Ok, ValidationFailed, ConnectionFailed, OtherError };
+    Status status{OtherError};
+    std::optional<std::string> errorField;    // populated when status == ValidationFailed
+    std::optional<std::string> errorReason;
+};
+
+/**
  * @brief 3-state result of IDriverApi::connect() (P8 / Pitfall 6).
  *
  * The HEALTH-01 driver-loaded indicator is red on Connection (no driver
@@ -317,6 +335,25 @@ public:
     /// @brief P8 IPC-02 / HEALTH-06: GET /telemetry/level. Returns nullopt
     ///        on connect/parse fail. Polled at 30 Hz by the level meter UI.
     virtual std::optional<TelemetryLevel> getTelemetryLevel() = 0;
+
+    // ============================================================
+    // Phase 8 write-side methods (D-14 / D-16 / D-09).
+    // ============================================================
+
+    /// @brief P8 IPC-04 write path. Sends PUT /settings with the candidate
+    ///        config serialized to JSON. On Ok the driver has validated,
+    ///        persisted, and published the new snapshot atomically. On
+    ///        ValidationFailed the result carries the {field, reason}
+    ///        envelope so the settings panel can highlight the offending
+    ///        input. ConnectionFailed is differentiated from OtherError via
+    ///        httplib::Error::Connection (Pitfall 6 reuse from connect()).
+    virtual PutSettingsResult putSettings(const core::AppConfig& cfg) = 0;
+
+    /// @brief P8 HEALTH-05 / D-16: POST /state/clear-error. Returns true on
+    ///        HTTP 200. Monotonic null assignment in the driver -- a
+    ///        concurrent error fire after the clear simply overwrites null
+    ///        with the new error (no error history).
+    virtual bool clearError() = 0;
 };
 
 /**
