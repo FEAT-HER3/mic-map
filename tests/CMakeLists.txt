@@ -253,3 +253,336 @@ add_test(NAME AssertDetectionRunnerNoVrApi
     COMMAND ${CMAKE_COMMAND}
         -DDETECTION_RUNNER_DIR=${CMAKE_SOURCE_DIR}/driver/src
         -P ${CMAKE_SOURCE_DIR}/cmake/AssertDetectionRunnerNoVrApi.cmake)
+
+# ---- Phase 8 Wave 0 (RED scaffold) ----
+# Lint scripts: 4 new lint scripts ship at Wave 0 (Plan 08-00). Two of them
+# wire into ctest now; the other two (AssertNoJsonInCore + AssertNoConfigWriteInClient)
+# wait until 08-02 and 08-04 respectively, because they currently fire on
+# existing v1.5 code (config_manager.cpp uses nlohmann/json; main.cpp:498
+# calls saveDefault). Registering them now would produce immediate FATAL
+# on the existing v1.5 reality, so the ctest registrations are deferred
+# per CONTEXT D-29 ordering until the violations are removed.
+
+# P8 D-25 / IPC-07 / Pitfall 7: assert HTTP server binds 127.0.0.1 only.
+# Wave 0 RED-tolerant via skip-on-NOT-EXISTS in the lint script. Currently
+# stays GREEN — existing http_server.hpp ctor defaults host to "127.0.0.1".
+add_test(NAME AssertHttpServerLocalhostOnly
+    COMMAND ${CMAKE_COMMAND}
+        -DHTTP_SERVER_DIR=${CMAKE_SOURCE_DIR}/driver/src
+        -P ${CMAKE_SOURCE_DIR}/cmake/AssertHttpServerLocalhostOnly.cmake)
+
+# P8 D-24 / SVR-05 / Pitfall 3: assert no vr::* in http_server.{hpp,cpp}.
+# Sibling of AssertDetectionRunnerNoVrApi. Currently GREEN — existing
+# http_server.cpp includes only command_queue + driver_log + httplib + nlohmann.
+add_test(NAME AssertHttpServerNoVrApi
+    COMMAND ${CMAKE_COMMAND}
+        -DHTTP_SERVER_DIR=${CMAKE_SOURCE_DIR}/driver/src
+        -P ${CMAKE_SOURCE_DIR}/cmake/AssertHttpServerNoVrApi.cmake)
+
+# Test executable registrations follow the EXISTS-gated source-list pattern
+# from the P7 DetectionSettingsPropagation registration above. Each test
+# expects production source files that do not yet exist; the EXISTS gate
+# keeps the source list empty (so cmake configure stays clean) while the
+# missing #include in the test TU produces the build-time RED diagnostic.
+
+# IPC-01 — GET /state shape. RED until Plan 08-03 lands driver_state.hpp +
+# the GET /state route on HttpServer.
+set(_p8_get_state_sources driver/get_state_shape_test.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+    list(APPEND _p8_get_state_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/http_server.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+endif()
+if(OpenVR_FOUND)
+    add_executable(test_get_state_shape ${_p8_get_state_sources})
+    target_compile_features(test_get_state_shape PRIVATE cxx_std_17)
+    target_include_directories(test_get_state_shape PRIVATE
+        ${CMAKE_SOURCE_DIR}/driver/src)
+    target_link_libraries(test_get_state_shape PRIVATE
+        micmap::core_runtime
+        micmap::bindings
+        httplib::httplib
+        OpenVR::openvr_api
+        nlohmann_json)
+    target_compile_definitions(test_get_state_shape PRIVATE
+        CPPHTTPLIB_NO_EXCEPTIONS)
+    add_test(NAME GetStateShape COMMAND test_get_state_shape)
+else()
+    message(STATUS "GetStateShape: skipped (OpenVR SDK not found)")
+endif()
+
+# IPC-02 — GET /telemetry/level. RED until Plan 08-03 lands the rmsGetter
+# ctor parameter on HttpServer + the route handler.
+set(_p8_get_telemetry_level_sources driver/get_telemetry_level_test.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+    list(APPEND _p8_get_telemetry_level_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/http_server.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+endif()
+if(OpenVR_FOUND)
+    add_executable(test_get_telemetry_level ${_p8_get_telemetry_level_sources})
+    target_compile_features(test_get_telemetry_level PRIVATE cxx_std_17)
+    target_include_directories(test_get_telemetry_level PRIVATE
+        ${CMAKE_SOURCE_DIR}/driver/src)
+    target_link_libraries(test_get_telemetry_level PRIVATE
+        micmap::core_runtime
+        micmap::bindings
+        httplib::httplib
+        OpenVR::openvr_api
+        nlohmann_json)
+    target_compile_definitions(test_get_telemetry_level PRIVATE
+        CPPHTTPLIB_NO_EXCEPTIONS)
+    add_test(NAME GetTelemetryLevel COMMAND test_get_telemetry_level)
+else()
+    message(STATUS "GetTelemetryLevel: skipped (OpenVR SDK not found)")
+endif()
+
+# IPC-03 / D-17 — GET /devices 1 s cache. RED until Plan 08-03.
+set(_p8_get_devices_cache_sources driver/get_devices_cache_test.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+    list(APPEND _p8_get_devices_cache_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/http_server.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+endif()
+if(OpenVR_FOUND)
+    add_executable(test_get_devices_cache ${_p8_get_devices_cache_sources})
+    target_compile_features(test_get_devices_cache PRIVATE cxx_std_17)
+    target_include_directories(test_get_devices_cache PRIVATE
+        ${CMAKE_SOURCE_DIR}/driver/src)
+    target_link_libraries(test_get_devices_cache PRIVATE
+        micmap::core_runtime
+        micmap::bindings
+        httplib::httplib
+        OpenVR::openvr_api
+        nlohmann_json)
+    target_compile_definitions(test_get_devices_cache PRIVATE
+        CPPHTTPLIB_NO_EXCEPTIONS)
+    add_test(NAME GetDevicesCache COMMAND test_get_devices_cache)
+else()
+    message(STATUS "GetDevicesCache: skipped (OpenVR SDK not found)")
+endif()
+
+# IPC-04 — GET /settings AppConfig shape. RED until Plan 08-03 lands the
+# configGetter ctor parameter + AppConfig to_json/from_json ADL hooks.
+set(_p8_get_settings_shape_sources driver/get_settings_shape_test.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
+    list(APPEND _p8_get_settings_shape_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/http_server.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
+endif()
+if(OpenVR_FOUND)
+    add_executable(test_get_settings_shape ${_p8_get_settings_shape_sources})
+    target_compile_features(test_get_settings_shape PRIVATE cxx_std_17)
+    target_include_directories(test_get_settings_shape PRIVATE
+        ${CMAKE_SOURCE_DIR}/driver/src)
+    target_link_libraries(test_get_settings_shape PRIVATE
+        micmap::core_runtime
+        micmap::bindings
+        httplib::httplib
+        OpenVR::openvr_api
+        nlohmann_json)
+    target_compile_definitions(test_get_settings_shape PRIVATE
+        CPPHTTPLIB_NO_EXCEPTIONS)
+    add_test(NAME GetSettingsShape COMMAND test_get_settings_shape)
+else()
+    message(STATUS "GetSettingsShape: skipped (OpenVR SDK not found)")
+endif()
+
+# IPC-04 / D-09 — PUT /settings round-trip. RED until Plan 08-04 lands PUT
+# /settings + saveConfigJson (atomic_store + ReplaceFileW).
+set(_p8_put_settings_round_trip_sources driver/put_settings_round_trip_test.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp" AND EXISTS "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp")
+    list(APPEND _p8_put_settings_round_trip_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/http_server.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp")
+endif()
+if(OpenVR_FOUND)
+    add_executable(test_put_settings_round_trip ${_p8_put_settings_round_trip_sources})
+    target_compile_features(test_put_settings_round_trip PRIVATE cxx_std_17)
+    target_include_directories(test_put_settings_round_trip PRIVATE
+        ${CMAKE_SOURCE_DIR}/driver/src)
+    target_link_libraries(test_put_settings_round_trip PRIVATE
+        micmap::core_runtime
+        micmap::bindings
+        httplib::httplib
+        OpenVR::openvr_api
+        nlohmann_json)
+    target_compile_definitions(test_put_settings_round_trip PRIVATE
+        CPPHTTPLIB_NO_EXCEPTIONS)
+    add_test(NAME PutSettingsRoundTrip COMMAND test_put_settings_round_trip)
+else()
+    message(STATUS "PutSettingsRoundTrip: skipped (OpenVR SDK not found)")
+endif()
+
+# IPC-04 / D-14 — PUT /settings 400 envelope. RED until Plan 08-04.
+set(_p8_put_settings_validation_sources driver/put_settings_validation_test.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp")
+    list(APPEND _p8_put_settings_validation_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/http_server.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp")
+endif()
+if(OpenVR_FOUND)
+    add_executable(test_put_settings_validation ${_p8_put_settings_validation_sources})
+    target_compile_features(test_put_settings_validation PRIVATE cxx_std_17)
+    target_include_directories(test_put_settings_validation PRIVATE
+        ${CMAKE_SOURCE_DIR}/driver/src)
+    target_link_libraries(test_put_settings_validation PRIVATE
+        micmap::core_runtime
+        micmap::bindings
+        httplib::httplib
+        OpenVR::openvr_api
+        nlohmann_json)
+    target_compile_definitions(test_put_settings_validation PRIVATE
+        CPPHTTPLIB_NO_EXCEPTIONS)
+    add_test(NAME PutSettingsValidation COMMAND test_put_settings_validation)
+else()
+    message(STATUS "PutSettingsValidation: skipped (OpenVR SDK not found)")
+endif()
+
+# D-28 — 100x PUT /settings stress, no leaks. RED until Plan 08-04.
+set(_p8_put_settings_stress100_sources driver/put_settings_stress100_test.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp" AND EXISTS "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp")
+    list(APPEND _p8_put_settings_stress100_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/http_server.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp")
+endif()
+if(OpenVR_FOUND)
+    add_executable(test_put_settings_stress100 ${_p8_put_settings_stress100_sources})
+    target_compile_features(test_put_settings_stress100 PRIVATE cxx_std_17)
+    target_include_directories(test_put_settings_stress100 PRIVATE
+        ${CMAKE_SOURCE_DIR}/driver/src)
+    target_link_libraries(test_put_settings_stress100 PRIVATE
+        micmap::core_runtime
+        micmap::bindings
+        httplib::httplib
+        OpenVR::openvr_api
+        nlohmann_json)
+    target_compile_definitions(test_put_settings_stress100 PRIVATE
+        CPPHTTPLIB_NO_EXCEPTIONS)
+    add_test(NAME PutSettingsStress100 COMMAND test_put_settings_stress100)
+else()
+    message(STATUS "PutSettingsStress100: skipped (OpenVR SDK not found)")
+endif()
+
+# D-10 — driver Init 3-attempt SHARING_VIOLATION retry. RED until Plan 08-02
+# lands config_io.cpp::loadConfigJson with the retry.
+set(_p8_init_config_share_violation_sources driver/init_config_share_violation_test.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
+    list(APPEND _p8_init_config_share_violation_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
+endif()
+if(OpenVR_FOUND)
+    add_executable(test_init_config_share_violation ${_p8_init_config_share_violation_sources})
+    target_compile_features(test_init_config_share_violation PRIVATE cxx_std_17)
+    target_include_directories(test_init_config_share_violation PRIVATE
+        ${CMAKE_SOURCE_DIR}/driver/src)
+    target_link_libraries(test_init_config_share_violation PRIVATE
+        micmap::core_runtime
+        OpenVR::openvr_api
+        nlohmann_json)
+    add_test(NAME InitConfigShareViolation COMMAND test_init_config_share_violation)
+else()
+    message(STATUS "InitConfigShareViolation: skipped (OpenVR SDK not found)")
+endif()
+
+# HEALTH-05 / D-16 — POST /state/clear-error. RED until Plan 08-04.
+set(_p8_state_clear_error_sources driver/state_clear_error_test.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+    list(APPEND _p8_state_clear_error_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/http_server.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
+endif()
+if(OpenVR_FOUND)
+    add_executable(test_state_clear_error ${_p8_state_clear_error_sources})
+    target_compile_features(test_state_clear_error PRIVATE cxx_std_17)
+    target_include_directories(test_state_clear_error PRIVATE
+        ${CMAKE_SOURCE_DIR}/driver/src)
+    target_link_libraries(test_state_clear_error PRIVATE
+        micmap::core_runtime
+        micmap::bindings
+        httplib::httplib
+        OpenVR::openvr_api
+        nlohmann_json)
+    target_compile_definitions(test_state_clear_error PRIVATE
+        CPPHTTPLIB_NO_EXCEPTIONS)
+    add_test(NAME StateClearError COMMAND test_state_clear_error)
+else()
+    message(STATUS "StateClearError: skipped (OpenVR SDK not found)")
+endif()
+
+# D-14 — saveConfigJson uses atomic ReplaceFileW. RED until Plan 08-02.
+# Pure config_io test (no OpenVR transitive). NOT gated on OpenVR_FOUND;
+# this test exe builds in headless configurations too.
+set(_p8_config_io_atomic_persist_sources driver/config_io_atomic_persist_test.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
+    list(APPEND _p8_config_io_atomic_persist_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
+endif()
+add_executable(test_config_io_atomic_persist ${_p8_config_io_atomic_persist_sources})
+target_compile_features(test_config_io_atomic_persist PRIVATE cxx_std_17)
+target_include_directories(test_config_io_atomic_persist PRIVATE
+    ${CMAKE_SOURCE_DIR}/driver/src)
+target_link_libraries(test_config_io_atomic_persist PRIVATE
+    micmap::core_runtime
+    nlohmann_json)
+add_test(NAME ConfigIoAtomicPersist COMMAND test_config_io_atomic_persist)
+
+# LIB-04 / D-19 — MultiSinkLogger fan-out. RED until Plan 08-01 lands the
+# log_sink.hpp interface + multi_sink_logger.cpp impl in src/common.
+set(_p8_multi_sink_logger_sources test_multi_sink_logger.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/common/src/multi_sink_logger.cpp")
+    list(APPEND _p8_multi_sink_logger_sources
+        "${CMAKE_SOURCE_DIR}/src/common/src/multi_sink_logger.cpp")
+endif()
+add_executable(test_multi_sink_logger ${_p8_multi_sink_logger_sources})
+target_compile_features(test_multi_sink_logger PRIVATE cxx_std_17)
+target_link_libraries(test_multi_sink_logger PRIVATE micmap::common)
+add_test(NAME MultiSinkLogger COMMAND test_multi_sink_logger)
+
+# D-14 / D-15 — settings_validator field-level rejects. RED until Plan 08-04.
+set(_p8_settings_validator_sources test_settings_validator.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp")
+    list(APPEND _p8_settings_validator_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp")
+endif()
+add_executable(test_settings_validator ${_p8_settings_validator_sources})
+target_compile_features(test_settings_validator PRIVATE cxx_std_17)
+target_include_directories(test_settings_validator PRIVATE
+    ${CMAKE_SOURCE_DIR}/driver/src)
+target_link_libraries(test_settings_validator PRIVATE micmap::core)
+add_test(NAME SettingsValidator COMMAND test_settings_validator)
+
+# HEALTH-01 / Pitfall 6 — IDriverApi::connect() 3-state result. RED until
+# Plan 08-01 lands driver_api.hpp (rename of vr_input.hpp) + ConnectResult enum.
+add_executable(test_client_driver_loaded_indicator test_client_driver_loaded_indicator.cpp)
+target_compile_features(test_client_driver_loaded_indicator PRIVATE cxx_std_17)
+target_link_libraries(test_client_driver_loaded_indicator PRIVATE micmap::steamvr)
+add_test(NAME ClientDriverLoadedIndicator COMMAND test_client_driver_loaded_indicator)
+
+# HEALTH-06 — level-meter 5 Hz visible / 0.5 Hz tray cadence. RED until Plan 08-05.
+add_executable(test_client_level_meter_cadence test_client_level_meter_cadence.cpp)
+target_compile_features(test_client_level_meter_cadence PRIVATE cxx_std_17)
+target_link_libraries(test_client_level_meter_cadence PRIVATE micmap::steamvr)
+add_test(NAME ClientLevelMeterCadence COMMAND test_client_level_meter_cadence)

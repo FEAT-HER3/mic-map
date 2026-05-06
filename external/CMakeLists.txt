@@ -59,7 +59,10 @@ target_compile_definitions(kissfft PUBLIC kiss_fft_scalar=float)
 FetchContent_Declare(
     cpp_httplib
     GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-    GIT_TAG v0.14.3
+    # P8 D-05: bump from v0.14.3 (CVE-2025-46728); validates via D-06 smoke
+    # (existing v1.5 trigger path UAT runs in 08-06; full Wave 0 ctest set
+    # runs immediately after this task lands).
+    GIT_TAG v0.20.1
 )
 
 FetchContent_GetProperties(cpp_httplib)

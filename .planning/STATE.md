@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Feature Migration
-status: completed
+status: executing
 stopped_at: Phase 8 UI-SPEC approved
-last_updated: "2026-05-05T22:39:00.748Z"
-last_activity: 2026-05-04 -- Phase 07 marked complete
+last_updated: "2026-05-06T03:14:19.411Z"
+last_activity: 2026-05-06 -- Phase 08 execution started
 progress:
   total_phases: 7
   completed_phases: 3
-  total_plans: 13
+  total_plans: 20
   completed_plans: 13
-  percent: 100
+  percent: 65
 ---
 
 # Project State
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-30 with v1.6 Feature Migration milestone)
 
 **Core value:** Covering the microphone reliably toggles the SteamVR dashboard, invisibly to the rest of VR — no controller beam, no extra hardware, no focus loss.
-**Current focus:** Phase 07 — driver-side-detection-thread
+**Current focus:** Phase 08 — ipc-contract-reshape
 
 ## Current Position
 
-Phase: 07 — COMPLETE
+Phase: 08 (ipc-contract-reshape) — EXECUTING
 Next: `/gsd-discuss-phase 7` (no CONTEXT.md yet)
-Plan: 1 of 6
-Status: Phase 07 complete
-Last activity: 2026-05-04 -- Phase 07 marked complete
+Plan: 1 of 7
+Status: Executing Phase 08
+Last activity: 2026-05-06 -- Phase 08 execution started
 
 ## Roadmap Summary
 
