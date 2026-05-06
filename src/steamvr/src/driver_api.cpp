@@ -107,6 +107,47 @@ std::optional<std::chrono::system_clock::time_point> parseIso8601Z(
     return std::chrono::system_clock::from_time_t(t);
 }
 
+// P8 IPC-04 write path — manual AppConfig -> json serialization. Same
+// reasoning as parseAppConfigFromJson above: micmap_steamvr cannot rely
+// on the nlohmann ADL to_json hooks (they ship in apps/micmap and driver
+// TUs only). The shape mirrors the driver-side config_json.cpp output so
+// the round-trip is byte-equivalent for the fields the client cares about.
+// wstring fields (audio.deviceNamePattern / audio.deviceId) are intentionally
+// omitted -- the level-meter UI and audio-device picker do not edit those
+// (they read getDevices() instead). 08-05 wires the settings panel which
+// only mutates ints/floats/bools; if a future plan needs to edit wstrings
+// from this client TU, thread UTF-8 -> UTF-16 here.
+nlohmann::json serializeAppConfigToJson(const core::AppConfig& cfg) {
+    nlohmann::json j;
+    j["version"] = cfg.version;
+
+    nlohmann::json audio;
+    audio["bufferSizeMs"] = cfg.audio.bufferSizeMs;
+    // deviceNamePattern + deviceId left unset -- driver from_json keeps the
+    // existing wstring values when these keys are missing (config_json.cpp
+    // uses j.value("...", default) on optional reads).
+    j["audio"] = std::move(audio);
+
+    nlohmann::json detection;
+    detection["sensitivity"]   = cfg.detection.sensitivity;
+    detection["minDurationMs"] = cfg.detection.minDurationMs;
+    detection["cooldownMs"]    = cfg.detection.cooldownMs;
+    detection["fftSize"]       = cfg.detection.fftSize;
+    j["detection"] = std::move(detection);
+
+    nlohmann::json steamvr;
+    steamvr["dashboardClickEnabled"] = cfg.steamvr.dashboardClickEnabled;
+    steamvr["customActionBinding"]   = cfg.steamvr.customActionBinding;
+    j["steamvr"] = std::move(steamvr);
+
+    nlohmann::json training;
+    training["dataFile"] = cfg.training.dataFile;
+    j["training"] = std::move(training);
+
+    j["shownTrayNotification"] = cfg.shownTrayNotification;
+    return j;
+}
+
 } // namespace
 
 // ============================================================================
@@ -509,6 +550,73 @@ public:
             lastError_ = std::string("GET /telemetry/level parse: ") + e.what();
             return std::nullopt;
         }
+    }
+
+    PutSettingsResult putSettings(const core::AppConfig& cfg) override {
+        PutSettingsResult result;
+        if (!ensureConnected()) {
+            result.status = PutSettingsResult::ConnectionFailed;
+            lastError_ = "PUT /settings: not connected";
+            return result;
+        }
+        const auto body = serializeAppConfigToJson(cfg).dump();
+        httplib::Client client(host_, port_);
+        client.set_connection_timeout(0, 500000);
+        client.set_read_timeout(0, 500000);
+        auto res = client.Put("/settings", body, "application/json");
+        if (!res) {
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+            // not used; documented for completeness
+#endif
+            using E = httplib::Error;
+            if (res.error() == E::Connection) {
+                result.status = PutSettingsResult::ConnectionFailed;
+                lastError_ = "PUT /settings: connection refused";
+            } else {
+                result.status = PutSettingsResult::OtherError;
+                lastError_ = "PUT /settings: transport error";
+            }
+            return result;
+        }
+        if (res->status == 200) {
+            result.status = PutSettingsResult::Ok;
+            return result;
+        }
+        if (res->status == 400) {
+            result.status = PutSettingsResult::ValidationFailed;
+            try {
+                auto j = nlohmann::json::parse(res->body);
+                if (j.contains("field") && j["field"].is_string()) {
+                    result.errorField  = j["field"].get<std::string>();
+                }
+                if (j.contains("reason") && j["reason"].is_string()) {
+                    result.errorReason = j["reason"].get<std::string>();
+                }
+            } catch (const nlohmann::json::exception&) {
+                // 400 with non-JSON body -- treat as validation but with empty fields.
+            }
+            lastError_ = "PUT /settings: 400 validation rejected";
+            return result;
+        }
+        result.status = PutSettingsResult::OtherError;
+        lastError_ = "PUT /settings: HTTP " + std::to_string(res->status);
+        return result;
+    }
+
+    bool clearError() override {
+        if (!ensureConnected()) {
+            lastError_ = "POST /state/clear-error: not connected";
+            return false;
+        }
+        httplib::Client client(host_, port_);
+        client.set_connection_timeout(0, 250000);
+        client.set_read_timeout(0, 250000);
+        auto res = client.Post("/state/clear-error", "", "application/json");
+        if (!res || res->status != 200) {
+            lastError_ = "POST /state/clear-error failed";
+            return false;
+        }
+        return true;
     }
 
 private:
