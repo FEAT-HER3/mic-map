@@ -16,6 +16,14 @@
 
 #include "micmap/core/config_manager.hpp"
 
+// P8 08-05 D-07 / IPC-05: first-launch flag-flip persists via PUT /settings.
+// The driver is the sole writer of config.json now; fireBalloonIfFirstSilentLaunch
+// takes an optional IDriverApi pointer so the production caller can plumb the
+// balloon's flag flip through the driver, while the headless
+// test_tray_balloon_once continues to pass nullptr (its stub asserts on the
+// in-memory flag flip directly).
+namespace micmap::steamvr { class IDriverApi; }
+
 // Forward-declare NOTIFYICONDATAW so this header does not drag in <windows.h>
 // into every TU that wants the seam. ProductionShellNotifySeam's .cpp
 // includes the full Win32 SDK.
@@ -43,14 +51,20 @@ public:
 /**
  * @brief Fires the balloon iff `minimized && !config.shownTrayNotification`.
  *
- * Side effects on fire: flips config.shownTrayNotification to true; calls
- * configMgr.saveDefault(). Flag is flipped even if Shell suppresses display
- * (Focus Assist / Quiet Hours) — D-09 policy: the flag is "we tried", not
- * "user saw it".
+ * Side effects on fire: flips config.shownTrayNotification to true. The flag
+ * is flipped even if Shell suppresses display (Focus Assist / Quiet Hours) —
+ * D-09 policy: the flag is "we tried", not "user saw it".
+ *
+ * Persistence (P8 08-05 D-07 / IPC-05): when `driverApi` is non-null the
+ * caller routes the flag flip through PUT /settings (driver is sole writer
+ * of config.json). When `driverApi` is null (headless test path) the flag
+ * is flipped in-memory only; the test stub asserts directly on the
+ * in-memory mutation.
  */
 void fireBalloonIfFirstSilentLaunch(IShellNotifySeam& shell,
                                     core::IConfigManager& configMgr,
-                                    bool minimized);
+                                    bool minimized,
+                                    micmap::steamvr::IDriverApi* driverApi = nullptr);
 
 #ifdef _WIN32
 /**

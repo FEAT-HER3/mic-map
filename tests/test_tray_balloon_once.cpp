@@ -84,6 +84,13 @@ public:
 }  // namespace
 
 int main() {
+    // P8 08-05 D-07 / IPC-05 update: fireBalloonIfFirstSilentLaunch no longer
+    // calls saveDefault() inline -- persistence flows through the optional
+    // IDriverApi PUT /settings parameter (defaulting to nullptr in this
+    // headless test path). The test contract therefore drops the
+    // saveDefaultCount assertion; the in-memory flag-flip + balloon-fired +
+    // re-fire-suppression behaviors are the surviving invariants.
+
     // ---- Case 1: shownTrayNotification=false + minimized=true -> fires ----
     {
         StubShellNotifySeam seam;
@@ -94,7 +101,6 @@ int main() {
 
         MM_CHECK(seam.notifyCount_ == 1);                       // balloon fired
         MM_CHECK(cfg.cfg_.shownTrayNotification == true);       // flag flipped
-        MM_CHECK(cfg.saveDefaultCount_ == 1);                   // persisted
         MM_CHECK(!seam.lastTitle_.empty());                     // user-facing strings
         MM_CHECK(!seam.lastBody_.empty());
         std::cout << "PASS case_1_first_silent_launch_fires\n";
@@ -109,7 +115,6 @@ int main() {
         ma::fireBalloonIfFirstSilentLaunch(seam, cfg, /*minimized=*/true);
 
         MM_CHECK(seam.notifyCount_ == 0);
-        MM_CHECK(cfg.saveDefaultCount_ == 0);
         std::cout << "PASS case_2_already_shown_no_refire\n";
     }
 
@@ -125,7 +130,6 @@ int main() {
 
         MM_CHECK(seam.notifyCount_ == 0);
         MM_CHECK(cfg.cfg_.shownTrayNotification == false);  // unchanged
-        MM_CHECK(cfg.saveDefaultCount_ == 0);
         std::cout << "PASS case_3_user_launch_does_not_consume\n";
     }
 

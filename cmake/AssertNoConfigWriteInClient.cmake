@@ -16,13 +16,25 @@
 # fine; only client *callers* are forbidden) and apps/mic_test/ (headless
 # harness retains saveDefault).
 #
+# Excluded files (08-05): apps/micmap/src/config_manager_impl.cpp — the
+# v1.5 ConfigManagerImpl was relocated from src/core into apps/micmap/src
+# in Plan 08-02 (D-02) to keep micmap_core JSON-free. The impl itself MUST
+# retain saveDefault / writeAtomicWindows / ReplaceFileW because:
+#   (a) IConfigManager::saveDefault is part of the public interface and
+#       still consumed by mic_test.exe (out of scope for this lint);
+#   (b) the implementation file is not a *caller* — the lint comment above
+#       reads "only client *callers* are forbidden". P10 deletes the impl
+#       entirely once configManager is removed from the client.
+# Excluding this single file by name is more honest than weakening the
+# regex; any new client TU that calls these helpers is still flagged.
+#
 # RED-tolerant by GLOB_RECURSE form: lint stays clean if no client TU has
 # yet been migrated; fires the moment any client TU writes the file. Wave 0
-# deliberately does NOT register this lint as a ctest yet — it currently
-# fires on apps/micmap/main.cpp:498 (configManager->saveDefault()) which
-# Plan 08-04 deletes; ctest registration lands then.
+# deliberately deferred ctest registration — Plan 08-05 deletes the last
+# saveDefault() callsites in apps/micmap/main.cpp and first_launch_balloon.cpp,
+# then registers this lint as a ctest in tests/CMakeLists.txt.
 #
-# Invocation (from tests/CMakeLists.txt at 08-04):
+# Invocation (from tests/CMakeLists.txt):
 #   add_test(NAME AssertNoConfigWriteInClient
 #       COMMAND ${CMAKE_COMMAND}
 #           -DCLIENT_ROOTS=<root1>$<SEMICOLON><root2>$<SEMICOLON>...
@@ -47,6 +59,14 @@ foreach(_root ${CLIENT_ROOTS})
     file(GLOB_RECURSE _files
         "${_root}/*.cpp" "${_root}/*.hpp")
     foreach(_file ${_files})
+        # P8 08-05 excluded files: the relocated ConfigManagerImpl is the impl,
+        # not a caller. Skip by exact basename. Any new TU adopting the impl
+        # patterns under a different filename is still flagged.
+        get_filename_component(_basename "${_file}" NAME)
+        if(_basename STREQUAL "config_manager_impl.cpp")
+            continue()
+        endif()
+
         math(EXPR _files_scanned "${_files_scanned} + 1")
         file(READ "${_file}" _content)
         # Five-condition disjunction (per checker fix). The first three

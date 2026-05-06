@@ -621,8 +621,13 @@ void MicMapApp::shutdown() {
     if (driverClient) driverClient->disconnect();
     // 4. Shutdown VR input (calls VR_Shutdown under MICMAP_HAS_OPENVR)
     if (vrInput) vrInput->shutdown();
-    // 5. Persist config (shownTrayNotification flag + any UI-edited fields)
-    if (configManager) configManager->saveDefault();
+    // 5. P8 08-05 D-07 / IPC-05: client no longer writes config.json.
+    // Settings flow through PUT /settings (renderUI -> driverClient->putSettings)
+    // and the first-launch tray-notification flag flips through the same path
+    // (first_launch_balloon.cpp). The driver is the sole writer for this
+    // milestone; configManager stays alive as the in-memory snapshot source
+    // for client-side detection (which still runs until P10 cutover deletes
+    // the client-side audio path).
     // 6. Remove tray icon
     // IN-12 iter-3: symmetric WARNING log with IN-03 NIM_ADD path so a
     // "stuck zombie tray icon after MicMap quit" is diagnosable from the log.
@@ -771,72 +776,178 @@ void MicMapApp::renderUI() {
     ImGui::Spacing();
     ImGui::Text("Audio Device");
     ImGui::Separator();
-    if (!devices.empty()) {
-        std::vector<std::string> names;
-        for (auto& d : devices) {
-            // WR-05: size the UTF-8 buffer via a probing call first. The
-            // original code allocated one byte per wide-char code unit, which
-            // underflows for non-ASCII names (UTF-8 needs up to 3 bytes per
-            // BMP code unit, 4 for non-BMP pairs). First call returns the
-            // required byte count including the NUL terminator.
-            std::string name;
-            int needed = WideCharToMultiByte(CP_UTF8, 0, d.name.c_str(), -1,
-                                             nullptr, 0, nullptr, nullptr);
-            if (needed > 0) {
-                name.resize(static_cast<size_t>(needed - 1));  // drop NUL
-                WideCharToMultiByte(CP_UTF8, 0, d.name.c_str(), -1,
-                                    name.data(), needed, nullptr, nullptr);
-            }
-            names.push_back(std::move(name));
+
+    // P8 08-05 D-13 — driver-sourced device list (GET /devices, 1 s server-side cache).
+    // First fetch lazily on UI render; HEALTH-07 "Re-pick device" sets
+    // devicesFetched=false to force a re-fetch on the next render.
+    if (!devicesFetched && driverLoadedIndicator.load() && driverClient) {
+        auto list = driverClient->getDevices();
+        if (list.has_value()) {
+            std::lock_guard<std::mutex> lk(devicesMu);
+            driverDevices = std::move(*list);
+            devicesFetched = true;
         }
-        std::vector<const char*> ptrs;
-        for (auto& n : names) ptrs.push_back(n.c_str());
-        int prev = selectedDeviceIndex;
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::Combo("##Dev", &selectedDeviceIndex, ptrs.data(), (int)ptrs.size()) && prev != selectedDeviceIndex && audioCapture) {
-            audioCapture->stopCapture();
-            audioCapture->selectDeviceById(devices[selectedDeviceIndex].id);
-            auto dev = audioCapture->getCurrentDevice();
-            if (dev.sampleRate > 0) {
-                // WR-03: guard detector reassignment under audioMutex so the
-                // WASAPI callback (which takes the same mutex before
-                // dereferencing `detector`) cannot race with the swap and
-                // have the old detector destroyed out from under it.
-                {
-                    std::lock_guard<std::mutex> lock(audioMutex);
-                    detector = detection::createFFTDetector(dev.sampleRate);
-                    detector->setMinDetectionDuration(detectionTimeMs);
-                    if (configManager) detector->loadTrainingData(configManager->getTrainingDataPath());
+    }
+
+    {
+        const bool drvOkForDevices = driverLoadedIndicator.load();
+        if (!drvOkForDevices) ImGui::BeginDisabled();
+
+        std::lock_guard<std::mutex> lk(devicesMu);
+        if (driverDevices.empty()) {
+            ImGui::TextDisabled("Loading devices...");
+        } else {
+            std::vector<const char*> ptrs;
+            ptrs.reserve(driverDevices.size());
+            for (auto& d : driverDevices) ptrs.push_back(d.name.c_str());
+
+            // Re-resolve selectedDeviceIndex against the driver list every
+            // frame: the v1.5 selectedDeviceIndex was an index into the
+            // local WASAPI enumeration, which the driver list need not
+            // mirror. Rebuild from the current AppConfig audio.deviceId
+            // so the combo highlights the correct entry on first render.
+            int driverSel = 0;
+            if (configManager) {
+                const auto& cfgDevId = configManager->getConfig().audio.deviceId;
+                if (!cfgDevId.empty()) {
+                    // Convert wstring deviceId to UTF-8 for compare against driver list.
+                    int needed = WideCharToMultiByte(CP_UTF8, 0, cfgDevId.c_str(), -1,
+                                                     nullptr, 0, nullptr, nullptr);
+                    std::string cfgUtf8;
+                    if (needed > 0) {
+                        cfgUtf8.resize(static_cast<size_t>(needed - 1));
+                        WideCharToMultiByte(CP_UTF8, 0, cfgDevId.c_str(), -1,
+                                            cfgUtf8.data(), needed, nullptr, nullptr);
+                    }
+                    for (size_t i = 0; i < driverDevices.size(); ++i) {
+                        if (driverDevices[i].id == cfgUtf8) {
+                            driverSel = static_cast<int>(i);
+                            break;
+                        }
+                    }
                 }
-                // WR-04: only restart capture after the detector has been
-                // rebuilt for the new device's sample rate. If sampleRate == 0
-                // the rebuild is skipped, so the previous detector (configured
-                // for a different rate) would otherwise produce bogus
-                // confidence values against the new stream.
-                audioCapture->startCapture();
-            } else {
-                MICMAP_LOG_WARNING("Device switch: new device reported sampleRate=0; capture NOT restarted");
             }
-            if (configManager) configManager->getConfig().audio.deviceId = devices[selectedDeviceIndex].id;
+            int prev = driverSel;
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::Combo("##Dev", &driverSel, ptrs.data(), (int)ptrs.size())
+                    && prev != driverSel && configManager && driverClient) {
+                // P8 D-09 — PUT /settings ladder. UTF-8 device id from the
+                // driver list -> wstring; build the candidate AppConfig from
+                // the current snapshot + the new audio.deviceId.
+                core::AppConfig next = configManager->getConfig();
+                std::wstring widId;
+                int n = MultiByteToWideChar(CP_UTF8, 0,
+                    driverDevices[driverSel].id.c_str(), -1,
+                    nullptr, 0);
+                if (n > 0) {
+                    widId.resize(static_cast<size_t>(n - 1));
+                    MultiByteToWideChar(CP_UTF8, 0,
+                        driverDevices[driverSel].id.c_str(), -1,
+                        widId.data(), n);
+                }
+                next.audio.deviceId = std::move(widId);
+                auto r = driverClient->putSettings(next);
+                if (r.status == steamvr::PutSettingsResult::Ok) {
+                    // Optimistic in-memory apply (D-09): mutate the client's
+                    // AppConfig snapshot so client-side detection (live until
+                    // P10) sees the new device immediately.
+                    configManager->getConfig() = next;
+                    selectedDeviceIndex = driverSel;
+                    // v1.5 client-side audio retake: re-bind WASAPI to the
+                    // new device so the local detection callback keeps
+                    // running until the P10 cutover deletes the client-side
+                    // audio path entirely.
+                    if (audioCapture) {
+                        audioCapture->stopCapture();
+                        audioCapture->selectDeviceById(next.audio.deviceId);
+                        auto dev = audioCapture->getCurrentDevice();
+                        if (dev.sampleRate > 0) {
+                            std::lock_guard<std::mutex> lock(audioMutex);
+                            detector = detection::createFFTDetector(dev.sampleRate);
+                            detector->setMinDetectionDuration(detectionTimeMs);
+                            if (configManager) {
+                                detector->loadTrainingData(configManager->getTrainingDataPath());
+                            }
+                            audioCapture->startCapture();
+                        } else {
+                            MICMAP_LOG_WARNING("Device switch (driver list): new device reported sampleRate=0; capture NOT restarted");
+                        }
+                    }
+                } else if (r.status == steamvr::PutSettingsResult::ValidationFailed) {
+                    // 4xx — UI rolls back via driverSel re-resolution next
+                    // frame; surface the orange toast for 3 s.
+                    validationToastField  = r.errorField.value_or("audio.deviceId");
+                    validationToastReason = r.errorReason.value_or("validation rejected");
+                    validationToastUntil  = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+                } else {
+                    // ConnectionFailed / OtherError — silently revert. Gate
+                    // should prevent this; if observed, the next /health
+                    // poll will flip drvLoaded red and disable the combo.
+                    MICMAP_LOG_WARNING("Device PUT /settings non-Ok: status=", (int)r.status);
+                }
+            }
+        }
+        if (!drvOkForDevices) {
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Driver not loaded - settings cannot be changed");
+            }
         }
     }
 
     ImGui::Spacing();
     ImGui::Text("Settings");
     ImGui::Separator();
+
+    // P8 08-05 D-09 — driver-loaded gate. When the indicator is red the
+    // entire Settings block renders disabled with a tooltip.
+    const bool drvOkForSettings = driverLoadedIndicator.load();
+    if (!drvOkForSettings) ImGui::BeginDisabled();
+
     ImGui::Text("Detection Time: %d ms", detectionTimeMs);
     ImGui::SetNextItemWidth(-1);
     if (ImGui::SliderInt("##Time", &detectionTimeMs, 100, 1000, "")) {
-        // WR-07: mirror WR-03 — guard detector state mutations under
-        // audioMutex so the WASAPI callback (which locks audioMutex before
-        // calling detector->analyze/addTrainingSample) cannot race with a
-        // UI-thread setMinDetectionDuration writing the detector's
-        // duration-threshold field.
-        if (detector) {
-            std::lock_guard<std::mutex> lock(audioMutex);
-            detector->setMinDetectionDuration(detectionTimeMs);
+        // P8 08-05 D-09 — slider on-change goes through PUT /settings
+        // instead of mutating the local ConfigManager directly.
+        // WR-07: detector mutations stay under audioMutex so the WASAPI
+        // callback can't race with the duration-threshold write.
+        if (configManager && driverClient) {
+            core::AppConfig next = configManager->getConfig();
+            const int prevDur = next.detection.minDurationMs;
+            next.detection.minDurationMs = detectionTimeMs;
+            auto r = driverClient->putSettings(next);
+            if (r.status == steamvr::PutSettingsResult::Ok) {
+                configManager->getConfig() = next;
+                if (detector) {
+                    std::lock_guard<std::mutex> lock(audioMutex);
+                    detector->setMinDetectionDuration(detectionTimeMs);
+                }
+            } else if (r.status == steamvr::PutSettingsResult::ValidationFailed) {
+                // Roll back the slider to the prior value; show 3 s orange toast.
+                detectionTimeMs = prevDur;
+                validationToastField  = r.errorField.value_or("detection.minDurationMs");
+                validationToastReason = r.errorReason.value_or("validation rejected");
+                validationToastUntil  = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+            } else {
+                detectionTimeMs = prevDur;   // silent revert (gate should prevent reachability)
+                MICMAP_LOG_WARNING("Detection time PUT /settings non-Ok: status=", (int)r.status);
+            }
         }
-        if (configManager) configManager->getConfig().detection.minDurationMs = detectionTimeMs;
+    }
+
+    if (!drvOkForSettings) {
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Driver not loaded - settings cannot be changed");
+        }
+    }
+
+    // P8 08-05 D-09 — ephemeral 3 s validation toast (orange).
+    if (std::chrono::steady_clock::now() < validationToastUntil) {
+        ImGui::TextColored(ImVec4(1, 0.5f, 0, 1),
+            "Invalid %s: %s",
+            validationToastField.c_str(),
+            validationToastReason.c_str());
     }
 
     ImGui::Spacing();
@@ -1254,10 +1365,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
     // D-09: first-silent-launch balloon — fires once per install, persisted
     // via AppConfig.shownTrayNotification. Gated on flags.minimized so a
     // user-clicked boot never consumes the one-shot.
+    // P8 08-05 D-07: persistence flows through driverClient->putSettings now,
+    // so we plumb the IDriverApi pointer through to the balloon code path.
     if (flags.minimized && g_app.configManager) {
         micmap::apps::ProductionShellNotifySeam shellAdapter(g_app.nid);
         micmap::apps::fireBalloonIfFirstSilentLaunch(
-            shellAdapter, *g_app.configManager, flags.minimized);
+            shellAdapter, *g_app.configManager, flags.minimized,
+            g_app.driverClient.get());
     }
 
     ImVec4 clear_color(0.1f, 0.1f, 0.1f, 1.0f);

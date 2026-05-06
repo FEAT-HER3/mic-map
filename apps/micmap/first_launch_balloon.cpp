@@ -5,6 +5,7 @@
 
 #include "first_launch_balloon.hpp"
 #include "micmap/common/logger.hpp"
+#include "micmap/steamvr/driver_api.hpp"   // P8 08-05: PUT /settings persistence path.
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -22,7 +23,8 @@ namespace micmap::apps {
 
 void fireBalloonIfFirstSilentLaunch(IShellNotifySeam& shell,
                                     core::IConfigManager& configMgr,
-                                    bool minimized) {
+                                    bool minimized,
+                                    micmap::steamvr::IDriverApi* driverApi) {
     // D-09: balloon is gated on silent auto-launch. User-clicked boots
     // (no --minimized) must not consume the one-shot regardless of flag.
     if (!minimized) return;
@@ -34,12 +36,23 @@ void fireBalloonIfFirstSilentLaunch(IShellNotifySeam& shell,
         L"MicMap",
         L"Running in the system tray. Click the icon to open.");
 
-    // Persist regardless of Shell's accepted/suppressed verdict — Pitfall 7:
-    // Focus Assist can silently drop the balloon, but the flag means "we
-    // tried on first silent launch", not "the user saw it". Firing again
-    // on the next silent launch would be more annoying than helpful.
+    // Pitfall 7: Focus Assist can silently drop the balloon, but the flag
+    // means "we tried on first silent launch", not "the user saw it". Firing
+    // again on the next silent launch would be more annoying than helpful.
     cfg.shownTrayNotification = true;
-    configMgr.saveDefault();
+
+    // P8 08-05 D-07 / IPC-05: persist via PUT /settings (driver is sole writer).
+    // When driverApi is null we are in the headless test path -- the test
+    // stub asserts on the in-memory flag flip directly and is responsible
+    // for any persistence simulation it wants. The intentional absence of
+    // a write-side syscall here is the IPC-05 single-writer cutover.
+    if (driverApi) {
+        auto r = driverApi->putSettings(cfg);
+        if (r.status != micmap::steamvr::PutSettingsResult::Ok) {
+            MICMAP_LOG_WARNING("first_launch_balloon: PUT /settings non-Ok (status=",
+                               static_cast<int>(r.status), "); flag still flipped in-memory");
+        }
+    }
 
     if (accepted) {
         MICMAP_LOG_INFO("tray balloon fired (first silent launch)");
