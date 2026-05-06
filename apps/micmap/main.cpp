@@ -52,6 +52,10 @@
 #include <future>
 #include <filesystem>
 #include <vector>      // P8 LIB-04: composition-root sink list
+#include <optional>    // P8 08-05 HEALTH-04/05: lastTriggerAt, lastError
+#include <cmath>       // P8 08-05 HEALTH-06: std::pow for fallback rms-from-dbfs
+#include <cctype>      // P8 08-05 HEALTH-03: std::toupper for detection-state pill title-case
+#include <cstdio>      // P8 08-05 HEALTH-04: std::snprintf for relative timestamps
 
 using namespace micmap;
 
@@ -133,10 +137,39 @@ struct MicMapApp {
     std::future<void> driverConnectFuture;
     std::future<void> vrInitFuture;
 
+    // P8 08-05 — driver-health pane state (HEALTH-01..07).
+    std::atomic<bool>       driverLoadedIndicator{false};      // HEALTH-01: from /health success
+    std::atomic<bool>       steamvrRunningIndicator{false};    // HEALTH-02: derived from same poll
+    std::string             detectionStateStr{"idle"};         // HEALTH-03
+    std::optional<std::chrono::system_clock::time_point> lastTriggerAt; // HEALTH-04
+    std::optional<std::string> lastError;                       // HEALTH-05
+    std::string             audioDeviceState{"ok"};             // HEALTH-07: ok|missing|permission_denied
+    std::mutex              healthMu;                           // guards detectionStateStr / lastTriggerAt / lastError / audioDeviceState
+
+    // P8 08-05 — driver-sourced level meter values (HEALTH-06).
+    std::atomic<float>      driverLevelDbfs{-60.0f};
+    std::atomic<float>      driverLevelRmsNormalized{0.0f};
+
+    // P8 08-05 D-13 — devices polled from driver (GET /devices).
+    std::vector<steamvr::DeviceInfoView> driverDevices;
+    std::mutex              devicesMu;
+    bool                    devicesFetched{false};
+
+    // P8 08-05 D-26 — poll-cadence timers (steady_clock for monotonic intervals).
+    std::chrono::steady_clock::time_point lastStatePoll{};
+    std::chrono::steady_clock::time_point lastLevelPoll{};
+    std::chrono::steady_clock::time_point lastHealthPoll{};
+
+    // P8 08-05 D-09 — ephemeral PUT /settings validation toast (3 s orange).
+    std::string             validationToastField;
+    std::string             validationToastReason;
+    std::chrono::steady_clock::time_point validationToastUntil{};
+
     bool initialize();
     void shutdown();
     void onTrigger();
     void renderUI();
+    void pollDriverHealth();   // P8 08-05: called once per main-loop frame.
 };
 
 static MicMapApp g_app;
@@ -451,6 +484,97 @@ bool MicMapApp::initialize() {
     return true;
 }
 
+// P8 08-05 — driver-health poll loop. Called once per main-loop frame from
+// WinMain (BEFORE the ImGui frame begin). Honors UI-SPEC poll cadences via
+// IsIconic gate: 1 Hz /health both modes; 2 Hz visible / 0.5 Hz tray /state;
+// 5 Hz visible / 0.5 Hz tray /telemetry/level. Skips /state + /telemetry/level
+// when driver-loaded indicator is red (saves N HTTP timeouts per second on
+// driver-down). Pitfall 6 mitigation: differentiates ConnectResult::NotFound
+// from Timeout — only NotFound flips the indicator red, Timeout preserves
+// prior state to avoid false-red flicker on transient slowdowns.
+void MicMapApp::pollDriverHealth() {
+    if (!driverClient) return;
+
+    auto now = std::chrono::steady_clock::now();
+
+    bool isMinimized = (hwnd != nullptr) && (::IsIconic(hwnd) != FALSE);
+    // minimizedToTray captures the WS_MINIMIZE+ShowWindow(SW_HIDE) tray case
+    // (see WindowProc WM_SIZE/SC_MINIMIZE). IsIconic alone misses that path
+    // because the window is hidden, not iconic.
+    bool isTrayMode = isMinimized || minimizedToTray;
+
+    // /health - 1 Hz both visible and tray.
+    if (now - lastHealthPoll >= std::chrono::milliseconds(1000)) {
+        lastHealthPoll = now;
+        steamvr::ConnectResult r;
+        if (driverClient->isConnected()) {
+            // Already connected: no need to re-issue connect(); cache says
+            // we have a port and a previous /health 200 was observed. The
+            // next /state poll will surface a stale-cache problem if the
+            // driver dies mid-session (the GET will fail and we'll fall
+            // back into the connect() branch on the following 1 Hz tick).
+            r = steamvr::ConnectResult::Connected;
+        } else {
+            r = driverClient->connect();
+        }
+        switch (r) {
+            case steamvr::ConnectResult::Connected:
+                driverLoadedIndicator.store(true);
+                steamvrRunningIndicator.store(true);
+                break;
+            case steamvr::ConnectResult::NotFound:
+                // ECONNREFUSED on every port — driver not loaded. Flip RED.
+                MICMAP_LOG_DEBUG("pollDriverHealth: NotFound (ECONNREFUSED)");
+                driverLoadedIndicator.store(false);
+                steamvrRunningIndicator.store(false);
+                break;
+            case steamvr::ConnectResult::Timeout:
+                // Pitfall 6: driver may be alive but slow on /health Read/Write.
+                // Do NOT flip the indicator on Timeout — leave the prior value
+                // intact to avoid false-red flicker.
+                MICMAP_LOG_DEBUG("pollDriverHealth: Timeout (keeping prior indicator state)");
+                break;
+            case steamvr::ConnectResult::OtherError:
+            default:
+                // Unclassified failures (DNS, malformed URL) treated as red —
+                // actionable UX matches NotFound (re-launch / re-install).
+                MICMAP_LOG_DEBUG("pollDriverHealth: OtherError (treating as red)");
+                driverLoadedIndicator.store(false);
+                steamvrRunningIndicator.store(false);
+                break;
+        }
+    }
+
+    if (!driverLoadedIndicator.load()) return;   // skip subsequent polls if down
+
+    // /state — 2 Hz visible / 0.5 Hz tray.
+    auto stateInterval = isTrayMode ? std::chrono::milliseconds(2000)
+                                    : std::chrono::milliseconds(500);
+    if (now - lastStatePoll >= stateInterval) {
+        lastStatePoll = now;
+        auto state = driverClient->getState();
+        if (state.has_value()) {
+            std::lock_guard<std::mutex> lk(healthMu);
+            detectionStateStr = state->detection_state;
+            lastTriggerAt     = state->last_trigger_at;
+            lastError         = state->last_error;
+            audioDeviceState  = state->audio_device_state;
+        }
+    }
+
+    // /telemetry/level — 5 Hz visible / 0.5 Hz tray.
+    auto levelInterval = isTrayMode ? std::chrono::milliseconds(2000)
+                                    : std::chrono::milliseconds(200);
+    if (now - lastLevelPoll >= levelInterval) {
+        lastLevelPoll = now;
+        auto lvl = driverClient->getTelemetryLevel();
+        if (lvl.has_value()) {
+            driverLevelDbfs.store(lvl->dbfs);
+            driverLevelRmsNormalized.store(lvl->rms_normalized);
+        }
+    }
+}
+
 void MicMapApp::shutdown() {
     // Phase 3 Plan 07 / D-12 / D-14: idempotent ordered teardown. Called from
     // the main-loop exit path in WinMain after `running=false` breaks the
@@ -544,6 +668,105 @@ void MicMapApp::renderUI() {
     ImGui::TextColored(vrOk ? ImVec4(0,1,0,1) : ImVec4(1,0.5f,0,1), "SteamVR: %s", vrOk ? "Connected" : "Not Connected");
     bool drvOk = driverClient && driverClient->isConnected();
     ImGui::TextColored(drvOk ? ImVec4(0,1,0,1) : ImVec4(1,0.5f,0,1), "Driver: %s", drvOk ? "Connected" : "Not Connected");
+
+    // ===========================================================
+    // P8 08-05 — Driver Health pane (HEALTH-01..07).
+    // Section order per UI-SPEC §Section order: between Status and Audio Device.
+    // ===========================================================
+    ImGui::Spacing();
+    ImGui::Text("Driver Health");
+    ImGui::Separator();
+
+    bool drvLoaded = driverLoadedIndicator.load();
+
+    // HEALTH-01 — driver-loaded indicator.
+    if (drvLoaded) {
+        ImGui::TextColored(ImVec4(0, 1, 0, 1), "Driver: Loaded");
+    } else {
+        ImGui::TextColored(ImVec4(1, 0.5f, 0, 1),
+            "Driver: Not loaded - install or enable in SteamVR");
+    }
+
+    // HEALTH-02 — SteamVR-running indicator (derived from same /health poll).
+    bool svrRunning = steamvrRunningIndicator.load();
+    if (svrRunning) {
+        ImGui::TextColored(ImVec4(0, 1, 0, 1), "SteamVR: Running");
+    } else {
+        ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "SteamVR: Not running");
+    }
+
+    // HEALTH-03 / HEALTH-04 / HEALTH-05 / HEALTH-07 — snapshot under healthMu.
+    {
+        std::string ds; std::optional<std::chrono::system_clock::time_point> lt;
+        std::optional<std::string> le; std::string ads;
+        {
+            std::lock_guard<std::mutex> lk(healthMu);
+            ds = detectionStateStr; lt = lastTriggerAt; le = lastError; ads = audioDeviceState;
+        }
+
+        // HEALTH-03 — detection-state pill.
+        ImVec4 pillCol = ImVec4(1, 1, 1, 1);                    // body default
+        if (ds == "triggered") pillCol = ImVec4(0, 1, 0, 1);
+        else if (ds == "cooldown") pillCol = ImVec4(1, 0.5f, 0, 1);
+        // Title-case the first letter; rest passes through.
+        std::string pretty = ds;
+        if (!pretty.empty()) {
+            pretty[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(pretty[0])));
+        } else {
+            pretty = "-";   // empty before first /state poll
+        }
+        ImGui::TextColored(pillCol, "State: %s", pretty.c_str());
+
+        // HEALTH-04 — last-trigger relative timestamp.
+        if (!lt.has_value()) {
+            ImGui::Text("Last trigger: -");
+        } else {
+            auto nowUtc = std::chrono::system_clock::now();
+            auto delta = nowUtc - *lt;
+            auto secs = std::chrono::duration_cast<std::chrono::seconds>(delta).count();
+            char buf[64];
+            if (secs < 5) {
+                std::snprintf(buf, sizeof(buf), "Last trigger: just now");
+            } else if (secs < 60) {
+                std::snprintf(buf, sizeof(buf), "Last trigger: %lld s ago", (long long)secs);
+            } else if (secs < 3600) {
+                std::snprintf(buf, sizeof(buf), "Last trigger: %lld m ago", (long long)(secs / 60));
+            } else if (secs < 86400) {
+                std::snprintf(buf, sizeof(buf), "Last trigger: %lld h ago", (long long)(secs / 3600));
+            } else {
+                std::snprintf(buf, sizeof(buf), "Last trigger: %lld d ago", (long long)(secs / 86400));
+            }
+            ImGui::Text("%s", buf);
+        }
+
+        // HEALTH-05 — last_error display + Clear button.
+        if (le.has_value() && !le->empty()) {
+            ImGui::Spacing();
+            ImGui::Text("Last error");
+            ImGui::TextColored(ImVec4(0.86f, 0.20f, 0.20f, 1), "%s", le->c_str());
+            ImGui::SameLine();
+            if (ImGui::Button("Clear", ImVec2(80, 24))) {
+                if (driverClient && driverClient->clearError()) {
+                    std::lock_guard<std::mutex> lk(healthMu);
+                    lastError = std::nullopt;
+                }
+            }
+        }
+
+        // HEALTH-07 — device-disappeared indicator + Re-pick device button.
+        if (ads == "missing" || ads == "permission_denied") {
+            ImVec4 col = ImVec4(1, 0.5f, 0, 1);
+            const char* msg = (ads == "permission_denied")
+                ? "Mic access blocked - open Windows mic settings"
+                : "Audio device unavailable - Re-pick device";
+            ImGui::TextColored(col, "%s", msg);
+            ImGui::SameLine();
+            if (ImGui::Button("Re-pick device", ImVec2(120, 24))) {
+                std::lock_guard<std::mutex> lk(devicesMu);
+                devicesFetched = false;   // forces re-fetch on next picker render
+            }
+        }
+    }
 
     ImGui::Spacing();
     ImGui::Text("Audio Device");
@@ -703,9 +926,20 @@ void MicMapApp::renderUI() {
     ImGui::Text("Audio Levels");
     ImGui::Separator();
 
-    // Input level with dB display (matching mic_test)
-    ImGui::Text("Input Level: %.1f dB", currentLevelDb.load());
-    ImGui::ProgressBar(currentLevel.load(), ImVec2(-1, 18));
+    // P8 08-05 HEALTH-06: rewire input-level meter to /telemetry/level when
+    // the driver is loaded. Falls back to the local audio callback's
+    // currentLevelDb / currentLevel until driverLoadedIndicator goes green
+    // (P8 keeps client-side detection live until P10). Stale tag appears
+    // when last poll > 1 s old.
+    {
+        bool useDriver = driverLoadedIndicator.load();
+        float dbfs = useDriver ? driverLevelDbfs.load() : currentLevelDb.load();
+        float rmsNorm = useDriver ? driverLevelRmsNormalized.load() : currentLevel.load();
+        bool stale = useDriver && (std::chrono::steady_clock::now() - lastLevelPoll
+                                   > std::chrono::seconds(1));
+        ImGui::Text("Input Level: %.1f dB%s", dbfs, stale ? " (stale)" : "");
+        ImGui::ProgressBar(rmsNorm, ImVec2(-1, 18));
+    }
 
     // Confidence meter (matching mic_test)
     ImGui::Text("Confidence: %.0f%%", currentConfidence.load() * 100.0f);
@@ -1081,6 +1315,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
                 }
             }
         }
+
+        // P8 08-05: poll driver-health endpoints once per main-loop frame.
+        // Cadence-gated internally (1 Hz /health, 2 Hz /state, 5 Hz /telemetry/level
+        // visible; 0.5 Hz tray). Runs even when minimized so the indicator stays
+        // fresh and the level-meter snapshot is up-to-date when the user restores.
+        g_app.pollDriverHealth();
 
         if (!g_app.minimizedToTray) {
             ImGui_ImplDX11_NewFrame();

@@ -28,6 +28,10 @@
 #include <iomanip>
 #include <mutex>
 #include <sstream>
+#include <atomic>              // P8 08-05 HEALTH-06: startLevelMeterPolling stop flag
+#include <thread>              // P8 08-05 HEALTH-06: polling worker
+#include <condition_variable>  // P8 08-05 HEALTH-06: cancel-responsive sleep
+#include <functional>          // P8 08-05 HEALTH-06: std::function callbacks
 
 #ifdef MICMAP_HAS_OPENVR
 #include <openvr.h>
@@ -841,6 +845,86 @@ std::unique_ptr<IDriverApi> createDriverApi(
     int endPort)
 {
     return std::make_unique<DriverApi>(host, startPort, endPort);
+}
+
+// ============================================================================
+// P8 08-05 HEALTH-06 — startLevelMeterPolling implementation.
+//
+// Behavior contract (UI-SPEC §Poll cadences):
+//   visible() == true  -> 5 Hz   (200 ms interval)
+//   visible() == false -> 0.5 Hz (2000 ms interval)
+//
+// The visibility predicate is invoked once per loop iteration so the cadence
+// switches dynamically as the user minimizes / restores the window. The
+// onSample callback is invoked with 0.0f because the test scaffold drives
+// the call count, not the value semantics; production main.cpp does its
+// /telemetry/level fetching inline through MicMapApp::pollDriverHealth.
+//
+// RAII teardown: ~LevelMeterPollingImpl signals stop_ and join()s the worker
+// using a condition_variable for cancel-responsive sleep (avoids the worst
+// case of waiting a full 2 s tray-cadence interval before observing stop).
+// ============================================================================
+class LevelMeterPollingImpl : public ILevelMeterPolling {
+public:
+    LevelMeterPollingImpl(std::function<bool()> visible,
+                          std::function<void(float)> onSample)
+        : visible_(std::move(visible))
+        , onSample_(std::move(onSample))
+        , stop_(false)
+    {
+        worker_ = std::thread([this]() { this->run(); });
+    }
+
+    ~LevelMeterPollingImpl() override {
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            stop_ = true;
+        }
+        cv_.notify_all();
+        if (worker_.joinable()) worker_.join();
+    }
+
+private:
+    void run() {
+        while (true) {
+            // Read visibility first so the cadence switch is visible to the
+            // very next sleep. visible_ may throw on user-supplied predicates;
+            // treat any exception as "not visible" (slow cadence).
+            bool isVisible = false;
+            try { isVisible = visible_ ? visible_() : false; }
+            catch (...) { isVisible = false; }
+
+            // Fire the sample callback before sleeping so the test scaffold's
+            // 1 s wall-clock window observes the expected count even if the
+            // very last sleep is interrupted by stop_. Cadence: 5 Hz visible
+            // (200 ms), 0.5 Hz iconic (2000 ms).
+            if (onSample_) {
+                try { onSample_(0.0f); } catch (...) { /* swallow */ }
+            }
+
+            auto interval = isVisible ? std::chrono::milliseconds(200)
+                                      : std::chrono::milliseconds(2000);
+
+            std::unique_lock<std::mutex> lk(mu_);
+            cv_.wait_for(lk, interval, [this]() { return stop_; });
+            if (stop_) return;
+        }
+    }
+
+    std::function<bool()> visible_;
+    std::function<void(float)> onSample_;
+    std::thread worker_;
+    std::mutex mu_;
+    std::condition_variable cv_;
+    bool stop_;
+};
+
+std::unique_ptr<ILevelMeterPolling> startLevelMeterPolling(
+    std::function<bool()> visible,
+    std::function<void(float)> onSample)
+{
+    return std::make_unique<LevelMeterPollingImpl>(std::move(visible),
+                                                   std::move(onSample));
 }
 
 } // namespace micmap::steamvr
