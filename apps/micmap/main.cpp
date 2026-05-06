@@ -17,6 +17,7 @@
 #include <tlhelp32.h>
 #include <d3d11.h>
 #include <dwmapi.h>
+#include <ShlObj.h>     // P8 LIB-04 / D-20: SHGetFolderPathW for %APPDATA%\\MicMap log path
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "shell32.lib")
@@ -33,6 +34,7 @@
 #include "micmap/core/state_machine.hpp"
 #include "micmap/core/config_manager.hpp"
 #include "micmap/common/logger.hpp"
+#include "micmap/common/log_sink.hpp"   // P8 LIB-04 / D-19: composition-root sinks
 #include "micmap/common/cli_flags.hpp"
 #include "micmap/steamvr/manifest_registrar.hpp"
 #include "micmap/bindings/bindings_patcher.hpp"
@@ -49,6 +51,7 @@
 #include <thread>
 #include <future>
 #include <filesystem>
+#include <vector>      // P8 LIB-04: composition-root sink list
 
 using namespace micmap;
 
@@ -793,6 +796,29 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, int nCmdShow) {
+    // P8 LIB-04 / D-19 / D-20 / Pitfall 8: composition-root logger wiring.
+    // Hoisted to FIRST step in WinMain so the very first MICMAP_LOG_* call
+    // — including failures inside the CLI register/unregister fork below
+    // and CreateWindowW failures further down — lands in the file sink,
+    // not just stderr (Pitfall 8 — client-side equivalent of the driver-
+    // side Pitfall 3 mandate that lands in 08-02).
+    {
+        namespace mc = micmap::common;
+        // Resolve %APPDATA%\\MicMap\\micmap.log (mirrors src/core/src/config_manager.cpp:33-49).
+        std::filesystem::path logPath;
+        wchar_t appdata[MAX_PATH];
+        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appdata))) {
+            logPath = std::filesystem::path(appdata) / L"MicMap" / L"micmap.log";
+        } else {
+            logPath = std::filesystem::current_path() / L".micmap" / L"micmap.log";
+        }
+        std::vector<std::shared_ptr<mc::ILogSink>> sinks;
+        sinks.push_back(mc::makeStdoutLogSink());
+        sinks.push_back(mc::makeFileLogSink(logPath));
+        mc::Logger::setLogger(mc::makeMultiSinkLogger(std::move(sinks)));
+        MICMAP_LOG_INFO("MicMap client logger wired (file: ", logPath.string(), ")");
+    }
+
     // Phase 3 D-01: parse CLI flags FIRST, before anything else. Use the
     // wide-char argv from CommandLineToArgvW (Pitfall 8: free it the moment
     // CliFlags is populated — no argv pointers stored).

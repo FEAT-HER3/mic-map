@@ -29,11 +29,17 @@ namespace ms = micmap::steamvr;
     return 1; } } while(0)
 
 int main() {
-    // Construct DriverApi pointing at an unreachable host:port. Port 1 is
-    // privileged + nothing listens on it under a normal user context; the
-    // expected error is ECONNREFUSED -> ConnectResult::NotFound (NOT
-    // Timeout — that's the Pitfall 6 distinction).
-    auto api = ms::createDriverApi("127.0.0.1", /*startPort=*/1, /*endPort=*/1);
+    // Construct DriverApi pointing at an unreachable port on the loopback.
+    //
+    // Port choice: a high-numbered ephemeral port nothing should be bound
+    // to (65532 picked because it sits outside the typical %WINDIR%
+    // dynamic-port range 49152-65000 and outside Steam/SteamVR's port
+    // allocations). Windows TCP/IP returns WSAECONNREFUSED on connect()
+    // to an unbound localhost port immediately (not via timeout), which
+    // httplib::Result::error() surfaces as httplib::Error::Connection.
+    // That is the Pitfall 6 NotFound branch — distinguished from Timeout
+    // (which only fires when a listener exists but is slow to respond).
+    auto api = ms::createDriverApi("127.0.0.1", /*startPort=*/65532, /*endPort=*/65532);
     MM_CHECK(api);
 
     auto result = api->connect();

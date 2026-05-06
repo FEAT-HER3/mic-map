@@ -171,11 +171,24 @@ public:
                 using E = httplib::Error;
                 switch (res.error()) {
                     case E::Connection:
-                        // ECONNREFUSED — driver not listening on this
-                        // port; try the next one.
+                    case E::ConnectionTimeout:
+                        // ECONNREFUSED OR connect()-poll exhausted before a
+                        // RST/ACK arrived — both mean "no listener accepted
+                        // a TCP handshake on this port." On Windows the loopback
+                        // path normally returns Connection (immediate RST);
+                        // some environments (firewall / loopback policy /
+                        // very-high port) instead exhaust the connect_timeout
+                        // and httplib reports ConnectionTimeout (httplib.h
+                        // line 3329 — poll_res == 0 path). Both belong in
+                        // the NotFound bucket per Pitfall 6 (the driver is
+                        // not running here); the Timeout bucket is reserved
+                        // for Read/Write-after-handshake.
                         continue;
                     case E::Read:
                     case E::Write:
+                        // Handshake succeeded, but the request/response did
+                        // not complete within set_read_timeout — driver is
+                        // alive but slow. HEALTH-01 keeps prior state.
                         sawTimeout = true;
                         continue;
                     default:
