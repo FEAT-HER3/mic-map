@@ -22,6 +22,10 @@
                                   // command_queue.hpp + sample_ring.hpp + std
                                   // headers — no shared-lib pull-in.
 
+#include "driver_state.hpp"       // P8 D-23: DriverState POD for GET /state
+                                  // atomic snapshot. Header has no JSON or
+                                  // OpenVR includes -- safe to pull in here.
+
 #include "micmap/core/config_manager.hpp"   // P8 D-15: AppConfig schema for
                                             // atomic snapshot (header is
                                             // JSON-free so AssertNoJsonInCore
@@ -123,6 +127,15 @@ private:
     // C++20 but still present).
     std::shared_ptr<const core::AppConfig> configSnapshot_;
 
+    // P8 D-23: DriverState atomic snapshot. Mutators include
+    //   - DetectionRunner state-machine transitions (idle/detecting/triggered/cooldown)
+    //   - DetectionRunner trigger emission (last_trigger_at)
+    //   - AudioWorker IMMNotificationClient (audio_device_state) — wired in 08-04
+    //   - DeviceProvider error channel (last_error; clear via POST /state/clear-error in 08-04)
+    // Multiple producers serialize on the COW write path inside publishDriverState
+    // (read current snapshot, mutate, atomic_store). Readers are lock-free.
+    std::shared_ptr<const DriverState> stateSnapshot_;
+
 public:
     /// @brief P8 D-15: Lock-free read of the current AppConfig snapshot.
     ///        Safe to call from any thread. Returns nullptr only between
@@ -136,6 +149,20 @@ public:
     ///        snapshot. Returns false on disk failure (HTTP 500 in 08-04).
     ///        Validation (08-04 settings_validator) runs BEFORE this method.
     bool applyValidatedConfig(core::AppConfig candidate);
+
+    /// @brief P8 D-23: Lock-free read for the GET /state HTTP handler.
+    ///        Returns nullptr only between ctor and Init's first publish
+    ///        (Init publishes a default-constructed DriverState before
+    ///        HttpServer::Start so HTTP handlers always see a non-null
+    ///        snapshot).
+    std::shared_ptr<const DriverState> getStateSnapshot() const;
+
+    /// @brief P8 D-23: COW publish of a new DriverState snapshot. Concurrent
+    ///        producers race on the atomic_store but every observer sees a
+    ///        consistent state (no torn fields). Producers: DetectionRunner
+    ///        state transitions, AudioWorker device events, HTTP
+    ///        POST /state/clear-error (08-04).
+    void publishDriverState(DriverState next);
 
 private:
 

@@ -27,9 +27,13 @@
 
 #include <memory>
 #include <functional>
+#include <optional>   // P8 IPC-01..04: getState / getSettings / getDevices / getTelemetryLevel return std::optional
 #include <string>
 #include <vector>
-#include <chrono>   // P7 D-10: DriverApi::isDriverDetectionActive cache TTL
+#include <chrono>     // P7 D-10: DriverApi::isDriverDetectionActive cache TTL
+                      // P8: DriverStateView::last_trigger_at system_clock::time_point
+
+#include "micmap/core/config_manager.hpp"   // P8 IPC-04: AppConfig type for getSettings()
 
 namespace micmap::steamvr {
 
@@ -152,6 +156,40 @@ std::unique_ptr<IVRInput> createOpenVRInput();
 std::unique_ptr<IVRInput> createStubVRInput();
 
 /**
+ * @brief P8 IPC-01: read-only client view of GET /state. Mirrors the
+ *        driver-side DriverState POD (driver/src/driver_state.hpp) but
+ *        adds the two derived fields (driver_loaded / steamvr_running)
+ *        that the driver computes at request time.
+ */
+struct DriverStateView {
+    bool driver_loaded{false};
+    bool steamvr_running{false};
+    std::string detection_state;     ///< "idle" | "training" | "detecting" | "triggered" | "cooldown"
+    std::optional<std::chrono::system_clock::time_point> last_trigger_at;
+    std::optional<std::string> last_error;
+    std::string audio_device_id;
+    std::string audio_device_state;  ///< "ok" | "missing" | "permission_denied"
+};
+
+/**
+ * @brief P8 IPC-03: read-only client view of one entry in GET /devices.
+ *        UTF-8 strings (driver does the WASAPI UTF-16 -> UTF-8 conversion).
+ */
+struct DeviceInfoView {
+    std::string id;
+    std::string name;
+    bool isDefault{false};
+};
+
+/**
+ * @brief P8 IPC-02 / HEALTH-06: read-only client view of GET /telemetry/level.
+ */
+struct TelemetryLevel {
+    float rms_normalized{0.0f};
+    float dbfs{-60.0f};
+};
+
+/**
  * @brief 3-state result of IDriverApi::connect() (P8 / Pitfall 6).
  *
  * The HEALTH-01 driver-loaded indicator is red on Connection (no driver
@@ -255,6 +293,30 @@ public:
      * coexistence scaffolding once cutover completes.
      */
     virtual bool isDriverDetectionActive() = 0;
+
+    // ============================================================
+    // Phase 8 read-side methods (D-23). Each does an httplib::Client GET
+    // and parses the response. Returns nullopt on connect failure / parse
+    // error / non-200 status -- the caller treats nullopt the same as it
+    // would treat a stale cache entry (UI keeps prior value, no flicker).
+    // ============================================================
+
+    /// @brief P8 IPC-01: GET /state. Returns nullopt on connect/parse fail.
+    virtual std::optional<DriverStateView> getState() = 0;
+
+    /// @brief P8 IPC-04 read path: GET /settings. Returns nullopt on
+    ///        connect/parse fail. Uses nlohmann ADL on AppConfig
+    ///        (driver_api.cpp ships the from_json hook for this client TU).
+    virtual std::optional<core::AppConfig> getSettings() = 0;
+
+    /// @brief P8 IPC-03: GET /devices. Returns nullopt on connect/parse
+    ///        fail; returns an empty vector when the driver reports zero
+    ///        endpoints (legitimate state during early Init).
+    virtual std::optional<std::vector<DeviceInfoView>> getDevices() = 0;
+
+    /// @brief P8 IPC-02 / HEALTH-06: GET /telemetry/level. Returns nullopt
+    ///        on connect/parse fail. Polled at 30 Hz by the level meter UI.
+    virtual std::optional<TelemetryLevel> getTelemetryLevel() = 0;
 };
 
 /**

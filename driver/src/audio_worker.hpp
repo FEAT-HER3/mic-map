@@ -22,9 +22,10 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <vector>            // P8 D-17: enumerateDevicesForHttp() return type
 
 // Forward-declare to avoid pulling micmap/audio/* into the header.
-namespace micmap::audio { class IAudioCapture; }
+namespace micmap::audio { class IAudioCapture; struct AudioDevice; }
 
 // P7 D-05: forward-decl only; full type pulled into audio_worker.cpp where the
 // callback dereferences runner->NotifyOne(). Keeps detection_runner.hpp out of
@@ -94,6 +95,22 @@ public:
     /// load -- safe to call from any thread.
     uint32_t sample_rate() const;
 
+    /// @brief P8 D-18 / IPC-02 / HEALTH-06: lock-free RMS read for the GET
+    ///        /telemetry/level HTTP handler. Returns 0.0f until the audio
+    ///        callback has produced its first frame. The audio callback
+    ///        always computes RMS now (the MICMAP_DEBUG_RMS_LOG ifdef only
+    ///        gates the diagnostic DriverLog spam, not the computation).
+    ///        Lock-free single-word atomic load -- safe from any thread.
+    float rms_normalized() const;
+
+    /// @brief P8 D-17 / IPC-03: thread-safe wrapper around the underlying
+    ///        WASAPI enumerator for the GET /devices HTTP handler. Returns
+    ///        an empty vector if capture_ is not yet constructed (worker
+    ///        thread still spinning up) or after Stop(). Caller (DeviceProvider
+    ///        via a 1-second cache lambda) owns rate-limiting -- this method
+    ///        ALWAYS hits WASAPI, no internal cache.
+    std::vector<micmap::audio::AudioDevice> enumerateDevicesForHttp() const;
+
     /**
      * @brief Pitfall 13 alive-flag mitigation state.
      *
@@ -122,6 +139,13 @@ public:
         /// commonly run 44100 / 48000 / 96000; Beyond mic endpoint can
         /// present at 24000).
         std::atomic<uint32_t> sample_rate{0};
+        /// P8 D-18 / IPC-02 / HEALTH-06: rolling RMS in [0.0, 1.0] (linear).
+        /// Written by the audio callback once per frame (P8 promotes the
+        /// existing computation out of the MICMAP_DEBUG_RMS_LOG guard so
+        /// production builds also publish RMS). Read by AudioWorker::
+        /// rms_normalized() and through it by the GET /telemetry/level HTTP
+        /// handler. Lock-free single-word atomic -- safe from any thread.
+        std::atomic<float>    rms_normalized{0.0f};
     };
 
     /**

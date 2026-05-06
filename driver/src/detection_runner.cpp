@@ -72,10 +72,12 @@ constexpr int kDetectionFftSize  = 2048;
 DetectionRunner::DetectionRunner(SampleRing<16, 480>& ring,
                                  CommandQueue& commandQueue,
                                  uint32_t sampleRate,
-                                 DetectionConfig initial)
+                                 DetectionConfig initial,
+                                 DriverStatePublisher statePublisher)
     : ring_(ring)
     , commandQueue_(commandQueue)
     , sampleRate_(sampleRate)
+    , statePublisher_(std::move(statePublisher))
 {
     // Seed activeConfig_ with the initial snapshot so Start can construct
     // detector + state machine without a publish() race. lastObserved_ is
@@ -355,6 +357,14 @@ void DetectionRunner::applyConfig(const DetectionConfig& cfg) {
             commandQueue_.push(TapCommand{});
             const uint32_t n = triggers_.fetch_add(1, std::memory_order_relaxed) + 1;
             DriverLog("MicMap detection: TapCommand pushed (n=%u)\n", n);
+            // P8 D-23: rising-edge trigger -> stamp last_trigger_at on the
+            // DriverState snapshot. The detection_state field is updated by
+            // RunLoop's polling logic (it sees Triggered on the next iter
+            // and publishes "triggered" along with the trigger timestamp).
+            if (statePublisher_) {
+                statePublisher_(std::string{"triggered"},
+                                std::chrono::system_clock::now());
+            }
         });
     }
 }
@@ -410,6 +420,34 @@ void DetectionRunner::RunLoop() {
             // timers keep ticking; resume continues from same logical state).
             while (ring_.try_pop(block, block_count)) { /* discard */ }
             continue;
+        }
+
+        // P8 D-23: publish current detection_state to DeviceProvider's
+        // DriverState snapshot if it changed since last iter. The trigger
+        // callback above (in applyConfig / RunLoop install sites) ALSO
+        // publishes "triggered" with last_trigger_at -- which lands first
+        // because it fires from inside stateMachine_->update during the
+        // analyze loop. The post-update publish here may overwrite the
+        // detection_state field with "Cooldown" on the next iter, but the
+        // last_trigger_at timestamp is preserved through DeviceProvider's
+        // COW lambda (it copies the current snapshot before mutating).
+        if (statePublisher_ && stateMachine_) {
+            const auto cur = stateMachine_->getCurrentState();
+            const char* name = micmap::core::stateToString(cur);
+            // Lowercase mapping per CONTEXT IPC-01 detection_state vocab.
+            std::string ds;
+            switch (cur) {
+                case micmap::core::State::Idle:      ds = "idle";      break;
+                case micmap::core::State::Training:  ds = "training";  break;
+                case micmap::core::State::Detecting: ds = "detecting"; break;
+                case micmap::core::State::Triggered: ds = "triggered"; break;
+                case micmap::core::State::Cooldown:  ds = "cooldown";  break;
+                default:                             ds = name;        break;
+            }
+            if (ds != lastPublishedState_) {
+                statePublisher_(ds, std::nullopt);
+                lastPublishedState_ = ds;
+            }
         }
 
         // Active path: drain -> analyze -> update -> trigger fires inside update.

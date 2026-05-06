@@ -28,10 +28,14 @@
 #include "sample_ring.hpp"
 
 #include <atomic>
+#include <chrono>          // P8 D-23: DriverStatePublisher last_trigger_at type
 #include <condition_variable>
 #include <cstdint>
+#include <functional>      // P8 D-23: DriverStatePublisher callback type
 #include <memory>
 #include <mutex>
+#include <optional>        // P8 D-23: DriverStatePublisher last_trigger_at type
+#include <string>          // P8 D-23: DriverStatePublisher detection_state type
 #include <thread>
 
 // Forward declarations to avoid pulling shared-lib headers into this header
@@ -52,12 +56,28 @@ struct DetectionConfig {
     int   min_duration_ms{200};
 };
 
+/// @brief P8 D-23: callback signature DetectionRunner uses to push state-
+///        machine transitions (idle/detecting/triggered/cooldown) and trigger
+///        timestamps into DeviceProvider's DriverState atomic snapshot.
+///        last_trigger_at is set ONLY at the rising edge into Triggered;
+///        nullopt at every other transition (the snapshot's prior value
+///        is preserved through DeviceProvider's COW publish lambda).
+using DriverStatePublisher = std::function<void(
+    std::string detection_state,
+    std::optional<std::chrono::system_clock::time_point> last_trigger_at)>;
+
 class DetectionRunner {
 public:
     DetectionRunner(SampleRing<16, 480>& ring,
                     CommandQueue& commandQueue,
                     uint32_t sampleRate,
-                    DetectionConfig initial);
+                    DetectionConfig initial,
+                    /// P8 D-23: optional DriverState publisher. When non-null,
+                    /// the run loop calls this on every state-machine transition
+                    /// so the GET /state response reflects live state. Default
+                    /// nullptr keeps existing test ctors (4 args) compiling
+                    /// unchanged.
+                    DriverStatePublisher statePublisher = nullptr);
     ~DetectionRunner();
 
     DetectionRunner(const DetectionRunner&) = delete;
@@ -131,6 +151,14 @@ private:
     std::atomic<bool>                                   running_{false};
     std::atomic<bool>                                   thread_finished_{false};
     std::atomic<uint32_t>                               triggers_{0};
+
+    /// P8 D-23: optional state publisher. nullptr in the existing 4-arg ctor
+    /// path used by tests/driver/detection_settings_propagation_test.cpp;
+    /// DeviceProvider supplies a non-null lambda in production.
+    DriverStatePublisher                                statePublisher_;
+    /// Last published detection_state string (run-loop-thread local) so we
+    /// only publish when the state changes -- avoids COW spam on every iter.
+    std::string                                         lastPublishedState_;
 };
 
 } // namespace micmap::driver
