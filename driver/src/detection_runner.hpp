@@ -25,6 +25,7 @@
 #pragma once
 
 #include "command_queue.hpp"
+#include "driver_mode.hpp"   // P9 D-01: DriverMode enum (transitive use in .cpp)
 #include "sample_ring.hpp"
 
 #include <atomic>
@@ -46,6 +47,12 @@ namespace micmap::detection { class INoiseDetector; }
 namespace micmap::core { class IStateMachine; struct StateMachineConfig; }
 
 namespace micmap::driver {
+
+// P9 D-01: forward-declare to avoid circular include with device_provider.hpp
+// (device_provider.hpp includes detection_runner.hpp). The full type is
+// pulled into detection_runner.cpp where deviceProvider_->mode() and
+// trainingSession() are dereferenced.
+class DeviceProvider;
 
 /// MIG-06 settings snapshot (lock-free atomic-shared_ptr publish/load).
 /// Defaults mirror driver/resources/settings/default.vrsettings (07-02 / D-13).
@@ -77,7 +84,17 @@ public:
                     /// so the GET /state response reflects live state. Default
                     /// nullptr keeps existing test ctors (4 args) compiling
                     /// unchanged.
-                    DriverStatePublisher statePublisher = nullptr);
+                    DriverStatePublisher statePublisher = nullptr,
+                    /// P9 D-01: optional DeviceProvider back-pointer. When
+                    /// non-null, RunLoop reads deviceProvider->mode() once
+                    /// per ring-drain cycle (acquire-load) and branches:
+                    /// Detecting -> detector_->analyze + state machine;
+                    /// Training -> trainingSession()->addSample. Default
+                    /// nullptr keeps existing test ctors compiling — those
+                    /// always run in Detecting mode (no DriverMode read; the
+                    /// `mode` local stays at DriverMode::Detecting and the
+                    /// pre-P9 code path is taken verbatim).
+                    DeviceProvider* deviceProvider = nullptr);
     ~DetectionRunner();
 
     DetectionRunner(const DetectionRunner&) = delete;
@@ -159,6 +176,16 @@ private:
     /// Last published detection_state string (run-loop-thread local) so we
     /// only publish when the state changes -- avoids COW spam on every iter.
     std::string                                         lastPublishedState_;
+
+    /// P9 D-01: non-owning back-pointer for DriverMode atomic-load + lazy
+    /// trainingSession() lookup. Lifetime guaranteed by DeviceProvider
+    /// owning DetectionRunner via unique_ptr (DetectionRunner is reset
+    /// FIRST in DeviceProvider::Cleanup per P7 D-20 strict reverse-order
+    /// teardown — DeviceProvider outlives DetectionRunner trivially).
+    /// nullptr in test ctors that exercise the 4-or-5-arg ctor without a
+    /// DeviceProvider; RunLoop guards with a nullptr check before each
+    /// mode read.
+    DeviceProvider*                                     deviceProvider_{nullptr};
 };
 
 } // namespace micmap::driver

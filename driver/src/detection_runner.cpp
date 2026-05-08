@@ -23,7 +23,9 @@
 // inside AudioWorker per P6 D-15).
 
 #include "detection_runner.hpp"
+#include "device_provider.hpp"   // P9 D-01: full type for deviceProvider_->mode() / trainingSession() deref
 #include "driver_log.hpp"
+#include "training_session.hpp"  // P9 D-01: TrainingSession::addSample target in Training-mode branch
 
 // P6 lifted the P5 link-only restriction -- driver TUs may now #include
 // shared-lib headers (driver/CMakeLists.txt:79 comment). The include
@@ -73,11 +75,13 @@ DetectionRunner::DetectionRunner(SampleRing<16, 480>& ring,
                                  CommandQueue& commandQueue,
                                  uint32_t sampleRate,
                                  DetectionConfig initial,
-                                 DriverStatePublisher statePublisher)
+                                 DriverStatePublisher statePublisher,
+                                 DeviceProvider* deviceProvider)
     : ring_(ring)
     , commandQueue_(commandQueue)
     , sampleRate_(sampleRate)
     , statePublisher_(std::move(statePublisher))
+    , deviceProvider_(deviceProvider)
 {
     // Seed activeConfig_ with the initial snapshot so Start can construct
     // detector + state machine without a publish() race. lastObserved_ is
@@ -450,7 +454,8 @@ void DetectionRunner::RunLoop() {
             }
         }
 
-        // Active path: drain -> analyze -> update -> trigger fires inside update.
+        // Active path: drain -> (analyze + state-machine update) OR
+        // (forward to TrainingSession), depending on DriverMode.
         // P7 REVIEW WR-05: compute dt from sample count rather than wall
         // clock. The previous wall-clock dt fed the entire idle duration
         // (cv_.wait_for timeout, or the full Pause->Resume gap) into the
@@ -463,12 +468,43 @@ void DetectionRunner::RunLoop() {
         // zero in the (impossible) sampleRate_=0 path -- if that ever
         // fires, the dt collapses to block_count ms which is still a
         // sane upper bound for a 480-frame block.
+        //
+        // P9 D-01 / D-02 / Pitfall 1+2: read DriverMode once per
+        // ring-drain cycle via acquire-load. Pairs with DeviceProvider's
+        // release-store on mode_ AFTER constructing TrainingSession
+        // (publish discipline mirrors activeConfig_ at line 101). A
+        // stale-read-while-flipping is safe in either direction:
+        //   - read Detecting after flip-to-Training: this iteration
+        //     analyzes against a still-valid trained profile (no UAF;
+        //     detector_ outlives the session); next iter sees Training.
+        //   - read Training after flip-back-to-Detecting: the Training
+        //     branch null-checks trainingSession() and drops the block
+        //     if reset has already run.
+        const auto mode = (deviceProvider_ != nullptr)
+            ? deviceProvider_->mode().load(std::memory_order_acquire)
+            : DriverMode::Detecting;
         const uint32_t rate_for_dt = sampleRate_ ? sampleRate_ : 1;
         while (ring_.try_pop(block, block_count)) {
-            auto result = detector_->analyze(block.data(), block_count);
-            const auto dt = std::chrono::milliseconds(
-                static_cast<long long>(block_count) * 1000 / rate_for_dt);
-            stateMachine_->update(result.confidence, dt);
+            if (mode == DriverMode::Detecting) {
+                auto result = detector_->analyze(block.data(), block_count);
+                const auto dt = std::chrono::milliseconds(
+                    static_cast<long long>(block_count) * 1000 / rate_for_dt);
+                stateMachine_->update(result.confidence, dt);
+            } else {
+                // DriverMode::Training — forward block to TrainingSession.
+                // Pitfall 2 mitigation: trainingSession() is null-checked
+                // because the mode flip and the unique_ptr<TrainingSession>
+                // reset are not atomic across two members. A transient null
+                // read is safe — drop the block. DeviceProvider also
+                // release-stores mode_ = Detecting BEFORE the reset, so the
+                // window of mode==Training && session==nullptr is bounded
+                // by one detection-loop iteration at most.
+                if (deviceProvider_ != nullptr) {
+                    if (auto* session = deviceProvider_->trainingSession()) {
+                        session->addSample(block.data(), block_count);
+                    }
+                }
+            }
         }
     }
 
