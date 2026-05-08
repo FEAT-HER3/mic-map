@@ -668,3 +668,124 @@ add_executable(test_client_level_meter_cadence test_client_level_meter_cadence.c
 target_compile_features(test_client_level_meter_cadence PRIVATE cxx_std_17)
 target_link_libraries(test_client_level_meter_cadence PRIVATE micmap::steamvr)
 add_test(NAME ClientLevelMeterCadence COMMAND test_client_level_meter_cadence)
+
+# ---- Phase 9 Wave 0 (RED scaffold) ----
+# Wave 0 lands 2 new lint scripts under cmake/ (AssertNoClientTraining,
+# AssertReplayNoVrApi) plus 3 plain-main test scaffolds. Only ONE of the
+# lints is wired to ctest at Wave 0 — AssertNoClientTraining ships in the
+# repo but its ctest registration is intentionally deferred to 09-03 because
+# it currently fires on the v1.5 client training body still in apps/micmap/main.cpp
+# (single-writer cutover protocol per CONTEXT D-23, mirror of P8 D-07 timing
+# for AssertNoConfigWriteInClient).
+
+# P9 D-37 / TEST-01: assert no OpenVR symbols in apps/mic_test/src/wav_replay.{hpp,cpp}.
+# Wave 0 RED-tolerant via skip-on-NOT-EXISTS in the lint script. Currently
+# stays GREEN — wav_replay.{hpp,cpp} do not yet exist (lands in 09-04).
+add_test(NAME AssertReplayNoVrApi
+    COMMAND ${CMAKE_COMMAND}
+        -DREPLAY_DIR=${CMAKE_SOURCE_DIR}/apps/mic_test/src
+        -P ${CMAKE_SOURCE_DIR}/cmake/AssertReplayNoVrApi.cmake)
+
+# NOTE: AssertNoClientTraining is intentionally NOT registered at Wave 0.
+# The lint script exists at cmake/AssertNoClientTraining.cmake but currently
+# FATALs on apps/micmap/main.cpp (existing v1.5 training body at lines
+# 962-1027 + saveTrainingData callsites at :618, :974, :991). Single-writer
+# cutover protocol per CONTEXT D-23: ctest registration goes live in 09-03
+# alongside the client-side training body deletion. Mirror of P8 D-07 timing
+# for AssertNoConfigWriteInClient. (See "# ---- Phase 9 Wave 3" block added
+# by 09-03 for AssertNoClientTraining go-live.)
+
+# TRAIN-01..04 / TRAIN-06 — TrainingSession lifecycle. RED until Plan 09-01
+# lands driver/src/training_session.{hpp,cpp} + driver/src/training_io.{hpp,cpp}.
+# Mirrors P7 DetectionSettingsPropagation EXISTS-gated source-list registration.
+set(_p9_training_session_sources driver/training_session_test.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+    list(APPEND _p9_training_session_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+endif()
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+    list(APPEND _p9_training_session_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+endif()
+if(OpenVR_FOUND)
+    add_executable(test_training_session ${_p9_training_session_sources})
+    target_compile_features(test_training_session PRIVATE cxx_std_17)
+    target_include_directories(test_training_session PRIVATE
+        ${CMAKE_SOURCE_DIR}/driver/src)
+    target_link_libraries(test_training_session PRIVATE
+        micmap::core_runtime
+        OpenVR::openvr_api
+        nlohmann_json)
+    add_test(NAME TrainingSessionLifecycle
+        COMMAND test_training_session)
+else()
+    message(STATUS "TrainingSessionLifecycle: skipped (OpenVR SDK not found)")
+endif()
+
+# IPC-06 / D-09 / D-14 / D-15 / D-18 / D-40 — Training HTTP endpoint
+# validation envelopes. RED until Plan 09-02 lands the training routes on
+# http_server + settings_validator extension. Mirrors P8
+# PutSettingsValidation EXISTS-gated source-list registration shape.
+set(_p9_training_endpoint_sources driver/training_endpoint_validation_test.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp"
+        AND EXISTS "${CMAKE_SOURCE_DIR}/driver/src/http_server.cpp")
+    list(APPEND _p9_training_endpoint_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/http_server.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+    if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+        list(APPEND _p9_training_endpoint_sources
+            "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+    endif()
+endif()
+if(OpenVR_FOUND)
+    add_executable(test_training_endpoint_validation ${_p9_training_endpoint_sources})
+    target_compile_features(test_training_endpoint_validation PRIVATE cxx_std_17)
+    target_include_directories(test_training_endpoint_validation PRIVATE
+        ${CMAKE_SOURCE_DIR}/driver/src)
+    target_link_libraries(test_training_endpoint_validation PRIVATE
+        micmap::core_runtime
+        micmap::bindings
+        httplib::httplib
+        OpenVR::openvr_api
+        nlohmann_json)
+    target_compile_definitions(test_training_endpoint_validation PRIVATE
+        CPPHTTPLIB_NO_EXCEPTIONS)
+    add_test(NAME TrainingEndpointValidation
+        COMMAND test_training_endpoint_validation)
+else()
+    message(STATUS "TrainingEndpointValidation: skipped (OpenVR SDK not found)")
+endif()
+
+# TEST-04 / D-30 / D-32 / D-34 — WAV replay decode + downmix + linear-resample
+# + JSON output schema + determinism. RED until Plan 09-04 lands
+# apps/mic_test/src/wav_replay.{hpp,cpp} + vendor/dr_wav/dr_wav.h.
+#
+# IMPORTANT: NO if(OpenVR_FOUND) wrapper here. The replay harness is
+# headless per TEST-01 invariant — it must build and run on host CI workers
+# that have no SteamVR runtime. The EXISTS-gate on wav_replay.cpp keeps the
+# executable buildable at Wave 0 (the missing #include on wav_replay.hpp is
+# the build-time RED gate per D-37).
+set(_p9_wav_replay_sources mic_test/wav_replay_test.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/apps/mic_test/src/wav_replay.cpp")
+    list(APPEND _p9_wav_replay_sources
+        "${CMAKE_SOURCE_DIR}/apps/mic_test/src/wav_replay.cpp")
+endif()
+add_executable(test_wav_replay ${_p9_wav_replay_sources})
+target_compile_features(test_wav_replay PRIVATE cxx_std_17)
+target_include_directories(test_wav_replay PRIVATE
+    ${CMAKE_SOURCE_DIR}/apps/mic_test/src
+    ${CMAKE_SOURCE_DIR}/vendor/dr_wav)
+target_link_libraries(test_wav_replay PRIVATE
+    micmap::core_runtime
+    nlohmann_json)
+add_test(NAME WavReplayHarness
+    COMMAND test_wav_replay)
+
+# ---- end Phase 9 Wave 0 ----
