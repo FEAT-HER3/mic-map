@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "corpus": "Phase 9 / TEST-04 seed corpus",
+  "files": [
+    {
+      "wav": "positive_001.wav",
+      "expected_triggers": 1,
+      "tolerance": 0,
+      "notes": "Short white-noise burst mimicking mic-cover signature; should fire 1 trigger on rising edge when paired with a profile trained on the same burst class."
+    },
+    {
+      "wav": "negative_silence_001.wav",
+      "expected_triggers": 0,
+      "tolerance": 0,
+      "notes": "5 s silence; baseline negative — must not trigger."
+    },
+    {
+      "wav": "negative_speech_001.wav",
+      "expected_triggers": 0,
+      "tolerance": 0,
+      "notes": "5 s synthetic speech-like signal (multi-formant, 3 Hz syllable AM); must not be confused with mic-cover noise."
+    }
+  ]
+}
