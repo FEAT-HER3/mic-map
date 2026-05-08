@@ -5,6 +5,7 @@ status: draft
 shadcn_initialized: false
 preset: none
 created: 2026-05-08
+revised: 2026-05-08
 ---
 
 # Phase 9 — UI Design Contract
@@ -13,7 +14,7 @@ created: 2026-05-08
 >
 > **Important:** This is the same Dear ImGui (immediate-mode) Win32 + D3D11 desktop client carried forward from v1.5/P8. shadcn does not apply. Tokens are expressed as ImGui constants and ImVec4 RGBA values used at draw time.
 >
-> **Inheritance:** P9 inherits the entire P8 design contract (`08-UI-SPEC.md`) verbatim — design system, spacing scale, typography, color palette, copywriting style, poll cadences, driver-loaded gate. P9 only adds: (a) one new section ("Training" — fully rewired against `/training/*`), (b) one new client behavior (5–10 Hz `GET /training/progress` poll while in Training mode), (c) two new copywriting clusters (training progress + recompute preview), (d) two new copy strings on the existing `last_error` infrastructure (`training_timed_out_no_samples`, `audio_disabled`).
+> **Inheritance:** P9 inherits the entire P8 design contract verbatim — design system, spacing scale, typography, color palette, copywriting style, poll cadences, driver-loaded gate. P9 only adds: (a) one new section ("Training" — fully rewired against `/training/*`), (b) one new client behavior (5–10 Hz `GET /training/progress` poll while in Training mode), (c) two new copywriting clusters (training progress + recompute preview), (d) two new copy strings on the existing `last_error` infrastructure (`training_timed_out_no_samples`, `audio_disabled`).
 
 ---
 
@@ -49,7 +50,7 @@ P9 inherits P8's ImGui spacing tokens verbatim. No new tokens introduced.
 
 | Token | Value | Usage in P9 Training pane |
 |-------|-------|---------------------------|
-| xs | 4px | Inline gap between progress-bar and "Cancel" button (`SameLine` default spacing) |
+| xs | 4px | Inline gap between progress-bar and "Cancel Training" button (`SameLine` default spacing) |
 | sm | 8px | `ImGui::Spacing()` between progress bar and preview block, between preview block and confirm row |
 | md | 16px | Default control row gap; padding inside button hit boxes |
 | lg | 24px | Vertical break before "Training" section heading (after Settings `Separator()`) |
@@ -60,14 +61,24 @@ P9 inherits P8's ImGui spacing tokens verbatim. No new tokens introduced.
 | Element | Size (`ImVec2`) | Notes |
 |---------|------|-------|
 | `Train Pattern` button | `ImVec2(120, 30)` | Reuses v1.5/P8 standard button size — visual continuity with the deleted button |
-| `Cancel` button (during training) | `ImVec2(120, 30)` | Replaces the v1.5 "Stop Training" slot — same size, same position |
-| `Recompute` button (in `ready` state) | `ImVec2(120, 30)` | Standard button size |
-| `Confirm & Save` button (in `ready` state) | `ImVec2(140, 30)` | Slightly wider — accommodates the longer label and signals primary CTA without color (per dark-theme accent reservation rule) |
-| `Discard` button (in `ready` state) | `ImVec2(80, 24)` | P8 compact-button size — secondary action |
+| `Cancel Training` button (during training) | `ImVec2(120, 30)` | Replaces the v1.5 "Stop Training" slot — same size, same position |
+| `Recompute Thresholds` button (in `ready` state) | `ImVec2(140, 30)` | Standard label width — accommodates verb+noun copy |
+| `Confirm & Save` button (in `ready` state) | `ImVec2(140, 30)` | Same width as Recompute — matches the longer label and signals primary CTA without color (per dark-theme accent reservation rule) |
+| `Discard Preview` button (in `ready` state) | `ImVec2(120, 24)` | P8 compact-button height with widened label slot — secondary action |
 | Sensitivity slider (recompute control) | full-width via `SetNextItemWidth(-1)` | Matches existing P8 settings sliders |
 | Training progress bar | `ImVec2(-1, 18)` | Same height as P8 level meter — visual consistency for "live data" widgets |
 
-Exceptions: none. All values are multiples of 4.
+**Spacing exceptions (inherited from v1.5/P8 visual baseline):**
+
+The P9 control sizing table contains two height values that are **not** multiples of 4. These are deliberate, inherited from the v1.5/P8 visual baseline, and the executor MUST NOT change them:
+
+| Value | Where | Justification |
+|-------|-------|---------------|
+| `30px` button height | Train Pattern, Cancel Training, Recompute Thresholds, Confirm & Save | Inherited from v1.5/P8 `ImVec2(120, 30)` button standard. Retained for visual continuity across the rewire — the deleted v1.5 training section used the same height, and surrounding P8 sections (Audio Device, Settings) continue to use `30` for their action buttons. Changing to `32` would make P9 buttons visibly taller than every other P8 button in the same window. |
+| `24px` button height | Discard Preview | Inherited from v1.5/P8 compact-button standard (`ImVec2(80, 24)`). Retained for visual continuity with other secondary/compact P8 buttons. |
+| `18px` progress bar height | Training progress bar | Inherited from P8 level-meter `ImVec2(-1, 18)`. Matched intentionally so the training progress bar reads as the same "live data" widget family as the audio level meter immediately below it. Changing to `16` or `20` would break that visual pairing. |
+
+All other spacing values (paddings, gaps, margins, slider widths) are multiples of 4. The non-multiple-of-4 heights above are bounded to button/progress-bar `ImVec2.y` values inherited from the prior milestone's visual baseline.
 
 ---
 
@@ -110,7 +121,7 @@ P9 introduces **zero new color values**. Every state in the Training pane maps t
 - Secondary (30%): progress-bar fill, slider track, button chrome — unchanged
 - Accent (10%): one green status line + one orange coaching line + one destructive error line. Same budget as P8; same affordance count. No drift.
 
-**Explicit anti-pattern:** Do **NOT** color the "Confirm & Save" button green via `PushStyleColor(ImGuiCol_Button, ...)`. Primary-CTA emphasis comes from copy + size (140×30 vs 80×24 for "Discard") and from being the only enabled affordance when `state=ready`. Color is for state, not for hierarchy. (Mirrors P8's color-discipline rule — green ≠ "click here," green = "the driver succeeded.")
+**Explicit anti-pattern:** Do **NOT** color the "Confirm & Save" button green via `PushStyleColor(ImGuiCol_Button, ...)`. Primary-CTA emphasis comes from copy + size (140×30 vs 120×24 for "Discard Preview") and from being the only `Confirm & Save`-labeled affordance when `state=ready`. Color is for state, not for hierarchy. (Mirrors P8's color-discipline rule — green ≠ "click here," green = "the driver succeeded.")
 
 ---
 
@@ -129,11 +140,11 @@ All P9 copywriting is in en-US, sentence case, no terminal periods in inline sta
 | Element | Copy |
 |---------|------|
 | Primary CTA (button label) | `Train Pattern` |
-| Secondary action (button label) | `Discard profile` |
+| Secondary action (button label) | `Discard Profile` |
 | Status line (when `hasProfile=true`, post-finalize) | `Status: Profile trained and ready` (accent green) |
 | Status line (when `hasProfile=false`, no profile yet) | `Status: No profile loaded` (accent orange) |
 
-**Note on "Discard profile" button:** Replaces v1.5's ambiguous "Clear" button. Wording is destructive-explicit because it removes the trained profile from in-memory client-side detection (P10 deletes the entire client-side detection path; P9 keeps the button until then, but the copy aligns with P10's intent). See Destructive Confirmations below.
+**Note on "Discard Profile" button:** Replaces v1.5's ambiguous "Clear" button. Wording is destructive-explicit because it removes the trained profile from in-memory client-side detection (P10 deletes the entire client-side detection path; P9 keeps the button until then, but the copy aligns with P10's intent). See Destructive Confirmations below.
 
 ### Collecting state (driver in `Training` mode, samples accumulating)
 
@@ -144,7 +155,7 @@ Driven by `GET /training/progress` poll at 5 Hz when window visible (per P8 cade
 | Coaching copy (above progress bar) | `Cover mic now!` (accent orange) |
 | Progress bar overlay | `{samples_collected}/{target} samples` (e.g., `42/100 samples`) |
 | Progress bar fill | `samples_collected / target` (float in [0,1]) |
-| Cancel button label | `Cancel` |
+| Cancel button label | `Cancel Training` |
 | Status line (below progress bar) | hidden during collecting — coaching copy carries the load |
 
 ### Computing state (`finishTraining()` running — brief, ~10–100 ms)
@@ -167,9 +178,9 @@ Will rarely be observed visually (transition is fast). Defensive copy if the pol
 | Preview row 2 | `Energy threshold: {energy_threshold:.4f}` |
 | Preview row 3 | `Spectral profile: mean {mean:.3f}, stddev {stddev:.3f}, {size} bins` |
 | Recompute slider label | `Recompute sensitivity:` (with `SliderFloat` 0.0..1.0, default = current preview's sensitivity) |
-| Recompute button label | `Recompute` |
+| Recompute button label | `Recompute Thresholds` |
 | Primary CTA button label | `Confirm & Save` |
-| Discard button label | `Discard` |
+| Discard button label | `Discard Preview` |
 | Status line (below Confirm/Discard row) | hidden in ready state — preview content carries it |
 
 ### Cancelled / finalized terminal states
@@ -178,7 +189,7 @@ These are observable for at most one poll cycle before the session is destroyed 
 
 | Terminal state | UI action |
 |---------------|-----------|
-| `state=cancelled` with `last_error=null` | Return to Idle. No toast — user clicked Cancel; the action is its own confirmation. |
+| `state=cancelled` with `last_error=null` | Return to Idle. No toast — user clicked Cancel Training; the action is its own confirmation. |
 | `state=cancelled` with `last_error="training_timed_out_no_samples"` | Return to Idle. Show ephemeral 5 s message in the existing P8 HEALTH-05 last-error slot: `Training timed out — no samples collected in 30 s` (destructive color). |
 | `state=finalized` | Return to Idle with `hasProfile=true`. Show 3 s success toast in coaching slot: `Profile saved` (accent green). Then the standing "Status: Profile trained and ready" line takes over. |
 
@@ -189,7 +200,7 @@ P9 introduces two new strings in the existing P8 last-error infrastructure. No n
 | Driver-side `last_error` value | Client-rendered copy |
 |--------------------------------|---------------------|
 | `training_timed_out_no_samples` | `Training timed out — no samples collected in 30 s` |
-| `audio_disabled` | `Driver audio is disabled — enable in driver settings to train` (covers D-40's HTTP 503 path; this string also appears as a stderr-equivalent inline message under the disabled Train button when `enable_driver_audio=0` is detected) |
+| `audio_disabled` | `Driver audio is disabled — enable in driver settings to train` (covers D-40's HTTP 503 path; this string also appears as a stderr-equivalent inline message under the disabled Train Pattern button when `enable_driver_audio=0` is detected) |
 
 P8's existing `last_error` strings (validation failures, `last_error` from `/state`) are unchanged. P9 adds these two on top.
 
@@ -210,7 +221,7 @@ When `POST /training/finalize | recompute` returns HTTP 400 with `{"field": "...
 | Condition | UI behavior in Training pane |
 |-----------|------------------------------|
 | `/health` returns ECONNREFUSED | Train Pattern button rendered disabled via `BeginDisabled()`; tooltip on hover: `Driver not loaded — settings cannot be changed` (reuses P8's tooltip string verbatim) |
-| `/health.driver_training_active=true` while UI launched mid-session (orphan recovery) | Skip directly to Cancel button + progress bar driven by `/training/progress`. Train Pattern button is hidden (not just disabled). |
+| `/health.driver_training_active=true` while UI launched mid-session (orphan recovery) | Skip directly to Cancel Training button + progress bar driven by `/training/progress`. Train Pattern button is hidden (not just disabled). |
 
 ---
 
@@ -228,9 +239,9 @@ P8's poll cadences for `/health`, `/state`, `/telemetry/level`, `/settings`, `/d
 **Stop conditions for the 5 Hz poll:**
 1. Receive a `GET /training/progress` response where `state=finalized` or `state=cancelled` — fall through to terminal-state UI handling above; on the next frame, drop back to the standard P8 poll set.
 2. Receive an HTTP error (ECONNREFUSED) — drop to the P8 driver-loaded gate; do not retry-storm. P8's 1 Hz `/health` poll handles reconnection.
-3. User clicks Cancel — issue `POST /training/cancel`; on 200 response, immediately mark local state Cancelled and stop the 5 Hz poll on the next frame (next `/health` poll will confirm `driver_training_active=false`).
+3. User clicks Cancel Training — issue `POST /training/cancel`; on 200 response, immediately mark local state Cancelled and stop the 5 Hz poll on the next frame (next `/health` poll will confirm `driver_training_active=false`).
 
-### Train button → start training
+### Train Pattern button → start training
 
 1. User clicks `Train Pattern` (only enabled when driver-loaded gate is green AND `enable_driver_audio=1` per inferred state — see D-40 handling below).
 2. Client issues `POST /training/start` (empty body).
@@ -239,9 +250,9 @@ P8's poll cadences for `/health`, `/state`, `/telemetry/level`, `/settings`, `/d
 5. **HTTP 503 (`audio_disabled` — D-40):** Show 3 s toast: `Driver audio is disabled — enable in driver settings to train`. Disable the Train Pattern button persistently (until next `/health` cycle confirms audio is enabled — for the v1.6 milestone this is a developer-only gate; the user can flip the setting in `default.vrsettings`).
 6. **ECONNREFUSED:** Should not be reachable (P8 gate prevents). Silently roll back; let next `/health` flip the gate.
 
-### Cancel button → cancel training
+### Cancel Training button → cancel training
 
-1. User clicks `Cancel` (visible only during Collecting state).
+1. User clicks `Cancel Training` (visible only during Collecting state).
 2. Client issues `POST /training/cancel` (empty body).
 3. **HTTP 200 (with body `{"cancelled": true}` or `{"cancelled": false}`):** Stop 5 Hz poll. Set local `isTraining=false`. Return to Idle state. No toast — the action is its own confirmation. (D-13: cancel is idempotent — `false` simply means the session already ended; UI doesn't distinguish.)
 4. **ECONNREFUSED:** Driver died mid-session. Stop poll. Set local `isTraining=false`. Return to Idle. P8's driver-loaded gate flips red on the next `/health` poll.
@@ -251,8 +262,8 @@ P8's poll cadences for `/health`, `/state`, `/telemetry/level`, `/settings`, `/d
 When `GET /training/progress.state=ready`, the UI shows the preview block + three actions:
 
 **Recompute flow:**
-1. User adjusts the sensitivity slider (ImGui `SliderFloat` with `0.0..1.0` range, no live PUT — slider value is local until user clicks Recompute).
-2. User clicks `Recompute`.
+1. User adjusts the sensitivity slider (ImGui `SliderFloat` with `0.0..1.0` range, no live PUT — slider value is local until user clicks Recompute Thresholds).
+2. User clicks `Recompute Thresholds`.
 3. Client issues `POST /training/recompute` with body `{"sensitivity": <slider_value>}`.
 4. **HTTP 200:** Response body contains updated `thresholds_preview`. Update local preview rows in place. Slider stays at the chosen value. No toast.
 5. **HTTP 400 (out-of-range):** Show ephemeral toast: `Invalid sensitivity: must be between 0.0 and 1.0`. Slider rolls back to prior value.
@@ -265,13 +276,13 @@ When `GET /training/progress.state=ready`, the UI shows the preview block + thre
 4. **HTTP 400 / 409:** Should be unreachable from ready state (driver guarantees). If observed (race), show: `Could not save profile — try training again`. Return to Idle.
 
 **Discard flow:**
-1. User clicks `Discard`.
-2. Client issues `POST /training/cancel` (same endpoint as the Collecting-state Cancel).
-3. **HTTP 200:** Same as Cancel above — return to Idle, no toast. (D-13 idempotent semantics absorb both the "abort during collect" and "decline preview" use cases without a separate endpoint.)
+1. User clicks `Discard Preview`.
+2. Client issues `POST /training/cancel` (same endpoint as the Collecting-state Cancel Training).
+3. **HTTP 200:** Same as Cancel Training above — return to Idle, no toast. (D-13 idempotent semantics absorb both the "abort during collect" and "decline preview" use cases without a separate endpoint.)
 
-### Discard profile (Idle state)
+### Discard Profile (Idle state)
 
-1. User clicks `Discard profile` (visible only when `hasProfile=true` and not training).
+1. User clicks `Discard Profile` (visible only when `hasProfile=true` and not training).
 2. Show modal confirmation (see Destructive Confirmations below).
 3. On confirm: clear in-memory `detector` profile (existing v1.5 behavior at `main.cpp:1012-1025` — recreate detector instance). Set `hasProfile=false`. **No HTTP call** — the on-disk `training_data.bin` is untouched (driver is sole writer per IPC-06; client cannot delete the file). Next driver reload (`Init`) will re-load whatever is on disk; the discard only affects the client-side detector's in-memory profile.
 
@@ -279,24 +290,24 @@ When `GET /training/progress.state=ready`, the UI shows the preview block + thre
 
 ## Destructive Confirmations
 
-P9 has **one** destructive action: `Discard profile` (replaces v1.5's unconfirmed "Clear" button at `apps/micmap/main.cpp:1012`).
+P9 has **one** destructive action: `Discard Profile` (replaces v1.5's unconfirmed "Clear" button at `apps/micmap/main.cpp:1012`).
 
 | Action | Confirmation pattern |
 |--------|---------------------|
-| `Cancel` (during collecting) | none — non-destructive (samples are RAM-only and explicitly disposable; the action is the confirmation) |
-| `Discard` (during ready preview) | none — non-destructive (preview is RAM-only; samples are not persisted) |
-| `Discard profile` (idle, `hasProfile=true`) | **modal confirmation required** (see below) |
+| `Cancel Training` (during collecting) | none — non-destructive (samples are RAM-only and explicitly disposable; the action is the confirmation) |
+| `Discard Preview` (during ready preview) | none — non-destructive (preview is RAM-only; samples are not persisted) |
+| `Discard Profile` (idle, `hasProfile=true`) | **modal confirmation required** (see below) |
 
-**Modal copy for `Discard profile`:**
+**Modal copy for `Discard Profile`:**
 
 | Element | Copy |
 |---------|------|
 | Modal heading | `Discard trained profile?` |
 | Body | `Your client-side detection will stop using this profile until you train again or restart the driver. The on-disk profile (used by the driver) is unaffected.` |
-| Confirm button | `Discard` (in destructive color via `PushStyleColor(ImGuiCol_Button, destructive)` — this is the **one** P9 exception to the "color is for state, not buttons" rule, justified by destructive-action conventions) |
+| Confirm button | `Discard` (in destructive color via `PushStyleColor(ImGuiCol_Button, destructive)` — this is the **one** P9 exception to the "color is for state, not buttons" rule, justified by destructive-action conventions; modal-button label remains the bare verb because the noun is carried by the modal heading) |
 | Cancel button | `Keep` |
 
-**Rationale for the exception:** P8 has no destructive actions and accordingly has no colored buttons. P9 introduces one destructive action and follows the universal convention that destructive confirmation buttons are colored. Limited to this one button. The Train / Cancel / Recompute / Confirm & Save buttons are **not** colored.
+**Rationale for the exception:** P8 has no destructive actions and accordingly has no colored buttons. P9 introduces one destructive action and follows the universal convention that destructive confirmation buttons are colored. Limited to this one button. The Train Pattern / Cancel Training / Recompute Thresholds / Confirm & Save buttons are **not** colored.
 
 ---
 
@@ -361,18 +372,27 @@ Not applicable. P9 ships zero new third-party UI components. The client uses Dea
 
 | Source | Decisions Used |
 |--------|---------------|
-| `08-UI-SPEC.md` | Entire design system inheritance — spacing tokens, ImGui style baseline, color palette, typography, poll cadence framework, driver-loaded gate copy ("Driver not loaded — settings cannot be changed"), HEALTH-05 last-error rendering pattern, optimistic-apply pattern shape |
+| `08-UI-SPEC.md` (conceptual baseline) | Entire design system inheritance — spacing tokens, ImGui style baseline, color palette, typography, poll cadence framework, driver-loaded gate copy ("Driver not loaded — settings cannot be changed"), HEALTH-05 last-error rendering pattern, optimistic-apply pattern shape |
 | `09-CONTEXT.md` D-01..D-04 | DriverMode mode-switch architecture — informs "Cover mic now!" coaching pattern (training is a mode, not a separate UI surface) |
 | `09-CONTEXT.md` D-07 | `driver_training_active` `/health` field — orphan-recovery UI path |
 | `09-CONTEXT.md` D-09..D-22 | TrainingSession lifecycle — informs Idle/Collecting/Computing/Ready state UI mapping |
 | `09-CONTEXT.md` D-12 | 30 s timeout → `training_timed_out_no_samples` last_error copy |
-| `09-CONTEXT.md` D-13 | Cancel idempotency → no toast on cancel; Discard reuses Cancel endpoint |
-| `09-CONTEXT.md` D-15..D-16 | Finalize confirm/sensitivity payload → "Confirm & Save" CTA + Recompute slider |
+| `09-CONTEXT.md` D-13 | Cancel idempotency → no toast on cancel; Discard Preview reuses Cancel endpoint |
+| `09-CONTEXT.md` D-15..D-16 | Finalize confirm/sensitivity payload → "Confirm & Save" CTA + Recompute Thresholds slider |
 | `09-CONTEXT.md` D-22 | Progress wire shape → preview block field rendering (sensitivity, energy_threshold, spectral_profile_summary) |
-| `09-CONTEXT.md` D-40 | `audio_disabled` HTTP 503 path → disabled Train button + hint copy |
+| `09-CONTEXT.md` D-40 | `audio_disabled` HTTP 503 path → disabled Train Pattern button + hint copy |
 | `09-RESEARCH.md` Architecture diagram | Section ordering and ImGui widget choice (`ProgressBar`, `SliderFloat`, `Button`, `BeginDisabled`) |
-| `apps/micmap/main.cpp` (existing v1.5) | Section position (Training between Settings and Audio Levels), button sizes (120×30 standard / 80×24 compact), color conventions ("Cover mic now!" orange, "Profile trained" green, "No profile loaded" orange) — preserved for visual continuity through the rewire |
+| `apps/micmap/main.cpp` (existing v1.5) | Section position (Training between Settings and Audio Levels), button sizes (120×30 standard / 80×24 compact / 18-tall progress bar), color conventions ("Cover mic now!" orange, "Profile trained" green, "No profile loaded" orange) — preserved for visual continuity through the rewire |
 | `REQUIREMENTS.md` TRAIN-01..06, TEST-04, IPC-06 | Endpoint behaviors driving each UI state |
+
+---
+
+## Revision History
+
+| Date | Change | Reason |
+|------|--------|--------|
+| 2026-05-08 | Initial draft | gsd-ui-researcher first pass |
+| 2026-05-08 | (1) Spacing exception declaration corrected: documented inherited 30px button height, 24px compact-button height, and 18px progress-bar height as v1.5/P8 visual-baseline exceptions to the multiple-of-4 rule (executor must not change these). (2) Three CTA labels promoted from bare verbs to verb+noun for clarity: `Cancel` → `Cancel Training` (collecting state), `Recompute` → `Recompute Thresholds` (ready state), `Discard` → `Discard Preview` (ready-state preview). Idle-state `Discard profile` capitalized to `Discard Profile`. Modal `Keep` and modal `Discard` button labels left bare (modal heading carries the noun). | Address gsd-ui-checker findings: Dimension 5 BLOCK on undeclared spacing exceptions; Dimension 1 FLAG on single-word CTAs. |
 
 ---
 
