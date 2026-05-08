@@ -19,8 +19,11 @@
                                   // the full header here is cheaper than the
                                   // unique_ptr<DetectionConfig> alternative.
                                   // detection_runner.hpp itself includes only
-                                  // command_queue.hpp + sample_ring.hpp + std
-                                  // headers — no shared-lib pull-in.
+                                  // command_queue.hpp + driver_mode.hpp +
+                                  // sample_ring.hpp + std headers — no
+                                  // shared-lib pull-in.
+
+#include "driver_mode.hpp"        // P9 D-01: DriverMode enum for atomic mode_
 
 #include "driver_state.hpp"       // P8 D-23: DriverState POD for GET /state
                                   // atomic snapshot. Header has no JSON or
@@ -34,6 +37,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <mutex>          // P9 D-09: trainingMutex_ guards trainingSession_ lifecycle
 #include <optional>
 
 namespace micmap::driver {
@@ -46,6 +50,10 @@ class DetectionRunner;   // P7 D-19: full type only needed in device_provider.cp
                          // (where ~DeviceProvider is defined). DetectionConfig
                          // (used as a by-value member) comes from the include
                          // above.
+class TrainingSession;   // P9 D-09: lazy unique_ptr<TrainingSession>; full type
+                         // only needed in device_provider.cpp where the
+                         // unique_ptr is constructed/destroyed and the addSample
+                         // / snapshot accessors are dereferenced.
 
 /**
  * @brief Lifecycle state of the HMD-side /input/system/click component.
@@ -136,6 +144,25 @@ private:
     // (read current snapshot, mutate, atomic_store). Readers are lock-free.
     std::shared_ptr<const DriverState> stateSnapshot_;
 
+    // P9 D-01 / D-09: training-session lifecycle state.
+    //   mode_           — atomic flag read by DetectionRunner on every ring-
+    //                     drain iteration via memory_order_acquire. Default
+    //                     Detecting; transitions to Training inside
+    //                     tryStartTrainingSession AFTER constructing
+    //                     trainingSession_; transitions back to Detecting
+    //                     inside resetTrainingSession BEFORE resetting
+    //                     trainingSession_.
+    //   trainingSession_— lazy. nullptr until POST /training/start.
+    //                     HTTP-thread-only construction/destruction per D-03.
+    //   trainingMutex_  — guards trainingSession_ lifecycle (D-09 single
+    //                     instance + Pitfall 2 destruction race). Held
+    //                     while constructing/destroying the unique_ptr;
+    //                     read accessors take a short-lived shared lock
+    //                     so DetectionRunner can dereference safely.
+    std::atomic<DriverMode>          mode_{DriverMode::Detecting};
+    std::unique_ptr<TrainingSession> trainingSession_;
+    mutable std::mutex               trainingMutex_;
+
 public:
     /// @brief P8 D-15: Lock-free read of the current AppConfig snapshot.
     ///        Safe to call from any thread. Returns nullptr only between
@@ -163,6 +190,67 @@ public:
     ///        state transitions, AudioWorker device events, HTTP
     ///        POST /state/clear-error (08-04).
     void publishDriverState(DriverState next);
+
+    // -------------------------------------------------------------------
+    // P9 D-01 / D-09 / D-22: TrainingSession lifecycle accessors.
+    // -------------------------------------------------------------------
+    // Both mode() and trainingSession() are read by DetectionRunner on
+    // every ring-drain iteration (mode() is acquire-load on the atomic;
+    // trainingSession() is mutex-guarded). HTTP handlers in 09-02 call
+    // tryStartTrainingSession / resetTrainingSession to drive the
+    // lifecycle. Construction/destruction is HTTP-thread-only per D-03.
+    //
+    // Pitfall 1 (construction race): tryStartTrainingSession constructs
+    // the session BEFORE release-storing mode_ = Training so the
+    // detection thread's acquire-load observes a fully-constructed
+    // session.
+    // Pitfall 2 (destruction race): resetTrainingSession release-stores
+    // mode_ = Detecting BEFORE resetting the unique_ptr. DetectionRunner
+    // null-checks trainingSession() to absorb the brief race window.
+
+    /// @brief P9 D-01: atomic DriverMode accessor. DetectionRunner reads
+    ///        via memory_order_acquire on every ring-drain iteration;
+    ///        HTTP handlers / tryStartTrainingSession write via
+    ///        memory_order_release.
+    std::atomic<DriverMode>&       mode() noexcept       { return mode_; }
+    const std::atomic<DriverMode>& mode() const noexcept { return mode_; }
+
+    /// @brief P9 D-09: returns the live TrainingSession pointer or
+    ///        nullptr when no session is active. Mutex-guarded;
+    ///        DetectionRunner re-acquires it in its hot path which is
+    ///        cheap (single mutex lock per ring-drain cycle that
+    ///        observes mode==Training).
+    ///
+    ///        Defined inline so DetectionRunner translation units that
+    ///        only #include detection_runner.hpp + device_provider.hpp
+    ///        do not need to drag device_provider.cpp + its full
+    ///        transitive dependency chain (httplib, bindings,
+    ///        config_io, settings_validator, etc.) into the link line.
+    ///        unique_ptr<TrainingSession>::get() does NOT require the
+    ///        full TrainingSession type — only the dtor / reset /
+    ///        operator-> do — so the forward decl above is sufficient.
+    TrainingSession* trainingSession() noexcept {
+        std::lock_guard<std::mutex> lock(trainingMutex_);
+        return trainingSession_.get();
+    }
+    const TrainingSession* trainingSession() const noexcept {
+        std::lock_guard<std::mutex> lock(trainingMutex_);
+        return trainingSession_.get();
+    }
+
+    /// @brief P9 D-09: HTTP-thread helper invoked by POST /training/start
+    ///        (09-02). Constructs a new TrainingSession; release-stores
+    ///        mode_ = Training; returns false if a session is already
+    ///        active (single-instance per D-09; HTTP handler returns
+    ///        409).
+    bool tryStartTrainingSession(uint32_t sampleRate, size_t fftSize);
+
+    /// @brief P9 D-09 / Pitfall 2: HTTP-thread helper invoked by POST
+    ///        /training/finalize, POST /training/cancel, the 30 s
+    ///        timeout watchdog, and Cleanup. Release-stores mode_ =
+    ///        Detecting BEFORE resetting the unique_ptr<TrainingSession>;
+    ///        idempotent (no-op when no session is active).
+    void resetTrainingSession();
 
 private:
 

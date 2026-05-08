@@ -180,6 +180,13 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
     list(APPEND _p6_audio_worker_sources
         "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
 endif()
+# Phase 9 Wave 1 (09-01): detection_runner.cpp now references TrainingSession::
+# addSample in the Training-mode branch; the linker needs the symbol even
+# though this test ctors DetectionRunner with deviceProvider==nullptr.
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+    list(APPEND _p6_audio_worker_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+endif()
 if(OpenVR_FOUND)
     add_executable(test_audio_worker_lifecycle_headless ${_p6_audio_worker_sources})
     target_compile_features(test_audio_worker_lifecycle_headless PRIVATE cxx_std_17)
@@ -215,6 +222,20 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
     list(APPEND _p7_propagation_sources
         "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
 endif()
+# Phase 9 Wave 1 (09-01): detection_runner.cpp now #includes training_session.hpp
+# and device_provider.hpp and references TrainingSession::addSample +
+# DeviceProvider::trainingSession() in the Training-mode branch. Even though
+# this test passes nullptr for deviceProvider (4-arg ctor default), MSVC
+# emits a reference to the out-of-line method symbols and the linker needs
+# them. Compile-and-link the supporting TUs.
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+    list(APPEND _p7_propagation_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+endif()
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+    list(APPEND _p7_propagation_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+endif()
 if(OpenVR_FOUND)
     add_executable(test_detection_settings_propagation ${_p7_propagation_sources})
     target_compile_features(test_detection_settings_propagation PRIVATE cxx_std_17)
@@ -245,6 +266,18 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
+endif()
+# Phase 9 Wave 1 (09-01): device_provider.cpp now references TrainingSession
+# (lazy unique_ptr ctor/dtor + tryStartTrainingSession + resetTrainingSession);
+# detection_runner.cpp references TrainingSession::addSample. Compile-and-link
+# the new training TUs alongside the existing P7 source list.
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+    list(APPEND _p7_stress_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+endif()
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+    list(APPEND _p7_stress_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
 endif()
 if(OpenVR_FOUND)
     add_executable(test_device_provider_lifecycle_stress ${_p7_stress_sources})
@@ -348,6 +381,16 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
+# Phase 9 Wave 1 (09-01): device_provider.cpp / detection_runner.cpp now
+# reference TrainingSession — training TUs join the source list.
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+    list(APPEND _p8_get_state_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+endif()
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+    list(APPEND _p8_get_state_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+endif()
 if(OpenVR_FOUND)
     add_executable(test_get_state_shape ${_p8_get_state_sources})
     target_compile_features(test_get_state_shape PRIVATE cxx_std_17)
@@ -381,6 +424,15 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
+# Phase 9 Wave 1 (09-01): training TUs needed.
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+    list(APPEND _p8_get_telemetry_level_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+endif()
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+    list(APPEND _p8_get_telemetry_level_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+endif()
 if(OpenVR_FOUND)
     add_executable(test_get_telemetry_level ${_p8_get_telemetry_level_sources})
     target_compile_features(test_get_telemetry_level PRIVATE cxx_std_17)
@@ -412,6 +464,15 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
+endif()
+# Phase 9 Wave 1 (09-01): training TUs needed.
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+    list(APPEND _p8_get_devices_cache_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+endif()
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+    list(APPEND _p8_get_devices_cache_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
 endif()
 if(OpenVR_FOUND)
     add_executable(test_get_devices_cache ${_p8_get_devices_cache_sources})
@@ -445,6 +506,15 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")  # P8 D-19 LIB-04 TU
 endif()
+# Phase 9 Wave 1 (09-01): training TUs needed.
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+    list(APPEND _p8_get_settings_shape_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+endif()
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+    list(APPEND _p8_get_settings_shape_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+endif()
 if(OpenVR_FOUND)
     add_executable(test_get_settings_shape ${_p8_get_settings_shape_sources})
     target_compile_features(test_get_settings_shape PRIVATE cxx_std_17)
@@ -477,6 +547,15 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp" AND EXISTS "${CMAKE_SOU
         "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
+# Phase 9 Wave 1 (09-01): training TUs needed.
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+    list(APPEND _p8_put_settings_round_trip_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+endif()
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+    list(APPEND _p8_put_settings_round_trip_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+endif()
 if(OpenVR_FOUND)
     add_executable(test_put_settings_round_trip ${_p8_put_settings_round_trip_sources})
     target_compile_features(test_put_settings_round_trip PRIVATE cxx_std_17)
@@ -508,6 +587,15 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
+# Phase 9 Wave 1 (09-01): training TUs needed.
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+    list(APPEND _p8_put_settings_validation_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+endif()
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+    list(APPEND _p8_put_settings_validation_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+endif()
 if(OpenVR_FOUND)
     add_executable(test_put_settings_validation ${_p8_put_settings_validation_sources})
     target_compile_features(test_put_settings_validation PRIVATE cxx_std_17)
@@ -538,6 +626,15 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp" AND EXISTS "${CMAKE_SOU
         "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
+endif()
+# Phase 9 Wave 1 (09-01): training TUs needed.
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+    list(APPEND _p8_put_settings_stress100_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+endif()
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+    list(APPEND _p8_put_settings_stress100_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
 endif()
 if(OpenVR_FOUND)
     add_executable(test_put_settings_stress100 ${_p8_put_settings_stress100_sources})
@@ -594,6 +691,18 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
+endif()
+# Phase 9 Wave 1 (09-01): device_provider.cpp now references TrainingSession
+# (lazy unique_ptr ctor/dtor + tryStartTrainingSession + resetTrainingSession);
+# detection_runner.cpp references TrainingSession::addSample. Add the new
+# training TUs alongside the existing P8 source list.
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+    list(APPEND _p8_state_clear_error_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_session.cpp")
+endif()
+if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
+    list(APPEND _p8_state_clear_error_sources
+        "${CMAKE_SOURCE_DIR}/driver/src/training_io.cpp")
 endif()
 if(OpenVR_FOUND)
     add_executable(test_state_clear_error ${_p8_state_clear_error_sources})

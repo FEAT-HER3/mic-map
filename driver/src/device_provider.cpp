@@ -17,6 +17,7 @@
 #include "http_server.hpp"
 #include "audio_worker.hpp"      // P6 — AudioWorker class for conditional Init/Cleanup
 #include "detection_runner.hpp"  // P7 D-19 — DetectionRunner full type for ctor/dtor
+#include "training_session.hpp"  // P9 D-09 — TrainingSession full type for unique_ptr ctor/dtor
 #include "driver_log.hpp"
 #include "vr_error.hpp"
 #include "device_info.hpp"       // P8 D-17: DeviceInfo for the deviceLister lambda
@@ -459,7 +460,8 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
                 *commandQueue_,
                 sampleRate,
                 detectionDefaults_,
-                std::move(detectionStatePublisher));
+                std::move(detectionStatePublisher),
+                /*deviceProvider=*/this);   // P9 D-01: enable per-iter DriverMode read
             if (!detectionRunner_->Start()) {
                 DriverLog("MicMap: DetectionRunner::Start failed — continuing without detection\n");
                 detectionRunner_.reset();   // do NOT fail Init
@@ -497,6 +499,15 @@ void DeviceProvider::Cleanup() {
     if (httpServer_) {
         httpServer_->Stop();
     }
+
+    // P9 D-09 / Pitfall 2: ensure no orphan training session before tearing
+    // down the detection/audio pipeline. resetTrainingSession is a no-op
+    // when no session is active. Idempotent + safe to call before
+    // detectionRunner_.reset() — release-stores mode_ = Detecting first so
+    // the detection thread observes Detecting on its next acquire-load,
+    // then drops the unique_ptr<TrainingSession>. With httpServer_->Stop()
+    // already complete above, no HTTP handler can race this reset.
+    resetTrainingSession();
 
     // P7 REVIEW IN-01: clear the audio callback's runner pointer BEFORE
     // resetting detectionRunner_. The audio callback already guards via
@@ -733,6 +744,55 @@ bool DeviceProvider::applyValidatedConfig(core::AppConfig candidate) {
     std::atomic_store_explicit(&configSnapshot_, next, std::memory_order_release);
     MICMAP_LOG_INFO("applyValidatedConfig: snapshot updated and persisted to ", path.string());
     return true;
+}
+
+// -----------------------------------------------------------------------
+// P9 D-01 / D-09 / D-22: TrainingSession lifecycle implementation.
+// -----------------------------------------------------------------------
+// trainingSession() accessors are defined inline in device_provider.hpp so
+// DetectionRunner-only test exes can link without dragging device_provider.cpp
+// + its full transitive dependency chain in.
+
+bool DeviceProvider::tryStartTrainingSession(uint32_t sampleRate, size_t fftSize) {
+    std::lock_guard<std::mutex> lock(trainingMutex_);
+    if (trainingSession_) {
+        // Single-instance per D-09 — HTTP handler in 09-02 maps a false
+        // return to a 409 Conflict response.
+        return false;
+    }
+    trainingSession_ = std::make_unique<TrainingSession>(sampleRate, fftSize);
+    // Pitfall 1: release-store on mode_ AFTER constructing the session so
+    // the detection thread's acquire-load observes a fully-constructed
+    // session whenever it observes mode == Training.
+    mode_.store(DriverMode::Training, std::memory_order_release);
+    MICMAP_LOG_INFO("DeviceProvider: training session started "
+                    "(sampleRate=", sampleRate, ", fftSize=", fftSize, ")");
+    return true;
+}
+
+void DeviceProvider::resetTrainingSession() {
+    // Pitfall 2: release-store mode_ = Detecting BEFORE resetting the
+    // unique_ptr so DetectionRunner's next acquire-load reads Detecting
+    // and stops dereferencing trainingSession(). The mutex below also
+    // serializes against any concurrent trainingSession() accessor.
+    //
+    // Idempotent across both the mode store and the reset: a second call
+    // observes mode_ already Detecting (no-op store) and trainingSession_
+    // already null (unique_ptr.reset() on empty is a no-op).
+    mode_.store(DriverMode::Detecting, std::memory_order_release);
+    std::unique_ptr<TrainingSession> doomed;
+    {
+        std::lock_guard<std::mutex> lock(trainingMutex_);
+        doomed = std::move(trainingSession_);
+    }
+    // Destruction happens outside the mutex so concurrent trainingSession()
+    // readers do not block on the (potentially expensive) detector_
+    // unique_ptr teardown inside ~TrainingSession. Doomed unique_ptr
+    // releases its detector + sample buffers (RAM-only per D-17) when
+    // this scope exits.
+    if (doomed) {
+        MICMAP_LOG_INFO("DeviceProvider: training session reset");
+    }
 }
 
 } // namespace micmap::driver
