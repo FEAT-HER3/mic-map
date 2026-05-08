@@ -4,14 +4,14 @@ milestone: v1.6
 milestone_name: Feature Migration
 status: executing
 stopped_at: Phase 9 UI-SPEC approved
-last_updated: "2026-05-08T11:18:28.779Z"
-last_activity: 2026-05-08 -- Phase 09 planning complete
+last_updated: "2026-05-08T22:30:00Z"
+last_activity: 2026-05-08 -- Phase 09 Plan 04 (WAV replay harness) complete
 progress:
   total_phases: 7
   completed_phases: 4
   total_plans: 26
-  completed_plans: 20
-  percent: 77
+  completed_plans: 21
+  percent: 81
 ---
 
 # Project State
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-30 with v1.6 Feature Migration milestone)
 
 **Core value:** Covering the microphone reliably toggles the SteamVR dashboard, invisibly to the rest of VR — no controller beam, no extra hardware, no focus loss.
-**Current focus:** Phase 08 — ipc-contract-reshape
+**Current focus:** Phase 09 — training-migration
 
 ## Current Position
 
-Phase: 08 (ipc-contract-reshape) — EXECUTING
+Phase: 09 (training-migration) — EXECUTING
 Next: `/gsd-discuss-phase 7` (no CONTEXT.md yet)
-Plan: 1 of 7
-Status: Ready to execute
-Last activity: 2026-05-08 -- Phase 09 planning complete
+Plan: 4 of 6 complete (00 + 01 + 04 done; 02 / 03 / 05 pending)
+Status: Executing Phase 09
+Last activity: 2026-05-08 -- Phase 09 Plan 04 (WAV replay harness) complete
 
 ## Roadmap Summary
 
@@ -69,6 +69,9 @@ Decisions affecting v1.6 roadmap:
 - 06-03: AudioWorker construction LAST in Init (after httpServer_->Start) and audioWorker_.reset() FIRST in Cleanup (before httpServer_->Stop) — D-13 reverse-order teardown enforced by explicit Cleanup() sequence not by member declaration order
 - 06-03: D-14 fail-soft semantics — AudioWorker::Start() failure resets the unique_ptr but Init still returns VRInitError_None so the v1.5 HTTP/CommandQueue/HMD trigger path stays alive even when audio capture cannot start
 - 06-04 Task 1: scaffold .planning/phases/06-driver-side-audio-capture-spike/06-UAT.md from PLAN interfaces template (Tested 2026-05-02, Driver SHA 8ace4e7, Rig/Operator placeholders); toggle default.vrsettings.driver_micmap.enable_driver_audio false → true for D-17(1)-(3) live runs (Task 3 restores to false per D-19/D-20 — shipped default OFF on main)
+- 09-04: vendored dr_wav v0.14.6 @ 243e26ffa (public-domain / MIT-0) under vendor/dr_wav/; landed apps/mic_test/src/wav_replay.{hpp,cpp} (decode + downmix + linear-resample + JSON output, headless, kBlockFrames=480, dt-pure D-34 determinism); 9 replay CLI flags via tryRunReplayCli() short-circuit at top of WinMain (mic_test stays Win32 GUI binary); seed corpus (3 WAVs + manifest + README + tools/gen-replay-corpus.py); mic_test_replay_corpus ctest registered in tests/CMakeLists.txt Wave 1 (09-04) block; AssertReplayNoVrApi clean
+- 09-04 deviation: T-09-04-01 declared-duration DoS gate (peekWavHeader pre-scan recovers declared chunk size before dr_wav clamps to file size — closes the truncated-1-hour-header attack)
+- 09-04 deviation: profile-deferred CI corpus invocation — positive_001's 1-trigger expectation requires a trained profile; current ctest does NOT pass --expect-triggers-from; manifest stays in repo as contract for future plan that ships seed_profile.bin
 
 ### Pending Todos
 
@@ -101,9 +104,9 @@ Items carried forward from v1.5 that are NOT in v1.6 scope (see PROJECT.md and R
 
 ## Session Continuity
 
-Last session: 2026-05-08T09:26:56.852Z
-Stopped at: Phase 9 UI-SPEC approved
-Resume file: .planning/phases/09-training-migration/09-UI-SPEC.md
+Last session: 2026-05-08T22:30:00Z
+Stopped at: Phase 9 Plan 04 (WAV replay harness) complete
+Resume file: .planning/phases/09-training-migration/09-04-SUMMARY.md
 
 **Next action:** `/gsd-discuss-phase 7` — gather context for Driver-Side Detection Thread (MIG-02, MIG-03, MIG-04, MIG-06).
 

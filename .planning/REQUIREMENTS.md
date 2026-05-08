@@ -75,7 +75,7 @@ Driver becomes sole owner of the microphone end-to-end during training; client b
 - [ ] **TEST-01**: `mic_test.exe` continues to build and run against `micmap_core_runtime` with no SteamVR / driver dependency. Test surface is identical to the driver's detection path (same source, same code).
 - [ ] **TEST-02**: Main client gains a `--debug-trigger` CLI flag that issues a `POST /training/cancel`-style internal trigger (or a dedicated `POST /debug/trigger` endpoint, gated by a debug build define) for VR-input regression checks without going through audio.
 - [ ] **TEST-03**: Driver writes its own log to `%APPDATA%\MicMap\micmap-driver.log` (separate file from the client's `micmap.log` to avoid cross-process file-locking). Both files rotate via atomic `ReplaceFileW`-style swap when they exceed a 5 MB size cap, retaining 5 generations.
-- [ ] **TEST-04**: `mic_test.exe --replay <path-to-wav>` feeds a WAV file into the detection pipeline as if it were live mic input. Reproducible regression testing against a corpus of known-positive and known-negative samples. (TEST-D1 differentiator — confirmed in v1.6 scope.)
+- [x] **TEST-04**: `mic_test.exe --replay <path-to-wav>` feeds a WAV file into the detection pipeline as if it were live mic input. Reproducible regression testing against a corpus of known-positive and known-negative samples. (TEST-D1 differentiator — confirmed in v1.6 scope.) **Phase 9 / 09-04 complete (commit e80d592 — see 09-04-SUMMARY.md).**
 - [ ] **TEST-05**: `hmd_button_test.exe` is preserved as a developer tool (kept in CMake build but not promoted in user-facing docs). Useful for VR-input regression when the client is broken or pre-launch.
 
 ### Failure Modes (FAIL)
@@ -169,7 +169,7 @@ Each REQ-ID maps to exactly one phase. 45/45 requirements mapped. No orphans, no
 | TEST-01 | Phase 10 | Pending |
 | TEST-02 | Phase 10 | Pending |
 | TEST-03 | Phase 10 | Pending |
-| TEST-04 | Phase 9 | Pending |
+| TEST-04 | Phase 9 | Complete (09-04) |
 | TEST-05 | Phase 10 | Pending |
 | FAIL-01 | Phase 10 | Pending |
 | FAIL-02 | Phase 10 | Pending |
