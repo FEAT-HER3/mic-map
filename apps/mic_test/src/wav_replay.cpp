@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -95,6 +96,87 @@ std::vector<float> linearResample(const std::vector<float>& in,
     return out;
 }
 
+// Pre-scan the RIFF header to recover the *declared* data-chunk byte count
+// before dr_wav silently clamps it to the on-disk file size (dr_wav.h line
+// ~3763). This is the T-09-04-01 DoS mitigation surface: a malicious WAV that
+// advertises a 1-hour data chunk while shipping only 1 s of bytes would
+// otherwise sail past the max-duration guard because dr_wav reports the
+// clamped duration as totalPCMFrameCount/sampleRate.
+//
+// Returns true on success and writes (declared_data_bytes, channels,
+// sample_rate, bits_per_sample) into the out-params. Returns false if the
+// file is unreadable or not a recognisable RIFF/WAVE container — in that
+// case the caller falls back to dr_wav's own diagnostics.
+bool peekWavHeader(const std::filesystem::path& wav,
+                   std::uint64_t& out_declared_data_bytes,
+                   std::uint16_t& out_channels,
+                   std::uint32_t& out_sample_rate,
+                   std::uint16_t& out_bits_per_sample) {
+    std::ifstream f(wav, std::ios::binary);
+    if (!f) return false;
+
+    auto rd_u32 = [&](std::uint32_t& v) -> bool {
+        unsigned char b[4];
+        if (!f.read(reinterpret_cast<char*>(b), 4)) return false;
+        v = static_cast<std::uint32_t>(b[0])
+          | (static_cast<std::uint32_t>(b[1]) << 8)
+          | (static_cast<std::uint32_t>(b[2]) << 16)
+          | (static_cast<std::uint32_t>(b[3]) << 24);
+        return true;
+    };
+    auto rd_u16 = [&](std::uint16_t& v) -> bool {
+        unsigned char b[2];
+        if (!f.read(reinterpret_cast<char*>(b), 2)) return false;
+        v = static_cast<std::uint16_t>(static_cast<std::uint16_t>(b[0])
+          | (static_cast<std::uint16_t>(b[1]) << 8));
+        return true;
+    };
+    auto rd_id = [&](char id[4]) -> bool { return static_cast<bool>(f.read(id, 4)); };
+
+    char riff[4]; if (!rd_id(riff) || std::memcmp(riff, "RIFF", 4) != 0) return false;
+    std::uint32_t riff_size; if (!rd_u32(riff_size)) return false;
+    char wave[4]; if (!rd_id(wave) || std::memcmp(wave, "WAVE", 4) != 0) return false;
+
+    // Walk chunks until "fmt " and "data" are both found.
+    bool have_fmt = false, have_data = false;
+    while (f && (!have_fmt || !have_data)) {
+        char id[4];
+        if (!rd_id(id)) break;
+        std::uint32_t chunk_size;
+        if (!rd_u32(chunk_size)) break;
+        if (std::memcmp(id, "fmt ", 4) == 0) {
+            std::uint16_t fmt_tag;
+            std::uint16_t channels;
+            std::uint32_t sample_rate;
+            std::uint32_t byte_rate_unused;
+            std::uint16_t block_align_unused;
+            std::uint16_t bps;
+            if (!rd_u16(fmt_tag) || !rd_u16(channels) || !rd_u32(sample_rate)
+                || !rd_u32(byte_rate_unused) || !rd_u16(block_align_unused)
+                || !rd_u16(bps)) break;
+            out_channels = channels;
+            out_sample_rate = sample_rate;
+            out_bits_per_sample = bps;
+            have_fmt = true;
+            // Skip any extra fmt bytes (e.g. WAVE_FORMAT_EXTENSIBLE).
+            if (chunk_size > 16) {
+                f.seekg(chunk_size - 16, std::ios::cur);
+            }
+            // Pad byte alignment.
+            if (chunk_size & 1u) f.seekg(1, std::ios::cur);
+        } else if (std::memcmp(id, "data", 4) == 0) {
+            out_declared_data_bytes = static_cast<std::uint64_t>(chunk_size);
+            have_data = true;
+            // Don't read the data — we've got what we need.
+            break;
+        } else {
+            // Skip unknown chunk + pad byte.
+            f.seekg(chunk_size + (chunk_size & 1u), std::ios::cur);
+        }
+    }
+    return have_fmt && have_data;
+}
+
 ReplayResult makeError(const std::filesystem::path& wav, int code, const std::string& msg) {
     ReplayResult r;
     r.wav = wav;
@@ -121,6 +203,41 @@ bool decodeWav(const std::filesystem::path& wav,
     if (!std::filesystem::exists(wav)) {
         r = makeError(wav, 2, "file not found");
         return false;
+    }
+
+    // T-09-04-01 DoS gate: verify the *declared* WAV duration before letting
+    // dr_wav silently clamp dataChunkSize down to the on-disk file size
+    // (dr_wav.h ~3763). A malicious or accidentally truncated file that
+    // claims hours of audio while shipping seconds must fail here.
+    {
+        std::uint64_t declared_data_bytes = 0;
+        std::uint16_t pre_channels = 0;
+        std::uint32_t pre_sample_rate = 0;
+        std::uint16_t pre_bps = 0;
+        if (peekWavHeader(wav, declared_data_bytes, pre_channels,
+                          pre_sample_rate, pre_bps)
+                && pre_channels > 0 && pre_sample_rate > 0 && pre_bps > 0) {
+            const std::uint64_t bytes_per_frame =
+                static_cast<std::uint64_t>(pre_channels) *
+                static_cast<std::uint64_t>(pre_bps / 8u);
+            if (bytes_per_frame > 0) {
+                const std::uint64_t declared_frames =
+                    declared_data_bytes / bytes_per_frame;
+                const double declared_duration_s =
+                    static_cast<double>(declared_frames) /
+                    static_cast<double>(pre_sample_rate);
+                if (declared_duration_s > static_cast<double>(cfg.max_duration_s)) {
+                    std::ostringstream msg;
+                    msg << "declared duration " << declared_duration_s
+                        << "s exceeds --max-duration "
+                        << cfg.max_duration_s << "s";
+                    r = makeError(wav, 2, msg.str());
+                    return false;
+                }
+            }
+        }
+        // peekWavHeader failure is non-fatal — dr_wav's own diagnostics
+        // surface the malformed-RIFF case below.
     }
 
 #ifdef _WIN32
