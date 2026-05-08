@@ -898,3 +898,35 @@ add_test(NAME WavReplayHarness
     COMMAND test_wav_replay)
 
 # ---- end Phase 9 Wave 0 ----
+
+# ---- Phase 9 Wave 1 (09-04) ----
+#
+# CONTEXT D-36 / TEST-04: CI corpus regression. Runs mic_test --replay-dir
+# against the seed corpus (tests/corpus/replay/) on every build; failure
+# is build failure; replay_results.json is captured as a CI artifact for
+# trend analysis.
+#
+# Determinism (D-34): same WAV + same profile + same config = byte-
+# identical TriggerEvent stream. CI re-runs are stable.
+#
+# Profile policy (Task 4 Step 4 fallback): no --profile + no
+# --expect-triggers-from in this initial registration — the seed corpus
+# carries a positive_001.wav whose 1-trigger expectation cannot be met
+# without a trained profile. The manifest.json stays in the repo as the
+# contract for a future plan that ships seed_profile.bin and re-enables
+# --expect-triggers-from. Today's invocation validates decode + downmix
+# + resample + JSON-output across all three corpus WAVs (exit 0 on a
+# clean decode pass; exit 2 on any IO/format error).
+#
+# AssertReplayNoVrApi sibling lint (registered in the Wave 0 block above)
+# enforces the TEST-01 invariant on apps/mic_test/src/wav_replay.{hpp,cpp}.
+add_test(NAME mic_test_replay_corpus
+    COMMAND $<TARGET_FILE:mic_test>
+        --replay-dir ${CMAKE_SOURCE_DIR}/tests/corpus/replay
+        --json-output ${CMAKE_BINARY_DIR}/replay_results.json
+        --max-duration 600)
+set_tests_properties(mic_test_replay_corpus PROPERTIES
+    LABELS "replay;p9"
+    TIMEOUT 60)
+
+# ---- end Phase 9 Wave 1 (09-04) ----
