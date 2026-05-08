@@ -26,7 +26,11 @@
 #include "micmap/audio/audio_capture.hpp"
 #include "micmap/audio/device_enumerator.hpp"
 #include "micmap/detection/noise_detector.hpp"
+#include "micmap/core/state_machine.hpp"
 #include "micmap/common/logger.hpp"
+
+// Phase 9 09-04 / D-29: WAV replay harness CLI surface.
+#include "wav_replay.hpp"
 
 #include <string>
 #include <vector>
@@ -35,7 +39,14 @@
 #include <thread>
 #include <cmath>
 #include <chrono>
+#include <filesystem>
 #include <iostream>
+#include <optional>
+
+#ifdef _WIN32
+#include <shellapi.h>   // CommandLineToArgvW for wide argv parsing.
+#pragma comment(lib, "shell32.lib")
+#endif
 
 using namespace micmap;
 
@@ -117,10 +128,153 @@ float LinearToDb(float linear) {
     return (db < -60.0f) ? -60.0f : db;
 }
 
+// -----------------------------------------------------------------------------
+// Phase 9 09-04 / TEST-04 / CONTEXT D-29..D-31: WAV replay CLI dispatch.
+//
+// mic_test is a Win32 GUI binary, but the replay harness needs a console-style
+// CLI entry that can be driven by ctest / agent QA loops. When --replay or
+// --replay-dir is present in the command line, we short-circuit BEFORE any
+// window / audio-capture init and dispatch into the wav_replay surface.
+// Exit code semantics (D-31): 0 ok, 1 expectation fail, 2 IO/format error.
+//
+// This preserves the original GUI mode for live-mic testing — when no replay
+// flag is set, the function returns -1 and WinMain falls through to the
+// existing GUI path.
+// -----------------------------------------------------------------------------
+namespace {
+
+bool argMatches(const wchar_t* arg, const wchar_t* lit) {
+    return wcscmp(arg, lit) == 0;
+}
+
+int tryRunReplayCli() {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!argv) return -1;
+
+    std::optional<std::wstring> opt_replay;
+    std::optional<std::wstring> opt_replay_dir;
+    std::optional<int> opt_expect_triggers;
+    int opt_expect_triggers_tolerance = 0;
+    std::optional<std::wstring> opt_expect_triggers_from;
+    std::optional<std::wstring> opt_profile;
+    std::optional<std::wstring> opt_config;
+    std::optional<std::wstring> opt_json_output;
+    int opt_max_duration = 600;
+
+    for (int i = 1; i < argc; ++i) {
+        const wchar_t* a = argv[i];
+        if (argMatches(a, L"--replay") && i + 1 < argc) {
+            opt_replay = argv[++i];
+        } else if (argMatches(a, L"--replay-dir") && i + 1 < argc) {
+            opt_replay_dir = argv[++i];
+        } else if (argMatches(a, L"--expect-triggers") && i + 1 < argc) {
+            try { opt_expect_triggers = std::stoi(argv[++i]); }
+            catch (...) { LocalFree(argv); std::wcerr << L"error: --expect-triggers requires integer\n"; return 2; }
+        } else if (argMatches(a, L"--expect-triggers-tolerance") && i + 1 < argc) {
+            try { opt_expect_triggers_tolerance = std::stoi(argv[++i]); }
+            catch (...) { LocalFree(argv); std::wcerr << L"error: --expect-triggers-tolerance requires integer\n"; return 2; }
+        } else if (argMatches(a, L"--expect-triggers-from") && i + 1 < argc) {
+            opt_expect_triggers_from = argv[++i];
+        } else if (argMatches(a, L"--profile") && i + 1 < argc) {
+            opt_profile = argv[++i];
+        } else if (argMatches(a, L"--config") && i + 1 < argc) {
+            opt_config = argv[++i];
+        } else if (argMatches(a, L"--json-output") && i + 1 < argc) {
+            opt_json_output = argv[++i];
+        } else if (argMatches(a, L"--max-duration") && i + 1 < argc) {
+            try { opt_max_duration = std::stoi(argv[++i]); }
+            catch (...) { LocalFree(argv); std::wcerr << L"error: --max-duration requires integer\n"; return 2; }
+        }
+        // Unrecognised flags are tolerated for forward-compatibility — the
+        // GUI mode falls through if no replay flag is present.
+    }
+
+    LocalFree(argv);
+
+    // Not in replay mode — let WinMain continue into the GUI path.
+    if (!opt_replay.has_value() && !opt_replay_dir.has_value()) {
+        return -1;
+    }
+
+    // D-29 mutual exclusion: --expect-triggers (per-file) vs
+    // --expect-triggers-from (manifest) cannot coexist.
+    if (opt_expect_triggers.has_value() && opt_expect_triggers_from.has_value()) {
+        std::wcerr << L"error: --expect-triggers and --expect-triggers-from "
+                      L"are mutually exclusive\n";
+        return 2;
+    }
+
+    using namespace micmap::mic_test;
+    namespace fs = std::filesystem;
+
+    ReplayConfig cfg;
+    cfg.max_duration_s = opt_max_duration;
+    if (opt_config.has_value())  cfg.config_path  = fs::path(*opt_config);
+    if (opt_profile.has_value()) cfg.profile_path = fs::path(*opt_profile);
+    cfg.target_sample_rate = 48000;        // detector default — overridden if --config supplies one
+
+    // Construct detector + state machine from the shared-lib factories.
+    // No SteamVR / OpenVR involvement — TEST-01 invariant.
+    auto detector = micmap::detection::createFFTDetector(cfg.target_sample_rate);
+    auto sm = micmap::core::createStateMachine();   // default StateMachineConfig
+
+    if (!detector || !sm) {
+        std::wcerr << L"error: failed to construct detector / state machine\n";
+        return 2;
+    }
+
+    // Optional --profile <training_data.bin> load.
+    if (opt_profile.has_value() && !opt_profile->empty()) {
+        const fs::path profile = fs::path(*opt_profile);
+        if (fs::exists(profile)) {
+            // INoiseDetector::loadTrainingData accepts std::filesystem::path
+            // overloads in the FFT impl; the bool return tells us if the
+            // load succeeded. Failure is non-fatal here — replay still
+            // produces a (zero-trigger) result, useful for shape testing.
+            (void)detector->loadTrainingData(profile);
+        }
+    }
+
+    if (opt_replay.has_value()) {
+        const fs::path wav = *opt_replay;
+        ReplayResult r = replayWav(wav, cfg, *detector, *sm,
+                                   opt_expect_triggers,
+                                   opt_expect_triggers_tolerance);
+        if (opt_json_output.has_value()) {
+            writeJsonOutput(fs::path(*opt_json_output), cfg, r);
+        }
+        return r.exit_code;
+    }
+
+    // --replay-dir
+    fs::path expectations;
+    if (opt_expect_triggers_from.has_value()) {
+        expectations = fs::path(*opt_expect_triggers_from);
+    }
+    DirReplayResult result = replayWavDir(fs::path(*opt_replay_dir), cfg,
+                                          *detector, *sm, expectations);
+    if (opt_json_output.has_value()) {
+        writeJsonOutput(fs::path(*opt_json_output), cfg, result);
+    }
+    return (result.failed > 0) ? 1 : 0;
+}
+
+} // anonymous namespace
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     (void)hPrevInstance;
     (void)lpCmdLine;
-    
+
+    // Phase 9 09-04: short-circuit into the WAV replay CLI when --replay /
+    // --replay-dir is present. Returns -1 to fall through to the GUI mode.
+    {
+        const int rc = tryRunReplayCli();
+        if (rc >= 0) {
+            return rc;
+        }
+    }
+
     // Initialize common controls
     INITCOMMONCONTROLSEX icex;
     icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
