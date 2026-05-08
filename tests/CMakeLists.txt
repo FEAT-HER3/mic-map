@@ -243,6 +243,7 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
         # those TUs alongside device_provider.cpp to resolve the symbols.
         "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
 if(OpenVR_FOUND)
@@ -344,6 +345,7 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
 if(OpenVR_FOUND)
@@ -376,6 +378,7 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
 if(OpenVR_FOUND)
@@ -407,6 +410,7 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
 if(OpenVR_FOUND)
@@ -438,6 +442,7 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")  # P8 D-19 LIB-04 TU
 endif()
 if(OpenVR_FOUND)
@@ -468,7 +473,9 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp" AND EXISTS "${CMAKE_SOU
         "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
-        "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp")
+        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
 if(OpenVR_FOUND)
     add_executable(test_put_settings_round_trip ${_p8_put_settings_round_trip_sources})
@@ -496,7 +503,10 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/device_provider.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
-        "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp")
+        "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
 if(OpenVR_FOUND)
     add_executable(test_put_settings_validation ${_p8_put_settings_validation_sources})
@@ -525,7 +535,9 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp" AND EXISTS "${CMAKE_SOU
         "${CMAKE_SOURCE_DIR}/driver/src/audio_worker.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
-        "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp")
+        "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
 if(OpenVR_FOUND)
     add_executable(test_put_settings_stress100 ${_p8_put_settings_stress100_sources})
@@ -580,6 +592,7 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp")
         "${CMAKE_SOURCE_DIR}/driver/src/detection_runner.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/config_io.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/config_json.cpp"
+        "${CMAKE_SOURCE_DIR}/driver/src/settings_validator.cpp"
         "${CMAKE_SOURCE_DIR}/driver/src/sinks/driver_log_sink.cpp")
 endif()
 if(OpenVR_FOUND)

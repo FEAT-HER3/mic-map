@@ -12,6 +12,7 @@
 
 #include "http_server.hpp"
 #include "settings_validator.hpp"   // RED hook: lands in Plan 08-04
+#include "config_json.hpp"          // ADL hooks for AppConfig <-> json (08-02)
 #include "command_queue.hpp"
 #include "micmap/core/config_manager.hpp"
 
