@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Feature Migration
 status: executing
-stopped_at: Phase 9 Plan 02 (training HTTP endpoints + IDriverApi extension) complete
-last_updated: "2026-05-09T07:35:00.000Z"
-last_activity: 2026-05-09
+stopped_at: Phase 9 Plan 03 (single-writer cutover — client UI training rewire + AssertNoClientTraining ctest go-live) complete
+last_updated: "2026-05-08T00:00:00.000Z"
+last_activity: 2026-05-08
 progress:
   total_phases: 7
   completed_phases: 4
   total_plans: 26
-  completed_plans: 25
-  percent: 96
+  completed_plans: 26
+  percent: 100
 ---
 
 # Project State
@@ -26,10 +26,10 @@ See: .planning/PROJECT.md (updated 2026-04-30 with v1.6 Feature Migration milest
 ## Current Position
 
 Phase: 09 (training-migration) — EXECUTING
-Next: `/gsd-execute-phase 9` (continue with plans 03 + 05)
-Plan: 5 of 6 complete (00 + 01 + 02 + 04 done; 03 / 05 pending)
+Next: `/gsd-execute-phase 9` (continue with plan 05 — UAT)
+Plan: 6 of 6 mapped to disk (00 + 01 + 02 + 03 + 04 done; 05 pending — visual UAT only)
 Status: Ready to execute
-Last activity: 2026-05-09
+Last activity: 2026-05-08
 
 ## Roadmap Summary
 
@@ -72,6 +72,8 @@ Decisions affecting v1.6 roadmap:
 - 09-04: vendored dr_wav v0.14.6 @ 243e26ffa (public-domain / MIT-0) under vendor/dr_wav/; landed apps/mic_test/src/wav_replay.{hpp,cpp} (decode + downmix + linear-resample + JSON output, headless, kBlockFrames=480, dt-pure D-34 determinism); 9 replay CLI flags via tryRunReplayCli() short-circuit at top of WinMain (mic_test stays Win32 GUI binary); seed corpus (3 WAVs + manifest + README + tools/gen-replay-corpus.py); mic_test_replay_corpus ctest registered in tests/CMakeLists.txt Wave 1 (09-04) block; AssertReplayNoVrApi clean
 - 09-04 deviation: T-09-04-01 declared-duration DoS gate (peekWavHeader pre-scan recovers declared chunk size before dr_wav clamps to file size — closes the truncated-1-hour-header attack)
 - 09-04 deviation: profile-deferred CI corpus invocation — positive_001's 1-trigger expectation requires a trained profile; current ctest does NOT pass --expect-triggers-from; manifest stays in repo as contract for future plan that ships seed_profile.bin
+- 09-03: SINGLE-WRITER CUTOVER — deleted v1.5 client-side training body in apps/micmap/main.cpp (members isTraining/trainingSampleCount; audio-callback addTrainingSample block; shutdown saveTrainingData; entire 953-1034 Training UI section); inserted endpoint-driven Training pane (Train/Cancel/Recompute/Confirm/Discard buttons) consuming IDriverApi training methods; wired GET /health full-envelope poll (driverAudioEnabled + driverTrainingActive atomics) onto the existing 1Hz pollDriverHealth tick; added 5Hz GET /training/progress poll with canonical finalize-success path (state==finalized → optimistic detector->loadTrainingData + "Profile saved" toast, ≤200ms latency); Discard Profile destructive modal under WR-03/WR-07 audioMutex; AssertNoClientTraining ctest GO-LIVE in tests/CMakeLists.txt Wave-3 block
+- 09-03 deviation: Rule-3 lint narrowing — IDriverApi::startTraining shares its name with the v1.5 PatternTrainer::startTraining; the original AssertNoClientTraining bare-token regex `[^a-zA-Z0-9_]startTraining` matched both call surfaces. Tightened to `detector->X` qualifier-prefixed regex for all four entry points (addTrainingSample/finishTraining/startTraining/saveTrainingData) so the new driverClient->startTraining call is permitted while detector->startTraining remains forbidden. Sanity-checked: synthetic `void f() { detector->startTraining(); }` still FATALs; apps/mic_test/ allowlist still works
 
 ### Pending Todos
 
@@ -104,9 +106,9 @@ Items carried forward from v1.5 that are NOT in v1.6 scope (see PROJECT.md and R
 
 ## Session Continuity
 
-Last session: 2026-05-08T22:30:00Z
-Stopped at: Phase 9 Plan 04 (WAV replay harness) complete
-Resume file: .planning/phases/09-training-migration/09-04-SUMMARY.md
+Last session: 2026-05-08T00:00:00Z
+Stopped at: Phase 9 Plan 03 (single-writer cutover — client UI training rewire + AssertNoClientTraining ctest go-live) complete
+Resume file: .planning/phases/09-training-migration/09-03-SUMMARY.md
 
 **Next action:** `/gsd-discuss-phase 7` — gather context for Driver-Side Detection Thread (MIG-02, MIG-03, MIG-04, MIG-06).
 

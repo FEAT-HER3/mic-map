@@ -40,7 +40,7 @@ Drop the trigger HTTP path; add settings push, health pull, device enumeration, 
 - [ ] **IPC-03**: `GET /devices` returns the enumerated WASAPI capture device list (id, friendly name, default flag) so the client device picker reflects what the driver sees, not what the client process sees.
 - [ ] **IPC-04**: `GET /settings` returns the current `AppConfig` JSON. `PUT /settings` accepts a full `AppConfig` JSON, validates atomically, applies in-memory, and persists to `config.json` via atomic `ReplaceFileW`. Validation failures return a structured error (HTTP 400 with JSON `{"field": "...", "reason": "..."}`); driver state is unchanged on rejection.
 - [ ] **IPC-05**: Driver is the sole writer of `%APPDATA%\MicMap\config.json`. Client never writes the file directly; client edits flow through `PUT /settings`. Driver reads the file once at `Init` with a 3-attempt retry on `ERROR_SHARING_VIOLATION`; thereafter the in-memory snapshot is authoritative.
-- [ ] **IPC-06**: Driver is the sole writer of `%APPDATA%\MicMap\training_data.bin` (after `POST /training/finalize`).
+- [x] **IPC-06**: Driver is the sole writer of `%APPDATA%\MicMap\training_data.bin` (after `POST /training/finalize`). _Single-writer cutover landed in 09-03 — apps/micmap/main.cpp no longer contains any saveTrainingData call site; AssertNoClientTraining ctest enforces this invariant from now on._
 - [ ] **IPC-07**: All IPC endpoints bind to `127.0.0.1` only. `GET /port` and `GET /health` from v1.5 remain unchanged for client-side discovery and liveness.
 - [ ] **IPC-08**: The HTTP-thread → RunFrame `CommandQueue` boundary (v1.5 SVR-05) survives unchanged. Detection thread is the new producer; HTTP server is no longer a producer.
 
@@ -65,7 +65,7 @@ Driver becomes sole owner of the microphone end-to-end during training; client b
 - [x] **TRAIN-02**: `GET /training/progress` returns `{"samples_collected": N, "target": M, "thresholds_preview": {...} | null, "state": "collecting"|"computing"|"ready"|"cancelled"}`. Client polls at 5–10 Hz to drive the training progress UI.
 - [x] **TRAIN-03**: `POST /training/finalize` accepts the final thresholds (or `confirm: true` to accept the preview) and persists `training_data.bin`. Driver returns to detection mode using the new thresholds.
 - [x] **TRAIN-04**: `POST /training/cancel` aborts an in-flight training session, discards collected samples, returns the driver to detection mode without modifying `training_data.bin`.
-- [ ] **TRAIN-05**: Client never takes the mic back during training (anti-feature TRAIN-AF-01 enforced — single-owner WASAPI invariant).
+- [x] **TRAIN-05**: Client never takes the mic back during training (anti-feature TRAIN-AF-01 enforced — single-owner WASAPI invariant). _Structurally enforced as of 09-03: client-side training body removed from apps/micmap/main.cpp; AssertNoClientTraining lint forbids future regression. Client-side detection WASAPI handle (orthogonal to the deleted training calls) is unchanged in P9 and is deleted in P10._
 - [x] **TRAIN-06**: `POST /training/recompute` accepts a payload of `{"sensitivity": float}` and recomputes thresholds over the most-recent stored sample set without re-collecting. Returns the new threshold preview for client confirm/discard. (TRAIN-D1 differentiator — confirmed in v1.6 scope.)
 
 ### Test Affordances (TEST)
@@ -149,7 +149,7 @@ Each REQ-ID maps to exactly one phase. 45/45 requirements mapped. No orphans, no
 | IPC-03 | Phase 8 | Pending |
 | IPC-04 | Phase 8 | Pending |
 | IPC-05 | Phase 8 | Pending |
-| IPC-06 | Phase 9 | Pending |
+| IPC-06 | Phase 9 | Complete (09-03) |
 | IPC-07 | Phase 8 | Pending |
 | IPC-08 | Phase 8 | Pending |
 | HEALTH-01 | Phase 8 | Pending |
@@ -164,7 +164,7 @@ Each REQ-ID maps to exactly one phase. 45/45 requirements mapped. No orphans, no
 | TRAIN-02 | Phase 9 | Complete |
 | TRAIN-03 | Phase 9 | Complete |
 | TRAIN-04 | Phase 9 | Complete |
-| TRAIN-05 | Phase 9 | Pending |
+| TRAIN-05 | Phase 9 | Complete (09-03) |
 | TRAIN-06 | Phase 9 | Complete |
 | TEST-01 | Phase 10 | Pending |
 | TEST-02 | Phase 10 | Pending |
