@@ -636,6 +636,292 @@ public:
         return true;
     }
 
+    // ============================================================
+    // P9 09-02 — training endpoints. Each mirrors the putSettings shape:
+    // ensureConnected -> httplib::Client -> Post/Get -> distinct status
+    // handling (200/400/409/503). 400 + 409 parse the {field, reason} or
+    // {error, reason} envelope into errorField/errorReason for UI surfacing.
+    // ============================================================
+
+    TrainingResult startTraining() override {
+        TrainingResult result;
+        if (!ensureConnected()) {
+            result.status = TrainingResult::ConnectionFailed;
+            lastError_ = "POST /training/start: not connected";
+            return result;
+        }
+        httplib::Client client(host_, port_);
+        client.set_connection_timeout(0, 500000);
+        client.set_read_timeout(0, 500000);
+        auto res = client.Post("/training/start", "", "application/json");
+        if (!res) {
+            using E = httplib::Error;
+            result.status = (res.error() == E::Connection)
+                ? TrainingResult::ConnectionFailed : TrainingResult::OtherError;
+            lastError_ = "POST /training/start: transport error";
+            return result;
+        }
+        if (res->status == 200) {
+            result.status = TrainingResult::Ok;
+            return result;
+        }
+        if (res->status == 400) {
+            result.status = TrainingResult::ValidationFailed;
+            try {
+                auto j = nlohmann::json::parse(res->body);
+                if (j.contains("field")  && j["field"].is_string())
+                    result.errorField  = j["field"].get<std::string>();
+                if (j.contains("reason") && j["reason"].is_string())
+                    result.errorReason = j["reason"].get<std::string>();
+            } catch (const nlohmann::json::exception&) {}
+            lastError_ = "POST /training/start: 400 validation rejected";
+            return result;
+        }
+        if (res->status == 409) {
+            result.status = TrainingResult::Conflict;
+            try {
+                auto j = nlohmann::json::parse(res->body);
+                // 409 envelope uses {error, reason} per http_server.cpp; surface
+                // them through the same errorField/errorReason fields.
+                if (j.contains("error")  && j["error"].is_string())
+                    result.errorField  = j["error"].get<std::string>();
+                if (j.contains("reason") && j["reason"].is_string())
+                    result.errorReason = j["reason"].get<std::string>();
+            } catch (const nlohmann::json::exception&) {}
+            lastError_ = "POST /training/start: 409 conflict";
+            return result;
+        }
+        if (res->status == 503) {
+            // 503 audio_disabled — surface error/reason via errorField/errorReason
+            // so the UI can render the proactive-disable toast (warning fix
+            // 09-03 T2). status remains OtherError because audio_disabled is
+            // not a Conflict from the client's perspective; the Train button
+            // is gated upstream by HealthView.driver_audio_enabled.
+            result.status = TrainingResult::OtherError;
+            try {
+                auto j = nlohmann::json::parse(res->body);
+                if (j.contains("error")  && j["error"].is_string())
+                    result.errorField  = j["error"].get<std::string>();
+                if (j.contains("reason") && j["reason"].is_string())
+                    result.errorReason = j["reason"].get<std::string>();
+            } catch (const nlohmann::json::exception&) {}
+            lastError_ = "POST /training/start: 503 service unavailable";
+            return result;
+        }
+        result.status = TrainingResult::OtherError;
+        lastError_ = "POST /training/start: HTTP " + std::to_string(res->status);
+        return result;
+    }
+
+    std::optional<TrainingProgressView> getTrainingProgress() override {
+        if (!ensureConnected()) return std::nullopt;
+        httplib::Client client(host_, port_);
+        client.set_connection_timeout(0, 250000);
+        client.set_read_timeout(0, 250000);
+        auto res = client.Get("/training/progress");
+        if (!res || res->status != 200) {
+            lastError_ = "GET /training/progress failed";
+            if (!res) connected_ = false;
+            return std::nullopt;
+        }
+        try {
+            auto j = nlohmann::json::parse(res->body);
+            TrainingProgressView v;
+            v.samples_collected = j.value("samples_collected", static_cast<size_t>(0));
+            v.target            = j.value("target",            static_cast<size_t>(100));
+            v.state             = j.value("state",             std::string("idle"));
+            if (j.contains("last_error") && j["last_error"].is_string()) {
+                v.last_error = j["last_error"].get<std::string>();
+            }
+            if (j.contains("thresholds_preview") && j["thresholds_preview"].is_object()) {
+                ThresholdsPreviewView pv;
+                const auto& p = j["thresholds_preview"];
+                pv.sensitivity      = p.value("sensitivity",      0.0f);
+                pv.energy_threshold = p.value("energy_threshold", 0.0f);
+                if (p.contains("spectral_profile_summary")
+                        && p["spectral_profile_summary"].is_object()) {
+                    const auto& sps = p["spectral_profile_summary"];
+                    pv.spectral_profile_summary.mean   = sps.value("mean",   0.0f);
+                    pv.spectral_profile_summary.stddev = sps.value("stddev", 0.0f);
+                    pv.spectral_profile_summary.size   =
+                        sps.value("size", static_cast<size_t>(0));
+                }
+                v.thresholds_preview = pv;
+            }
+            return v;
+        } catch (const nlohmann::json::exception& e) {
+            lastError_ = std::string("GET /training/progress parse: ") + e.what();
+            return std::nullopt;
+        }
+    }
+
+    TrainingResult finalizeTraining(bool confirm,
+                                    std::optional<float> sensitivity,
+                                    std::optional<float> threshold) override {
+        TrainingResult result;
+        if (!ensureConnected()) {
+            result.status = TrainingResult::ConnectionFailed;
+            lastError_ = "POST /training/finalize: not connected";
+            return result;
+        }
+        nlohmann::json payload;
+        payload["confirm"] = confirm;
+        if (sensitivity.has_value()) payload["sensitivity"] = *sensitivity;
+        if (threshold.has_value())   payload["threshold"]   = *threshold;
+        httplib::Client client(host_, port_);
+        client.set_connection_timeout(0, 500000);
+        // finalize triggers a saveTrainingFile + in-memory swap inside the
+        // driver — generous read timeout to absorb the disk write.
+        client.set_read_timeout(0, 1000000);
+        auto res = client.Post("/training/finalize",
+                               payload.dump(), "application/json");
+        if (!res) {
+            using E = httplib::Error;
+            result.status = (res.error() == E::Connection)
+                ? TrainingResult::ConnectionFailed : TrainingResult::OtherError;
+            lastError_ = "POST /training/finalize: transport error";
+            return result;
+        }
+        if (res->status == 200) {
+            result.status = TrainingResult::Ok;
+            return result;
+        }
+        if (res->status == 400) {
+            result.status = TrainingResult::ValidationFailed;
+            try {
+                auto j = nlohmann::json::parse(res->body);
+                if (j.contains("field")  && j["field"].is_string())
+                    result.errorField  = j["field"].get<std::string>();
+                if (j.contains("reason") && j["reason"].is_string())
+                    result.errorReason = j["reason"].get<std::string>();
+            } catch (const nlohmann::json::exception&) {}
+            lastError_ = "POST /training/finalize: 400 validation rejected";
+            return result;
+        }
+        if (res->status == 409) {
+            result.status = TrainingResult::Conflict;
+            try {
+                auto j = nlohmann::json::parse(res->body);
+                if (j.contains("error")  && j["error"].is_string())
+                    result.errorField  = j["error"].get<std::string>();
+                if (j.contains("reason") && j["reason"].is_string())
+                    result.errorReason = j["reason"].get<std::string>();
+            } catch (const nlohmann::json::exception&) {}
+            lastError_ = "POST /training/finalize: 409 conflict";
+            return result;
+        }
+        result.status = TrainingResult::OtherError;
+        lastError_ = "POST /training/finalize: HTTP " + std::to_string(res->status);
+        return result;
+    }
+
+    TrainingResult cancelTraining() override {
+        TrainingResult result;
+        if (!ensureConnected()) {
+            result.status = TrainingResult::ConnectionFailed;
+            lastError_ = "POST /training/cancel: not connected";
+            return result;
+        }
+        httplib::Client client(host_, port_);
+        client.set_connection_timeout(0, 500000);
+        client.set_read_timeout(0, 500000);
+        auto res = client.Post("/training/cancel", "", "application/json");
+        if (!res) {
+            using E = httplib::Error;
+            result.status = (res.error() == E::Connection)
+                ? TrainingResult::ConnectionFailed : TrainingResult::OtherError;
+            lastError_ = "POST /training/cancel: transport error";
+            return result;
+        }
+        // D-13 idempotent — driver always returns 200 with {cancelled:bool}.
+        result.status = (res->status == 200)
+            ? TrainingResult::Ok : TrainingResult::OtherError;
+        if (res->status != 200) {
+            lastError_ = "POST /training/cancel: HTTP " + std::to_string(res->status);
+        }
+        return result;
+    }
+
+    TrainingResult recomputeTraining(float sensitivity) override {
+        TrainingResult result;
+        if (!ensureConnected()) {
+            result.status = TrainingResult::ConnectionFailed;
+            lastError_ = "POST /training/recompute: not connected";
+            return result;
+        }
+        nlohmann::json payload;
+        payload["sensitivity"] = sensitivity;
+        httplib::Client client(host_, port_);
+        client.set_connection_timeout(0, 500000);
+        client.set_read_timeout(0, 500000);
+        auto res = client.Post("/training/recompute",
+                               payload.dump(), "application/json");
+        if (!res) {
+            using E = httplib::Error;
+            result.status = (res.error() == E::Connection)
+                ? TrainingResult::ConnectionFailed : TrainingResult::OtherError;
+            lastError_ = "POST /training/recompute: transport error";
+            return result;
+        }
+        if (res->status == 200) {
+            result.status = TrainingResult::Ok;
+            return result;
+        }
+        if (res->status == 400) {
+            result.status = TrainingResult::ValidationFailed;
+            try {
+                auto j = nlohmann::json::parse(res->body);
+                if (j.contains("field")  && j["field"].is_string())
+                    result.errorField  = j["field"].get<std::string>();
+                if (j.contains("reason") && j["reason"].is_string())
+                    result.errorReason = j["reason"].get<std::string>();
+            } catch (const nlohmann::json::exception&) {}
+            lastError_ = "POST /training/recompute: 400 validation rejected";
+            return result;
+        }
+        if (res->status == 409) {
+            result.status = TrainingResult::Conflict;
+            try {
+                auto j = nlohmann::json::parse(res->body);
+                if (j.contains("error")  && j["error"].is_string())
+                    result.errorField  = j["error"].get<std::string>();
+                if (j.contains("reason") && j["reason"].is_string())
+                    result.errorReason = j["reason"].get<std::string>();
+            } catch (const nlohmann::json::exception&) {}
+            lastError_ = "POST /training/recompute: 409 conflict";
+            return result;
+        }
+        result.status = TrainingResult::OtherError;
+        lastError_ = "POST /training/recompute: HTTP " + std::to_string(res->status);
+        return result;
+    }
+
+    std::optional<HealthView> getHealth() override {
+        if (!ensureConnected()) return std::nullopt;
+        httplib::Client client(host_, port_);
+        client.set_connection_timeout(0, 250000);
+        client.set_read_timeout(0, 250000);
+        auto res = client.Get("/health");
+        if (!res || res->status != 200) {
+            lastError_ = "GET /health failed";
+            if (!res) connected_ = false;
+            return std::nullopt;
+        }
+        try {
+            auto j = nlohmann::json::parse(res->body);
+            HealthView v;
+            // driver_loaded inferred from 200 — endpoint reachable means alive.
+            v.driver_loaded            = true;
+            v.driver_detection_active  = j.value("driver_detection_active", false);
+            v.driver_training_active   = j.value("driver_training_active",  false);
+            v.driver_audio_enabled     = j.value("driver_audio_enabled",    false);
+            return v;
+        } catch (const nlohmann::json::exception& e) {
+            lastError_ = std::string("GET /health parse: ") + e.what();
+            return std::nullopt;
+        }
+    }
+
 private:
     bool ensureConnected() {
         if (connected_) {

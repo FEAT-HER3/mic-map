@@ -189,6 +189,83 @@ struct TelemetryLevel {
     float dbfs{-60.0f};
 };
 
+// ============================================================================
+// P9 09-02 — training-mode views (mirror driver-side wire shape from
+// driver/src/http_server.hpp + driver/src/training_session.hpp). Surfaced
+// through IDriverApi::getTrainingProgress (TRAIN-02 client-side).
+// ============================================================================
+
+/**
+ * @brief Client-side mirror of driver/src/http_server.hpp ThresholdsPreviewView.
+ *        Populated when /training/progress reports thresholds_preview != null
+ *        (state == ready / finalized).
+ */
+struct ThresholdsPreviewView {
+    float sensitivity{0.0f};
+    float energy_threshold{0.0f};
+    struct {
+        float  mean{0.0f};
+        float  stddev{0.0f};
+        size_t size{0};
+    } spectral_profile_summary;
+};
+
+/**
+ * @brief Client-side mirror of driver/src/http_server.hpp TrainingProgressView.
+ *        state is one of "idle" | "collecting" | "computing" | "ready" |
+ *        "cancelled" | "finalized". last_error populated only on a failed
+ *        compute / timeout transition.
+ */
+struct TrainingProgressView {
+    size_t                                  samples_collected{0};
+    size_t                                  target{100};
+    std::optional<ThresholdsPreviewView>    thresholds_preview;
+    std::string                             state;
+    std::optional<std::string>              last_error;
+};
+
+/**
+ * @brief P9 09-02 — 5-state result of IDriverApi training-write methods.
+ *
+ * Status outcomes the UI must distinguish:
+ *   Ok                — driver returned 200; the training operation succeeded.
+ *   ValidationFailed  — driver returned 400 with {field, reason} envelope.
+ *                       errorField/errorReason carry the field name + human
+ *                       reason for surfacing in the UI.
+ *   ConnectionFailed  — httplib reported Error::Connection (driver not running).
+ *   OtherError        — transport timeout, HTTP 5xx, malformed body, etc.
+ *                       For 503 audio_disabled the body's {error, reason} are
+ *                       parsed into errorField/errorReason for UI surfacing.
+ *   Conflict          — driver returned 409: training_in_progress (start),
+ *                       insufficient_samples (finalize), no_active_session
+ *                       (finalize/cancel/recompute), not_ready (recompute).
+ */
+struct TrainingResult {
+    enum Status { Ok, ValidationFailed, ConnectionFailed, OtherError, Conflict };
+    Status status{OtherError};
+    std::optional<std::string> errorField;
+    std::optional<std::string> errorReason;
+};
+
+/**
+ * @brief P9 09-02 — read-only client view of GET /health.
+ *
+ * Mirrors the driver's /health JSON envelope: status field is always
+ * "healthy" when 200; the four boolean flags below are the migration
+ * handshake the client uses to gate UI enablement (Train button visible iff
+ * driver_audio_enabled, etc.).
+ *
+ * driver_loaded is true when the /health response was 200 (the endpoint
+ * reached us, so driver is alive). The caller of getHealth() infers
+ * driver_loaded from the std::optional return — nullopt = not loaded.
+ */
+struct HealthView {
+    bool driver_loaded{false};            ///< inferred from HTTP 200; true when this view is returned
+    bool driver_detection_active{false};  ///< P7 D-09
+    bool driver_training_active{false};   ///< P9 D-07
+    bool driver_audio_enabled{false};     ///< P9 09-02 / 09-03 T2 — proactive disable contract
+};
+
 /**
  * @brief P8 D-09 / IPC-04 — 4-state result of IDriverApi::putSettings().
  *
@@ -354,6 +431,54 @@ public:
     ///        concurrent error fire after the clear simply overwrites null
     ///        with the new error (no error history).
     virtual bool clearError() = 0;
+
+    // ============================================================
+    // P9 09-02 — training endpoints. Mirror the 5 routes registered on the
+    // driver in driver/src/http_server.cpp (D-09/D-13/D-15/D-16/D-18..D-22/D-40).
+    // The TrainingResult Status enum's Conflict value distinguishes 409 outcomes
+    // (training_in_progress / insufficient_samples / no_active_session / not_ready)
+    // from generic OtherError so the UI can render specific toasts.
+    // ============================================================
+
+    /// @brief P9 TRAIN-01: POST /training/start. 200 → Ok; 409 → Conflict
+    ///        (training_in_progress); 503 → OtherError with errorField =
+    ///        "audio_disabled" so the UI can render the proactive-disable
+    ///        toast; 400 → ValidationFailed (extra fields rejected).
+    virtual TrainingResult startTraining() = 0;
+
+    /// @brief P9 TRAIN-02: GET /training/progress. Returns nullopt on
+    ///        connect/parse failure; the UI keeps the prior view in that
+    ///        case (no flicker) and waits for the next 5 Hz poll.
+    virtual std::optional<TrainingProgressView> getTrainingProgress() = 0;
+
+    /// @brief P9 TRAIN-03: POST /training/finalize. confirm=true accepts
+    ///        the preview (D-15); explicit sensitivity/threshold provide
+    ///        verbose overrides (D-16). 200 → Ok; 400 → ValidationFailed;
+    ///        409 → Conflict (insufficient_samples / no_active_session).
+    virtual TrainingResult finalizeTraining(
+        bool confirm,
+        std::optional<float> sensitivity = std::nullopt,
+        std::optional<float> threshold = std::nullopt) = 0;
+
+    /// @brief P9 TRAIN-04: POST /training/cancel. D-13 idempotent — always
+    ///        200 with body {cancelled: bool} indicating whether a session
+    ///        was actually active. Returns Ok on 200; ConnectionFailed /
+    ///        OtherError on transport failure.
+    virtual TrainingResult cancelTraining() = 0;
+
+    /// @brief P9 TRAIN-06: POST /training/recompute. Only valid in Ready
+    ///        state (D-19) — driver returns 409 not_ready otherwise. 200 →
+    ///        Ok; 400 → ValidationFailed (sensitivity out of range); 409 →
+    ///        Conflict.
+    virtual TrainingResult recomputeTraining(float sensitivity) = 0;
+
+    /// @brief P9 09-02 / 09-03 — GET /health full envelope view. Returns
+    ///        nullopt on connect/parse failure (driver not loaded). The
+    ///        caller treats nullopt as "driver not loaded" for HEALTH-01;
+    ///        a non-nullopt return populates HealthView with the four
+    ///        migration-handshake fields (detection_active, training_active,
+    ///        audio_enabled) so the UI can gate Train-button enablement.
+    virtual std::optional<HealthView> getHealth() = 0;
 };
 
 /**
