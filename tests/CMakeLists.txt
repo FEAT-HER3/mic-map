@@ -795,14 +795,14 @@ add_test(NAME AssertReplayNoVrApi
         -DREPLAY_DIR=${CMAKE_SOURCE_DIR}/apps/mic_test/src
         -P ${CMAKE_SOURCE_DIR}/cmake/AssertReplayNoVrApi.cmake)
 
-# NOTE: AssertNoClientTraining is intentionally NOT registered at Wave 0.
-# The lint script exists at cmake/AssertNoClientTraining.cmake but currently
-# FATALs on apps/micmap/main.cpp (existing v1.5 training body at lines
-# 962-1027 + saveTrainingData callsites at :618, :974, :991). Single-writer
-# cutover protocol per CONTEXT D-23: ctest registration goes live in 09-03
-# alongside the client-side training body deletion. Mirror of P8 D-07 timing
-# for AssertNoConfigWriteInClient. (See "# ---- Phase 9 Wave 3" block added
-# by 09-03 for AssertNoClientTraining go-live.)
+# NOTE: AssertNoClientTraining was intentionally deferred at Wave 0
+# (the lint script at cmake/AssertNoClientTraining.cmake FATALed on the
+# v1.5 training body that lived at apps/micmap/main.cpp:962-1027 +
+# saveTrainingData callsites at :618, :974, :991). Single-writer cutover
+# protocol per CONTEXT D-23: ctest registration went live in 09-03 (see
+# the "# ---- Phase 9 Wave 3" block below) alongside the deletion of the
+# client-side training body. Mirror of P8 D-07 timing for
+# AssertNoConfigWriteInClient.
 
 # TRAIN-01..04 / TRAIN-06 — TrainingSession lifecycle. RED until Plan 09-01
 # lands driver/src/training_session.{hpp,cpp} + driver/src/training_io.{hpp,cpp}.
@@ -930,3 +930,22 @@ set_tests_properties(mic_test_replay_corpus PROPERTIES
     TIMEOUT 60)
 
 # ---- end Phase 9 Wave 1 (09-04) ----
+
+# ---- Phase 9 Wave 3 (single-writer cutover go-live) ----
+
+# P9 D-05 / D-23 / IPC-06 / TRAIN-AF-01: assert no client-side training
+# entry points. Register-now go-live mirrors P8 D-07 timing for
+# AssertNoConfigWriteInClient. The lint script (cmake/AssertNoClientTraining.cmake)
+# was shipped by 09-00 Task 1; 09-03 Task 1 deleted the v1.5 client-side
+# training body that previously made this lint FATAL. After this commit,
+# any reintroduction of detector->{addTrainingSample, finishTraining,
+# startTraining, saveTrainingData} inside apps/micmap/ fails the build.
+# Allowlist (D-06): apps/mic_test/ remains exempt — the lint script's
+# directory-match guard skips files whose path includes "apps/mic_test"
+# so the headless training tool keeps its TEST-01 driver-free invariant.
+add_test(NAME AssertNoClientTraining
+    COMMAND ${CMAKE_COMMAND}
+        -DCLIENT_ROOTS=${CMAKE_SOURCE_DIR}/apps/micmap
+        -P ${CMAKE_SOURCE_DIR}/cmake/AssertNoClientTraining.cmake)
+
+# ---- end Phase 9 Wave 3 ----
