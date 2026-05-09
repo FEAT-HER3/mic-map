@@ -27,6 +27,13 @@
 #include <sstream>
 #include <thread>
 
+#ifdef _WIN32
+#  include <cstdlib>
+#  include <crtdbg.h>
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#endif
+
 namespace md = micmap::driver;
 namespace mc = micmap::core;
 
@@ -35,6 +42,19 @@ namespace mc = micmap::core;
     return 1; } } while(0)
 
 int main() {
+#ifdef _WIN32
+    // Suppress MSVC debug-runtime modal popups when abort() / assertions fire under ctest.
+    // Without this, an unattended ctest run blocks on a "Debug Error!" dialog box.
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+    _CrtSetReportMode(_CRT_WARN,   _CRTDBG_MODE_FILE);
+    _CrtSetReportMode(_CRT_ERROR,  _CRTDBG_MODE_FILE);
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_WARN,   _CRTDBG_FILE_STDERR);
+    _CrtSetReportFile(_CRT_ERROR,  _CRTDBG_FILE_STDERR);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+#endif
+
     auto tmp = std::filesystem::temp_directory_path() / "micmap_p8_round_trip_test";
     std::filesystem::create_directories(tmp);
     auto cfgPath = tmp / "config.json";
