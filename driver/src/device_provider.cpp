@@ -25,9 +25,13 @@
 // P8 LIB-04 / D-19 / D-20 — driver-side composition root deps.
 #include "config_io.hpp"                   // loadConfigJson + getDriverConfigPath + getDriverAppDataDir
 #include "settings_validator.hpp"          // P8 D-14: validateSettings invoked from configMutator lambda
+                                           // P9 09-02: FinalizePayload + training validators
+#include "training_io.hpp"                 // P9 09-02: getDriverTrainingDataPath + saveTrainingFile
 #include "sinks/driver_log_sink.hpp"       // makeDriverLogSink
 #include "micmap/common/log_sink.hpp"      // makeFileLogSink + makeMultiSinkLogger
 #include "micmap/common/logger.hpp"        // Logger::setLogger + MICMAP_LOG_*
+
+#include <nlohmann/json.hpp>               // P9 09-02: cancel/recompute response body builders
 
 #include <micmap/audio/audio_capture.hpp>  // P8 D-17: AudioDevice struct (full type for the cache lambda)
 
@@ -265,6 +269,219 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
         publishDriverState(std::move(next));
     };
 
+    // P9 09-02 — training endpoint callbacks. All run on the HTTP thread.
+    // Pitfall 1+2: tryStartTrainingSession constructs the session BEFORE
+    // release-storing mode_; resetTrainingSession release-stores mode_ =
+    // Detecting BEFORE resetting the unique_ptr<TrainingSession>. The
+    // detection thread null-checks trainingSession() to absorb the brief
+    // race window.
+    auto trainingStart = [this]() -> HttpResult {
+        // D-40: proactive disable contract. Even though the client gates the
+        // Train button on /health.driver_audio_enabled (warning fix 09-03 T2),
+        // race-tolerant defense in depth — the audio flag is read once at
+        // Init and never flips at runtime, but the post-click 503 path keeps
+        // the contract correct under future schema changes.
+        if (!driverAudioEnabled_) {
+            return HttpResult{503,
+                R"({"error":"audio_disabled","reason":"enable_driver_audio is false"})"};
+        }
+        // Sample rate: prefer the WASAPI-negotiated rate AudioWorker publishes
+        // post-startCapture (matches the same source DetectionRunner uses for
+        // detector_ construction at device_provider.cpp:419-438). Fall back to
+        // 48 kHz with a log if the worker is gone or hasn't published yet.
+        uint32_t sampleRate = 0;
+        if (audioWorker_) sampleRate = audioWorker_->sample_rate();
+        if (sampleRate == 0) {
+            sampleRate = 48000;
+            DriverLog("MicMap: trainingStart fallback sampleRate=48000 "
+                      "(AudioWorker has not published a rate)\n");
+        }
+        // FFT size: pull from the live AppConfig snapshot (so PUT /settings
+        // changes propagate without a driver restart). Snapshot is null only
+        // between ctor and Init's first publish, which happens BEFORE
+        // HttpServer::Start — so by the time this lambda fires, snapshot is
+        // guaranteed non-null. Defensive null-check anyway.
+        size_t fftSize = 2048;   // ctor default
+        if (auto cfg = getConfigSnapshot()) {
+            if (cfg->detection.fftSize > 0) {
+                fftSize = static_cast<size_t>(cfg->detection.fftSize);
+            }
+        }
+        // D-09 single-instance check.
+        if (!tryStartTrainingSession(sampleRate, fftSize)) {
+            return HttpResult{409,
+                R"({"error":"training_in_progress","reason":"another session is active"})"};
+        }
+        return HttpResult{200, R"({"status":"ok"})"};
+    };
+
+    auto trainingProgressGetter = [this]() -> TrainingProgressView {
+        TrainingProgressView v;
+        auto* session = trainingSession();
+        if (!session) {
+            v.state = "idle";
+            return v;
+        }
+        // D-12: 30 s no-new-accepted-sample timeout watchdog ticks here so
+        // GET /training/progress polls (5 Hz under UI-SPEC) drive timeout
+        // detection without a separate timer thread.
+        session->tickTimeout(std::chrono::steady_clock::now());
+        auto snap = session->snapshot();
+        v.samples_collected = snap.samples_collected;
+        v.target            = snap.target;
+        v.last_error        = snap.last_error;
+        switch (snap.state) {
+            case SessionState::Collecting: v.state = "collecting"; break;
+            case SessionState::Computing:  v.state = "computing";  break;
+            case SessionState::Ready:      v.state = "ready";      break;
+            case SessionState::Finalized:  v.state = "finalized";  break;
+            case SessionState::Cancelled:  v.state = "cancelled";  break;
+        }
+        if (snap.thresholds_preview.has_value()) {
+            ThresholdsPreviewView pv;
+            pv.sensitivity      = snap.thresholds_preview->sensitivity;
+            pv.energy_threshold = snap.thresholds_preview->energy_threshold;
+            pv.spectral_profile_summary.mean   = snap.thresholds_preview->spectral_profile_summary.mean;
+            pv.spectral_profile_summary.stddev = snap.thresholds_preview->spectral_profile_summary.stddev;
+            pv.spectral_profile_summary.size   = snap.thresholds_preview->spectral_profile_summary.size;
+            v.thresholds_preview = pv;
+        }
+        // Auto-reset the session once the client has observed a terminal
+        // state (Cancelled / Finalized) at least once via /training/progress.
+        // This frees TrainingSession resources without a separate cleanup
+        // poll; the HTTP-thread reset is safe because the detection thread's
+        // mode_ acquire-load already observed Detecting (release-stored from
+        // cancel()/markFinalized() inside resetTrainingSession).
+        if (snap.state == SessionState::Cancelled
+                || snap.state == SessionState::Finalized) {
+            resetTrainingSession();
+        }
+        return v;
+    };
+
+    auto trainingFinalize = [this](const FinalizePayload& payload) -> HttpResult {
+        auto* session = trainingSession();
+        if (!session) {
+            return HttpResult{409,
+                R"({"error":"no_active_session","reason":"no training session in progress"})"};
+        }
+        auto snap_before = session->snapshot();
+        // D-15: collecting → ready compute when client passes confirm:true on
+        // a session that hasn't yet finished the threshold compute. If
+        // confirm is false at this state, the client must call recompute or
+        // wait — return 409 insufficient_samples.
+        if (snap_before.state == SessionState::Collecting) {
+            if (!payload.confirm) {
+                return HttpResult{409,
+                    R"({"error":"insufficient_samples","reason":"call recompute or wait for ready state"})"};
+            }
+            if (auto err = session->compute(); err.has_value()) {
+                std::string body = R"({"error":"insufficient_samples","reason":")" + *err + R"("})";
+                return HttpResult{409, body};
+            }
+        }
+        // D-16: explicit overrides — if the client supplied sensitivity,
+        // re-run recompute with it. Threshold override is recorded for the
+        // wire shape but the v1.5 detector exposes setSensitivity only;
+        // threshold flows through DetectionConfig, which a future plan can
+        // route here. For now we apply sensitivity if present.
+        if (payload.sensitivity.has_value()) {
+            session->recompute(*payload.sensitivity);
+        }
+        auto* detector = session->detector();
+        if (!detector) {
+            return HttpResult{500,
+                R"({"error":"no_detector","reason":"trained detector unavailable"})"};
+        }
+        const auto path = getDriverTrainingDataPath();
+        if (!saveTrainingFile(path, *detector)) {
+            return HttpResult{500,
+                R"({"error":"persist_failed","reason":"saveTrainingFile returned false"})"};
+        }
+        // D-24 in-memory swap: tell the detection thread to reload its own
+        // detector_ from the just-written file at its next loop iteration.
+        // Thread-safe deferred reload (see DetectionRunner::reloadTrainingDataAsync).
+        if (detectionRunner_) {
+            detectionRunner_->reloadTrainingDataAsync(path);
+        }
+        session->markFinalized();
+        // Pitfall 2 ordering: resetTrainingSession release-stores mode_ =
+        // Detecting BEFORE dropping the unique_ptr<TrainingSession>; the
+        // detection thread observes Detecting on its next acquire-load and
+        // stops dereferencing trainingSession().
+        resetTrainingSession();
+        return HttpResult{200, R"({"status":"ok"})"};
+    };
+
+    auto trainingCancel = [this]() -> HttpResult {
+        // D-13 idempotent. Returns 200 with body {"cancelled":true|false}
+        // distinguishing "session was active and is now cancelled" from
+        // "no session to cancel" — the client UI can ignore the false case
+        // (it's a no-op acknowledgement) and react to true (toast / state).
+        auto* session = trainingSession();
+        const bool was_active = (session != nullptr);
+        if (session) {
+            session->cancel();
+        }
+        resetTrainingSession();
+        nlohmann::json body;
+        body["cancelled"] = was_active;
+        return HttpResult{200, body.dump()};
+    };
+
+    auto trainingRecompute = [this](float sensitivity) -> HttpResult {
+        auto* session = trainingSession();
+        if (!session) {
+            return HttpResult{409,
+                R"({"error":"no_active_session","reason":"no training session in progress"})"};
+        }
+        // D-19: recompute is only valid in Ready state. Map other states
+        // to 409 with a structured envelope so the client can surface a
+        // clear error.
+        auto snap = session->snapshot();
+        if (snap.state != SessionState::Ready) {
+            return HttpResult{409,
+                R"({"error":"not_ready","reason":"recompute only valid in ready state"})"};
+        }
+        if (!session->recompute(sensitivity)) {
+            return HttpResult{500,
+                R"({"error":"recompute_failed","reason":"detector rejected new sensitivity"})"};
+        }
+        // D-20/D-21: replace preview in place; surface the refreshed preview
+        // in the response body so the client UI can update without a separate
+        // /training/progress poll.
+        auto new_snap = session->snapshot();
+        nlohmann::json body;
+        if (new_snap.thresholds_preview.has_value()) {
+            body["sensitivity"]      = new_snap.thresholds_preview->sensitivity;
+            body["energy_threshold"] = new_snap.thresholds_preview->energy_threshold;
+            nlohmann::json sps;
+            sps["mean"]   = new_snap.thresholds_preview->spectral_profile_summary.mean;
+            sps["stddev"] = new_snap.thresholds_preview->spectral_profile_summary.stddev;
+            sps["size"]   = new_snap.thresholds_preview->spectral_profile_summary.size;
+            body["spectral_profile_summary"] = sps;
+        } else {
+            body["status"] = "ok";
+        }
+        return HttpResult{200, body.dump()};
+    };
+
+    // P9 D-07: /health.driver_training_active reflects the live mode_ flag.
+    auto driverTrainingActiveGetter = [this]() -> bool {
+        return mode_.load(std::memory_order_acquire) == DriverMode::Training;
+    };
+
+    // P9 09-02 (warning fix 09-03 T2): /health.driver_audio_enabled sources
+    // from driverAudioEnabled_ (set once at Init from
+    // VRSettings.GetBool("driver_micmap","enable_driver_audio") at
+    // device_provider.cpp:289-300). Read on the HTTP thread; the field is
+    // a bool member that is set at Init and not mutated at runtime, so a
+    // plain load is safe (matches the existing driverDetectionActiveGetter
+    // pattern from P7 D-09).
+    auto driverAudioEnabledGetter = [this]() -> bool {
+        return driverAudioEnabled_;
+    };
+
     httpServer_ = std::make_unique<HttpServer>(
         *commandQueue_,
         /*port=*/27015,
@@ -275,7 +492,15 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
         std::move(stateGetter),
         std::move(errorClearer),             // P8 D-16 — POST /state/clear-error
         std::move(rmsGetter),
-        std::move(deviceLister));
+        std::move(deviceLister),
+        // P9 09-02 — training endpoint callbacks + /health field getters.
+        std::move(trainingStart),
+        std::move(trainingProgressGetter),
+        std::move(trainingFinalize),
+        std::move(trainingCancel),
+        std::move(trainingRecompute),
+        std::move(driverTrainingActiveGetter),
+        std::move(driverAudioEnabledGetter));
     if (!httpServer_->Start()) {
         DriverLog("MicMap: failed to start HTTP server\n");
         return VRInitError_Driver_Failed;

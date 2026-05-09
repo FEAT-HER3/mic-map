@@ -306,6 +306,21 @@ void DetectionRunner::NotifyOne() {
     cv_.notify_one();
 }
 
+void DetectionRunner::reloadTrainingDataAsync(std::filesystem::path path) {
+    // P9 09-02 D-24: thread-safe deferred reload. Store the path under mu_
+    // (so RunLoop's read at the top of its iteration sees a fully-published
+    // value) and notify the cv_.wait_for to wake promptly. The detection
+    // thread observes the pending path on its next loop iteration and calls
+    // detector_->loadTrainingData on its own thread — preserving the
+    // thread-affinity discipline that detector_/stateMachine_ writes happen
+    // on the detection thread only (Pitfall 4 / Shared Pattern 4).
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        pendingReloadPath_ = std::move(path);
+    }
+    cv_.notify_one();
+}
+
 std::shared_ptr<const DetectionConfig> DetectionRunner::active_config_for_test() const {
     return std::atomic_load_explicit(&activeConfig_, std::memory_order_acquire);
 }
@@ -407,6 +422,30 @@ void DetectionRunner::RunLoop() {
             });
         }
         if (shutdown_.load(std::memory_order_acquire)) break;
+
+        // P9 09-02 D-24: if an HTTP-thread finalize requested an in-memory
+        // reload of training_data.bin, consume it here before the analyze
+        // loop. detector_->loadTrainingData runs on the detection thread to
+        // preserve thread-affinity (Pitfall 4 / Shared Pattern 4).
+        std::optional<std::filesystem::path> reloadPath;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            if (pendingReloadPath_.has_value()) {
+                reloadPath = std::move(pendingReloadPath_);
+                pendingReloadPath_.reset();
+            }
+        }
+        if (reloadPath.has_value() && detector_) {
+            if (detector_->loadTrainingData(*reloadPath)) {
+                DriverLog("MicMap detection: reloaded training profile from %s "
+                          "(D-24 in-memory swap)\n",
+                          reloadPath->string().c_str());
+            } else {
+                DriverLog("MicMap detection: WARNING - reloadTrainingDataAsync "
+                          "loadTrainingData failed for %s; detector retains prior profile\n",
+                          reloadPath->string().c_str());
+            }
+        }
 
         // MIG-06: reload settings snapshot, apply if changed. Pointer-identity
         // compare suffices because publish() always allocates a fresh

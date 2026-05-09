@@ -32,6 +32,7 @@
 #include <chrono>          // P8 D-23: DriverStatePublisher last_trigger_at type
 #include <condition_variable>
 #include <cstdint>
+#include <filesystem>      // P9 09-02 D-24: reloadTrainingDataAsync path arg
 #include <functional>      // P8 D-23: DriverStatePublisher callback type
 #include <memory>
 #include <mutex>
@@ -130,6 +131,19 @@ public:
     /// the 50 ms timeout.
     void NotifyOne();
 
+    /// @brief P9 09-02 / D-24: thread-safe in-memory training-profile reload.
+    ///        Called from the HTTP thread after POST /training/finalize
+    ///        successfully persists training_data.bin via
+    ///        training_io::saveTrainingFile. Stores the requested reload path
+    ///        under mu_ and notifies the detection thread; the run loop picks
+    ///        up the pending path at its next iteration boundary and calls
+    ///        detector_->loadTrainingData on the detection thread (matches
+    ///        the existing thread-affinity discipline for detector_/state
+    ///        machine writes — Pitfall 4 / Shared Pattern 4). Idempotent: a
+    ///        second call before the first reload runs simply replaces the
+    ///        pending path.
+    void reloadTrainingDataAsync(std::filesystem::path path);
+
     bool IsRunning() const { return running_.load(std::memory_order_acquire); }
     uint32_t TriggersEmitted() const { return triggers_.load(std::memory_order_relaxed); }
 
@@ -186,6 +200,14 @@ private:
     /// DeviceProvider; RunLoop guards with a nullptr check before each
     /// mode read.
     DeviceProvider*                                     deviceProvider_{nullptr};
+
+    /// P9 09-02 D-24: pending in-memory training-profile reload path. Set
+    /// from the HTTP thread by reloadTrainingDataAsync under mu_; consumed
+    /// by RunLoop at the top of the iteration loop (so the detector_ load
+    /// runs on the detection thread, matching detector_ thread affinity).
+    /// std::optional + path to disambiguate "no reload pending" from
+    /// "reload to <empty path>". Reset to nullopt after RunLoop applies it.
+    std::optional<std::filesystem::path>                pendingReloadPath_;
 };
 
 } // namespace micmap::driver
