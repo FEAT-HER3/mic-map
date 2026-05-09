@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>        // P8 D-17: deviceCacheMu_ serializes the 1 s cache refill
 #include <functional>   // P7 D-09: std::function<bool()> driverDetectionActiveGetter ctor param
+#include <optional>     // P9 09-02: TrainingProgressView.thresholds_preview / last_error
 #include <vector>       // P8 D-17: deviceLister callback returns std::vector<DeviceInfo>
 
 #include "device_info.hpp"  // P8 D-17 / IPC-03: DeviceInfo struct used in deviceLister callback
@@ -34,6 +35,44 @@ namespace micmap::driver {
 class CommandQueue;
 struct DriverState;     // P8 D-23: full type lives in driver_state.hpp; only the
                         // ctor signature needs the forward decl here.
+struct FinalizePayload; // P9 09-02: full def in settings_validator.hpp; the .cpp
+                        // includes that header — header-side forward decl keeps
+                        // the public .hpp surface free of the json transitive
+                        // include for non-driver consumers.
+
+// =====================================================================
+// P9 09-02 — wire types for the training HTTP layer.
+//
+// HttpResult is the small envelope returned by the per-route DeviceProvider
+// callbacks; the HttpServer route handler copies status + body verbatim onto
+// the httplib::Response. ThresholdsPreviewView / TrainingProgressView mirror
+// the driver-side TrainingSession::ProgressSnapshot wire shape so the
+// /training/progress route handler can serialize without dragging
+// training_session.hpp into the HttpServer ctor surface.
+// =====================================================================
+
+struct HttpResult {
+    int         status{200};
+    std::string body;          ///< Already-serialized JSON or short envelope.
+};
+
+struct ThresholdsPreviewView {
+    float sensitivity{0.0f};
+    float energy_threshold{0.0f};
+    struct {
+        float  mean{0.0f};
+        float  stddev{0.0f};
+        size_t size{0};
+    } spectral_profile_summary;
+};
+
+struct TrainingProgressView {
+    size_t                                  samples_collected{0};
+    size_t                                  target{100};
+    std::optional<ThresholdsPreviewView>    thresholds_preview;
+    std::string                             state;        ///< "collecting" | "computing" | "ready" | "cancelled" | "finalized" | "idle"
+    std::optional<std::string>              last_error;
+};
 
 /**
  * @brief HTTP server for receiving press/release commands.
@@ -92,6 +131,39 @@ public:
      * AssertHttpServerNoVrApi + AssertHttpServerLocalhostOnly enforce these
      * invariants at ctest time.
      */
+    /**
+     * @brief Phase 9 09-02 ctor expansion (D-07 / D-09 / D-13 / D-15 / D-18 / D-22 / D-40).
+     *
+     * Seven new optional callbacks (one per training route + two /health-field
+     * getters). All default to nullptr so existing callsites + Wave 0 RED test
+     * scaffolds compile unchanged until DeviceProvider supplies them. The new
+     * callbacks are appended at the END of the existing parameter list per
+     * 09-02-PLAN.md Task 2:
+     *
+     *   trainingStart              POST /training/start  — D-09 single-instance
+     *                              + D-40 audio_disabled gate (callback returns
+     *                              an HttpResult so the route hander forwards
+     *                              status + body verbatim).
+     *   trainingProgressGetter     GET  /training/progress — D-22 wire shape.
+     *                              Lock-free read. Pulls from TrainingSession
+     *                              ::snapshot inside DeviceProvider.
+     *   trainingFinalize           POST /training/finalize — D-15/D-16 validated
+     *                              body; persist + in-memory profile refresh
+     *                              via training_io::saveTrainingFile.
+     *   trainingCancel             POST /training/cancel  — D-13 idempotent.
+     *   trainingRecompute          POST /training/recompute — D-18..D-21
+     *                              ready-only sensitivity adjust.
+     *   driverTrainingActiveGetter D-07 — /health.driver_training_active
+     *                              (parallels driverDetectionActiveGetter).
+     *   driverAudioEnabledGetter   warning fix 09-03 T2 — /health
+     *                              .driver_audio_enabled (proactive disable
+     *                              contract; client gates Train Pattern button
+     *                              on this field plus driver_loaded).
+     *
+     * SVR-05 / Pitfall 3: every callback runs on the HTTP thread; none may call
+     * OpenVR API surface or push to CommandQueue. AssertHttpServerNoVrApi +
+     * AssertHttpServerLocalhostOnly lints stay GREEN.
+     */
     explicit HttpServer(CommandQueue& queue,
                         int port = 27015,
                         const std::string& host = "127.0.0.1",
@@ -101,7 +173,15 @@ public:
                         std::function<std::shared_ptr<const DriverState>()>     stateGetter = nullptr,
                         std::function<void()>                                   errorClearer = nullptr,
                         std::function<float()>                                  rmsGetter = nullptr,
-                        std::function<std::vector<DeviceInfo>()>                deviceLister = nullptr);
+                        std::function<std::vector<DeviceInfo>()>                deviceLister = nullptr,
+                        // P9 09-02 — training endpoint callbacks + /health field getters.
+                        std::function<HttpResult()>                             trainingStart = nullptr,
+                        std::function<TrainingProgressView()>                   trainingProgressGetter = nullptr,
+                        std::function<HttpResult(const FinalizePayload&)>       trainingFinalize = nullptr,
+                        std::function<HttpResult()>                             trainingCancel = nullptr,
+                        std::function<HttpResult(float)>                        trainingRecompute = nullptr,
+                        std::function<bool()>                                   driverTrainingActiveGetter = nullptr,
+                        std::function<bool()>                                   driverAudioEnabledGetter = nullptr);
 
     ~HttpServer();
 
@@ -151,6 +231,18 @@ private:
     std::chrono::steady_clock::time_point       deviceCacheLastFetch_{};
     std::vector<DeviceInfo>                     deviceCache_;
     bool                                        deviceCacheSeeded_{false};
+
+    // P9 09-02 — training endpoint callbacks + /health field getters. All
+    // run on the HTTP thread; null-checked at request time so test scaffolds
+    // that wire only a subset see the documented "unavailable" 503/idle
+    // defaults rather than a crash.
+    std::function<HttpResult()>                             trainingStart_;
+    std::function<TrainingProgressView()>                   trainingProgressGetter_;
+    std::function<HttpResult(const FinalizePayload&)>       trainingFinalize_;
+    std::function<HttpResult()>                             trainingCancel_;
+    std::function<HttpResult(float)>                        trainingRecompute_;
+    std::function<bool()>                                   driverTrainingActiveGetter_;
+    std::function<bool()>                                   driverAudioEnabledGetter_;
 };
 
 } // namespace micmap::driver

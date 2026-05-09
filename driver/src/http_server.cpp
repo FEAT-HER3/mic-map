@@ -39,7 +39,14 @@ HttpServer::HttpServer(CommandQueue& queue, int port, const std::string& host,
                        std::function<std::shared_ptr<const DriverState>()>     stateGetter,
                        std::function<void()>                                   errorClearer,
                        std::function<float()>                                  rmsGetter,
-                       std::function<std::vector<DeviceInfo>()>                deviceLister)
+                       std::function<std::vector<DeviceInfo>()>                deviceLister,
+                       std::function<HttpResult()>                             trainingStart,
+                       std::function<TrainingProgressView()>                   trainingProgressGetter,
+                       std::function<HttpResult(const FinalizePayload&)>       trainingFinalize,
+                       std::function<HttpResult()>                             trainingCancel,
+                       std::function<HttpResult(float)>                        trainingRecompute,
+                       std::function<bool()>                                   driverTrainingActiveGetter,
+                       std::function<bool()>                                   driverAudioEnabledGetter)
     : queue_(queue)
     , port_(port)
     , host_(host)
@@ -50,6 +57,13 @@ HttpServer::HttpServer(CommandQueue& queue, int port, const std::string& host,
     , errorClearer_(std::move(errorClearer))
     , rmsGetter_(std::move(rmsGetter))
     , deviceLister_(std::move(deviceLister))
+    , trainingStart_(std::move(trainingStart))
+    , trainingProgressGetter_(std::move(trainingProgressGetter))
+    , trainingFinalize_(std::move(trainingFinalize))
+    , trainingCancel_(std::move(trainingCancel))
+    , trainingRecompute_(std::move(trainingRecompute))
+    , driverTrainingActiveGetter_(std::move(driverTrainingActiveGetter))
+    , driverAudioEnabledGetter_(std::move(driverAudioEnabledGetter))
 {
     DriverLog("HttpServer created (host: %s, port: %d)\n", host_.c_str(), port_);
 }
@@ -188,6 +202,18 @@ void HttpServer::SetupRoutes() {
         body["status"] = "healthy";
         body["driver_detection_active"] =
             driverDetectionActiveGetter_ ? driverDetectionActiveGetter_() : false;
+        // P9 D-07 — surfaces "is a training session active right now?" so the
+        // client UI can disable mic activity in the level meter while training
+        // owns the audio path (and to drive the migration handshake during
+        // 09-03 client UI rewire).
+        body["driver_training_active"] =
+            driverTrainingActiveGetter_ ? driverTrainingActiveGetter_() : false;
+        // P9 09-02 (warning fix 09-03 T2) — proactive disable contract. Client
+        // gates Train Pattern button on driver_loaded && driver_audio_enabled
+        // so the post-click 503 path becomes defense-in-depth rather than the
+        // primary UX surface.
+        body["driver_audio_enabled"] =
+            driverAudioEnabledGetter_ ? driverAudioEnabledGetter_() : false;
         res.set_content(body.dump(), "application/json");
     });
 
@@ -405,6 +431,168 @@ void HttpServer::SetupRoutes() {
     server_->Post("/state/clear-error", [this](const httplib::Request&, httplib::Response& res) {
         if (errorClearer_) errorClearer_();
         res.set_content(R"({"status":"ok"})", "application/json");
+    });
+
+    // ============================================================
+    // P9 09-02 — training endpoints (5 routes).
+    //
+    // SVR-05 invariant: every handler runs on the HTTP thread; mutates atomic
+    // state via DeviceProvider callbacks only; never pushes to CommandQueue;
+    // never calls into the OpenVR API surface. AssertHttpServerNoVrApi +
+    // AssertHttpServerLocalhostOnly lints enforce these invariants at ctest time.
+    //
+    // Validation envelope: first-failed-field {field, reason} per P8 D-14
+    // inheritance. Strict-shape: unknown fields rejected.
+    // ============================================================
+
+    // POST /training/start — D-09 single-instance + D-40 audio_disabled gate.
+    // Strict empty-body policy (T-09-02-10): accept "" or "{}"; any extra
+    // fields return 400 (parallels P8 strict-shape policy).
+    server_->Post("/training/start", [this](const httplib::Request& req, httplib::Response& res) {
+        if (auto verr = validateEmptyOrEmptyObjectBody(req.body); verr.has_value()) {
+            res.status = 400;
+            nlohmann::json err;
+            err["field"]  = verr->field;
+            err["reason"] = verr->reason;
+            res.set_content(err.dump(), "application/json");
+            return;
+        }
+        if (!trainingStart_) {
+            res.status = 503;
+            res.set_content(R"({"error":"training unavailable"})", "application/json");
+            return;
+        }
+        auto result = trainingStart_();
+        res.status = result.status;
+        res.set_content(result.body.empty() ? std::string(R"({"status":"ok"})") : result.body,
+                        "application/json");
+    });
+
+    // GET /training/progress — D-22 wire shape. Lock-free read; the underlying
+    // TrainingSession::snapshot acquires its own internal mu_ briefly. When no
+    // getter is wired (test scaffolds), emit the documented "idle" default so
+    // poll-shape stability is preserved across deployments.
+    server_->Get("/training/progress", [this](const httplib::Request&, httplib::Response& res) {
+        nlohmann::json body;
+        if (!trainingProgressGetter_) {
+            body["samples_collected"]  = 0;
+            body["target"]             = 100;
+            body["thresholds_preview"] = nullptr;
+            body["state"]              = "idle";
+            body["last_error"]         = nullptr;
+            res.set_content(body.dump(), "application/json");
+            return;
+        }
+        auto progress = trainingProgressGetter_();
+        body["samples_collected"] = progress.samples_collected;
+        body["target"]            = progress.target;
+        if (progress.thresholds_preview.has_value()) {
+            nlohmann::json p;
+            p["sensitivity"]      = progress.thresholds_preview->sensitivity;
+            p["energy_threshold"] = progress.thresholds_preview->energy_threshold;
+            nlohmann::json sps;
+            sps["mean"]   = progress.thresholds_preview->spectral_profile_summary.mean;
+            sps["stddev"] = progress.thresholds_preview->spectral_profile_summary.stddev;
+            sps["size"]   = progress.thresholds_preview->spectral_profile_summary.size;
+            p["spectral_profile_summary"] = sps;
+            body["thresholds_preview"]    = p;
+        } else {
+            body["thresholds_preview"] = nullptr;
+        }
+        body["state"]      = progress.state;
+        body["last_error"] = progress.last_error.has_value()
+            ? nlohmann::json(*progress.last_error)
+            : nlohmann::json(nullptr);
+        res.set_content(body.dump(), "application/json");
+    });
+
+    // POST /training/finalize — D-15 / D-16. Validate FIRST (Pitfall 1: explicit
+    // reject, no silent clamp); on success the DeviceProvider finalize callback
+    // performs the collecting→ready compute (if needed), persists via
+    // training_io::saveTrainingFile, swaps the in-memory profile (D-24), and
+    // calls markFinalized + resetTrainingSession.
+    server_->Post("/training/finalize", [this](const httplib::Request& req, httplib::Response& res) {
+        nlohmann::json body;
+        try { body = nlohmann::json::parse(req.body); }
+        catch (const nlohmann::json::exception&) {
+            res.status = 400;
+            res.set_content(R"json({"field":"(structural)","reason":"malformed JSON body"})json",
+                            "application/json");
+            return;
+        }
+        FinalizePayload payload;
+        if (auto verr = validateFinalizePayload(body, payload); verr.has_value()) {
+            res.status = 400;
+            nlohmann::json err;
+            err["field"]  = verr->field;
+            err["reason"] = verr->reason;
+            res.set_content(err.dump(), "application/json");
+            return;
+        }
+        if (!trainingFinalize_) {
+            res.status = 503;
+            res.set_content(R"({"error":"training unavailable"})", "application/json");
+            return;
+        }
+        auto result = trainingFinalize_(payload);
+        res.status = result.status;
+        res.set_content(result.body.empty() ? std::string(R"({"status":"ok"})") : result.body,
+                        "application/json");
+    });
+
+    // POST /training/cancel — D-13 idempotent. Returns 200 with body
+    // {"cancelled": true|false} indicating whether a session was active.
+    // Strict empty-body policy mirrors /training/start.
+    server_->Post("/training/cancel", [this](const httplib::Request& req, httplib::Response& res) {
+        if (auto verr = validateEmptyOrEmptyObjectBody(req.body); verr.has_value()) {
+            res.status = 400;
+            nlohmann::json err;
+            err["field"]  = verr->field;
+            err["reason"] = verr->reason;
+            res.set_content(err.dump(), "application/json");
+            return;
+        }
+        if (!trainingCancel_) {
+            res.status = 503;
+            res.set_content(R"({"error":"training unavailable"})", "application/json");
+            return;
+        }
+        auto result = trainingCancel_();
+        res.status = result.status;
+        res.set_content(result.body.empty() ? std::string(R"({"cancelled":false})") : result.body,
+                        "application/json");
+    });
+
+    // POST /training/recompute — D-18 / D-19 / D-20 / D-21. Only valid in Ready
+    // state (HTTP 409 otherwise per D-19). Idempotent: re-issuing the same
+    // sensitivity replaces the preview in place per D-20/D-21.
+    server_->Post("/training/recompute", [this](const httplib::Request& req, httplib::Response& res) {
+        nlohmann::json body;
+        try { body = nlohmann::json::parse(req.body); }
+        catch (const nlohmann::json::exception&) {
+            res.status = 400;
+            res.set_content(R"json({"field":"(structural)","reason":"malformed JSON body"})json",
+                            "application/json");
+            return;
+        }
+        float sensitivity = 0.0f;
+        if (auto verr = validateRecomputePayload(body, sensitivity); verr.has_value()) {
+            res.status = 400;
+            nlohmann::json err;
+            err["field"]  = verr->field;
+            err["reason"] = verr->reason;
+            res.set_content(err.dump(), "application/json");
+            return;
+        }
+        if (!trainingRecompute_) {
+            res.status = 503;
+            res.set_content(R"({"error":"training unavailable"})", "application/json");
+            return;
+        }
+        auto result = trainingRecompute_(sensitivity);
+        res.status = result.status;
+        res.set_content(result.body.empty() ? std::string(R"({"status":"ok"})") : result.body,
+                        "application/json");
     });
 }
 

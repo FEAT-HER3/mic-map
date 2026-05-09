@@ -70,17 +70,38 @@ int main() {
         return trainingActive.load(std::memory_order_acquire);
     };
 
-    // training_session_test fixture pieces — placeholder callbacks. The exact
-    // signatures land in 09-02; this scaffold pins the ones we know:
-    //   - trainingStartHandler(const StartPayload&) -> std::variant<StartResult, ValidationError>
-    //   - trainingFinalizeHandler / trainingCancelHandler / trainingRecomputeHandler
-    //   - trainingProgressGetter() -> TrainingProgress
-    auto trainingStartHandler = [&trainingActive]() -> std::optional<md::ValidationError> {
-        if (trainingActive.load(std::memory_order_acquire)) {
-            md::ValidationError err{"session", "training_in_progress"};
-            return err;
+    // P9 09-02: per-route HttpResult callbacks. The trainingStart handler
+    // exercises the D-09 single-instance + D-40 audio_disabled gates so the
+    // test cases (d) + (e) round-trip through a real route handler shape.
+    // Other training callbacks are wired with minimal shims so the route
+    // surface compiles + the validation envelope cases (a) (b) (c) are
+    // exercised without needing a real TrainingSession.
+    auto trainingStart = [&audioEnabled, &trainingActive]() -> md::HttpResult {
+        if (!audioEnabled.load(std::memory_order_acquire)) {
+            return md::HttpResult{
+                503,
+                R"({"error":"audio_disabled","reason":"enable_driver_audio is false"})"};
         }
-        return std::nullopt;
+        if (trainingActive.load(std::memory_order_acquire)) {
+            return md::HttpResult{
+                409,
+                R"({"error":"training_in_progress","reason":"another session is active"})"};
+        }
+        return md::HttpResult{200, R"({"status":"ok"})"};
+    };
+    auto trainingProgressGetter = []() -> md::TrainingProgressView {
+        md::TrainingProgressView v;
+        v.state = "idle";
+        return v;
+    };
+    auto trainingFinalize = [](const md::FinalizePayload&) -> md::HttpResult {
+        return md::HttpResult{200, R"({"status":"ok"})"};
+    };
+    auto trainingCancel = []() -> md::HttpResult {
+        return md::HttpResult{200, R"({"cancelled":false})"};
+    };
+    auto trainingRecompute = [](float) -> md::HttpResult {
+        return md::HttpResult{200, R"({"status":"ok"})"};
     };
 
     md::CommandQueue queue;
@@ -90,9 +111,17 @@ int main() {
                           /*driverDetectionActiveGetter=*/nullptr,
                           /*configGetter=*/configGetter,
                           /*configMutator=*/configMutator,
-                          /*driverAudioEnabledGetter=*/driverAudioEnabledGetter,
-                          /*trainingActiveGetter=*/trainingActiveGetter,
-                          /*trainingStartHandler=*/trainingStartHandler);
+                          /*stateGetter=*/nullptr,
+                          /*errorClearer=*/nullptr,
+                          /*rmsGetter=*/nullptr,
+                          /*deviceLister=*/nullptr,
+                          /*trainingStart=*/trainingStart,
+                          /*trainingProgressGetter=*/trainingProgressGetter,
+                          /*trainingFinalize=*/trainingFinalize,
+                          /*trainingCancel=*/trainingCancel,
+                          /*trainingRecompute=*/trainingRecompute,
+                          /*driverTrainingActiveGetter=*/trainingActiveGetter,
+                          /*driverAudioEnabledGetter=*/driverAudioEnabledGetter);
 
     MM_CHECK(server.Start());
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
