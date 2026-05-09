@@ -126,9 +126,9 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
   4. `mic_test.exe --replay <path-to-wav>` feeds a WAV file into the detection pipeline as if it were live mic input; reproducible regression test against a corpus of known-positive and known-negative samples emits the expected count of triggers (verified for at least one positive and one negative sample).
   5. Driver is the sole writer of `training_data.bin`: client UI never touches the file directly; driver reads at `Init` and writes only on `POST /training/finalize`.
 **Plans**: 6 plans
-- [ ] 09-00-PLAN.md — Wave 0: cmake/AssertNoClientTraining.cmake + cmake/AssertReplayNoVrApi.cmake + 3 RED-tolerant test scaffolds (training_session_test, training_endpoint_validation_test, wav_replay_test) + EXISTS-gated ctest registrations (D-37 / D-38)
-- [ ] 09-01-PLAN.md — Wave 1: TrainingSession class (driver/src/training_session.{hpp,cpp}) + training_io.{hpp,cpp} (ReplaceFileW + corruption-backup ring) + DetectionRunner DriverMode atomic-load + per-iter branch + DeviceProvider lazy unique_ptr<TrainingSession> wiring (D-01..D-04, D-09..D-22, D-23, D-27)
-- [ ] 09-02-PLAN.md — Wave 2: 5 new HTTP routes (POST /training/start, GET /training/progress, POST /training/finalize, POST /training/cancel, POST /training/recompute) + GET /health driver_training_active field + IDriverApi 5 new methods + settings_validator training payload validators (D-07, D-09, D-13..D-22, D-40)
+- [x] 09-00-PLAN.md — Wave 0: cmake/AssertNoClientTraining.cmake + cmake/AssertReplayNoVrApi.cmake + 3 RED-tolerant test scaffolds (training_session_test, training_endpoint_validation_test, wav_replay_test) + EXISTS-gated ctest registrations (D-37 / D-38)
+- [x] 09-01-PLAN.md — Wave 1: TrainingSession class (driver/src/training_session.{hpp,cpp}) + training_io.{hpp,cpp} (ReplaceFileW + corruption-backup ring) + DetectionRunner DriverMode atomic-load + per-iter branch + DeviceProvider lazy unique_ptr<TrainingSession> wiring (D-01..D-04, D-09..D-22, D-23, D-27)
+- [x] 09-02-PLAN.md — Wave 2: 5 new HTTP routes (POST /training/start, GET /training/progress, POST /training/finalize, POST /training/cancel, POST /training/recompute) + GET /health driver_training_active field + IDriverApi 5 new methods + settings_validator training payload validators (D-07, D-09, D-13..D-22, D-40)
 - [ ] 09-03-PLAN.md — Wave 3: client UI training pane rewire — DELETE apps/micmap/main.cpp:962-1027 + :404 + :618 + :974 + :991 + :91; INSERT endpoint-driven Training pane per 09-UI-SPEC.md; AssertNoClientTraining ctest go-live (single-writer cutover) (D-05, D-23)
 - [x] 09-04-PLAN.md — Wave 4: vendor/dr_wav/dr_wav.h + apps/mic_test/src/wav_replay.{hpp,cpp} + 9 new mic_test CLI flags + tests/corpus/replay/ seed (3 WAVs + manifest.json + README.md) + mic_test_replay_corpus ctest + AssertReplayNoVrApi go-live (D-28..D-37) — see 09-04-SUMMARY.md
 - [ ] 09-05-PLAN.md — Wave 5: 09-UAT.md scaffold + manual D-39(1)..(10) sign-off on Bigscreen Beyond + Win11 Pro + post-UAT default-OFF flag restore (D-39, D-40)
@@ -173,7 +173,7 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
 | 6. Driver-Side Audio Capture Spike | v1.6 | 4/4 | Complete | 2026-05-03 |
 | 7. Driver-Side Detection Thread | v1.6 | 0/6 | Planned | — |
 | 8. IPC Contract Reshape | v1.6 | 0/7 | Planned | — |
-| 9. Training Migration | v1.6 | 0/6 | Planned | — |
+| 9. Training Migration | v1.6 | 4/6 | In Progress|  |
 | 10. Cutover & Cleanup | v1.6 | 0/0 | Not started | — |
 | 11. Documentation | v1.6 | 0/0 | Not started | — |
 

@@ -61,12 +61,12 @@ Client UI surfaces driver health by polling the new IPC endpoints.
 
 Driver becomes sole owner of the microphone end-to-end during training; client becomes the observer that visualizes progress and confirms thresholds.
 
-- [ ] **TRAIN-01**: `POST /training/start` puts the driver into training mode, holds the mic, begins sample collection. Detection mode is mutex-paused while training is active.
-- [ ] **TRAIN-02**: `GET /training/progress` returns `{"samples_collected": N, "target": M, "thresholds_preview": {...} | null, "state": "collecting"|"computing"|"ready"|"cancelled"}`. Client polls at 5–10 Hz to drive the training progress UI.
-- [ ] **TRAIN-03**: `POST /training/finalize` accepts the final thresholds (or `confirm: true` to accept the preview) and persists `training_data.bin`. Driver returns to detection mode using the new thresholds.
-- [ ] **TRAIN-04**: `POST /training/cancel` aborts an in-flight training session, discards collected samples, returns the driver to detection mode without modifying `training_data.bin`.
+- [x] **TRAIN-01**: `POST /training/start` puts the driver into training mode, holds the mic, begins sample collection. Detection mode is mutex-paused while training is active.
+- [x] **TRAIN-02**: `GET /training/progress` returns `{"samples_collected": N, "target": M, "thresholds_preview": {...} | null, "state": "collecting"|"computing"|"ready"|"cancelled"}`. Client polls at 5–10 Hz to drive the training progress UI.
+- [x] **TRAIN-03**: `POST /training/finalize` accepts the final thresholds (or `confirm: true` to accept the preview) and persists `training_data.bin`. Driver returns to detection mode using the new thresholds.
+- [x] **TRAIN-04**: `POST /training/cancel` aborts an in-flight training session, discards collected samples, returns the driver to detection mode without modifying `training_data.bin`.
 - [ ] **TRAIN-05**: Client never takes the mic back during training (anti-feature TRAIN-AF-01 enforced — single-owner WASAPI invariant).
-- [ ] **TRAIN-06**: `POST /training/recompute` accepts a payload of `{"sensitivity": float}` and recomputes thresholds over the most-recent stored sample set without re-collecting. Returns the new threshold preview for client confirm/discard. (TRAIN-D1 differentiator — confirmed in v1.6 scope.)
+- [x] **TRAIN-06**: `POST /training/recompute` accepts a payload of `{"sensitivity": float}` and recomputes thresholds over the most-recent stored sample set without re-collecting. Returns the new threshold preview for client confirm/discard. (TRAIN-D1 differentiator — confirmed in v1.6 scope.)
 
 ### Test Affordances (TEST)
 
@@ -160,12 +160,12 @@ Each REQ-ID maps to exactly one phase. 45/45 requirements mapped. No orphans, no
 | HEALTH-06 | Phase 8 | Pending |
 | HEALTH-07 | Phase 8 | Pending |
 | HEALTH-08 | Phase 10 | Pending |
-| TRAIN-01 | Phase 9 | Pending |
-| TRAIN-02 | Phase 9 | Pending |
-| TRAIN-03 | Phase 9 | Pending |
-| TRAIN-04 | Phase 9 | Pending |
+| TRAIN-01 | Phase 9 | Complete |
+| TRAIN-02 | Phase 9 | Complete |
+| TRAIN-03 | Phase 9 | Complete |
+| TRAIN-04 | Phase 9 | Complete |
 | TRAIN-05 | Phase 9 | Pending |
-| TRAIN-06 | Phase 9 | Pending |
+| TRAIN-06 | Phase 9 | Complete |
 | TEST-01 | Phase 10 | Pending |
 | TEST-02 | Phase 10 | Pending |
 | TEST-03 | Phase 10 | Pending |
