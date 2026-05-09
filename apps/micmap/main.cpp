@@ -88,8 +88,11 @@ struct MicMapApp {
     std::atomic<float> currentEnergy{0.0f};
     std::atomic<float> currentEnergyDb{-60.0f};
     std::atomic<bool> isDetected{false};
-    std::atomic<bool> isTraining{false};
-    std::atomic<int> trainingSampleCount{0};
+    // P9 09-03 / IPC-06 / D-05 / D-23: the v1.5 client-side training
+    // session flag + sample counter members are deleted here; the driver
+    // owns the training session lifecycle now. hasProfile is preserved to
+    // gate client-side detection rendering and the new "Discard Profile"
+    // UI path until P10 cutover.
     std::atomic<bool> hasProfile{false};
 
     // Button fire tracking (matching mic_test)
@@ -297,6 +300,10 @@ bool MicMapApp::initialize() {
     if (device.sampleRate > 0) {
         detector = detection::createFFTDetector(device.sampleRate, config.detection.fftSize);
         detector->setMinDetectionDuration(config.detection.minDurationMs);
+        // P9 09-03: preserved — client-side detection alive until P10 cutover;
+        // this load also refreshes after a successful POST /training/finalize
+        // per CONTEXT D-24 (the optimistic-apply path lives in the new
+        // finalize-poll handler in the Training pane added by 09-03 Task 2).
         detector->loadTrainingData(configManager->getTrainingDataPath());
     }
 
@@ -399,11 +406,11 @@ bool MicMapApp::initialize() {
             currentLevel = (scaledLevel > 1.0f) ? 1.0f : scaledLevel;
             currentLevelDb = (rms <= 0.0f) ? -60.0f : std::max(-60.0f, 20.0f * std::log10(rms));
 
-            // Training or detection (only detect if we have a profile) - matching mic_test
-            if (isTraining) {
-                detector->addTrainingSample(samples, count);
-                trainingSampleCount++;
-            } else if (detector->hasTrainingData()) {
+            // P9 09-03: client-side training removed (driver is sole trainer per
+            // IPC-06 / 09-CONTEXT D-05 / D-23). Client-side detection still runs
+            // until P10 cutover; only the training-specific call sites are gone.
+            // Detection (only detect if we have a profile) - matching mic_test
+            if (detector->hasTrainingData()) {
                 // Only run detection if we have training data
                 auto result = detector->analyze(samples, count);
                 currentConfidence = result.confidence;
@@ -613,9 +620,11 @@ void MicMapApp::shutdown() {
     // D-12 ordered teardown (reverse-init):
     // 1. Stop audio capture
     if (audioCapture) audioCapture->stopCapture();
-    // 2. Persist detector training (pre-reset) + reset detector
-    if (detector && detector->hasTrainingData() && configManager)
-        detector->saveTrainingData(configManager->getTrainingDataPath());
+    // 2. Reset detector. P9 09-03 / IPC-06 / D-05 / D-23: the prior
+    //    client-side training-data persistence call on shutdown is DELETED
+    //    here — driver is sole writer for training_data.bin (single-writer
+    //    cutover). Client-side detection still loads the profile at startup
+    //    (line ~300) until P10 deletes the client audio path entirely.
     if (detector) detector.reset();
     // 3. Disconnect driver client
     if (driverClient) driverClient->disconnect();
@@ -950,88 +959,11 @@ void MicMapApp::renderUI() {
             validationToastReason.c_str());
     }
 
-    ImGui::Spacing();
-    ImGui::Text("Training");
-    ImGui::Separator();
-
-    // Check for auto-stop training (matching mic_test)
-    // WR-07: finishTraining + saveTrainingData mutate detector internals
-    // (FFT pattern buffers, training-sample accumulators) that the audio
-    // callback reads via addTrainingSample / analyze under audioMutex. Mirror
-    // the WR-03 lock discipline at every UI-thread detector->* call-site.
-    if (isTraining && trainingSampleCount >= MIN_TRAINING_SAMPLES * 3) {
-        if (detector) {
-            bool success;
-            {
-                std::lock_guard<std::mutex> lock(audioMutex);
-                success = detector->finishTraining();
-            }
-            isTraining = false;
-            if (success) {
-                hasProfile = true;
-                if (configManager) {
-                    std::lock_guard<std::mutex> lock(audioMutex);
-                    detector->saveTrainingData(configManager->getTrainingDataPath());
-                }
-            }
-        }
-    }
-
-    if (isTraining) {
-        if (ImGui::Button("Stop Training", ImVec2(120, 30))) {
-            if (detector) {
-                bool success;
-                {
-                    std::lock_guard<std::mutex> lock(audioMutex);
-                    success = detector->finishTraining();
-                }
-                if (success && configManager) {
-                    {
-                        std::lock_guard<std::mutex> lock(audioMutex);
-                        detector->saveTrainingData(configManager->getTrainingDataPath());
-                    }
-                    hasProfile = true;
-                }
-            }
-            isTraining = false;
-        }
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1,0.5f,0,1), "Cover mic now! (%d samples)", trainingSampleCount.load());
-    } else {
-        if (ImGui::Button("Train Pattern", ImVec2(120, 30)) && detector) {
-            // WR-07: startTraining resets the detector's training-sample
-            // accumulator; must be serialized with the audio callback.
-            {
-                std::lock_guard<std::mutex> lock(audioMutex);
-                detector->startTraining();
-            }
-            isTraining = true;
-            trainingSampleCount = 0;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Clear", ImVec2(60, 30)) && detector) {
-            auto dev = audioCapture->getCurrentDevice();
-            if (dev.sampleRate > 0) {
-                // WR-03: detector reassignment must be serialized with the
-                // WASAPI callback. Without this lock the callback can be
-                // mid-`detector->analyze(...)` when the unique_ptr reset
-                // destroys the old detector, which is a classic data race
-                // on a non-atomic unique_ptr.
-                std::lock_guard<std::mutex> lock(audioMutex);
-                detector = detection::createFFTDetector(dev.sampleRate);
-                detector->setMinDetectionDuration(detectionTimeMs);
-            }
-            hasProfile = false;
-            trainingSampleCount = 0;
-        }
-    }
-
-    // Training status (matching mic_test)
-    if (hasProfile) {
-        ImGui::TextColored(ImVec4(0,1,0,1), "Status: Profile trained and ready");
-    } else {
-        ImGui::TextColored(ImVec4(1,0.5f,0,1), "Status: No profile loaded");
-    }
+    // P9 09-03: v1.5 client-side training body DELETED here per CONTEXT D-05/D-23
+    // (single-writer cutover — driver is sole trainer per IPC-06 / TRAIN-AF-01).
+    // The new endpoint-driven Training pane (Train Pattern / Cancel Training /
+    // Recompute Thresholds / Confirm & Save / Discard Preview / Discard Profile)
+    // is inserted by 09-03 Task 2 in this same slot.
 
     ImGui::Spacing();
     ImGui::Text("Audio Levels");
