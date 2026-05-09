@@ -21,6 +21,26 @@
 # 618, 962-1027, then registers this lint as a ctest in tests/CMakeLists.txt
 # (mirrors the P8 D-07 timing for AssertNoConfigWriteInClient).
 #
+# 09-03 Rule-3 narrowing (executor): the IDriverApi training methods
+# (the new endpoint-driven pane) include a method also named
+# IDriverApi::startTraining, which collides with the original token-only
+# regex `[^a-zA-Z0-9_]startTraining`. To allow `driverClient->startTraining`
+# (the new endpoint-driven pane is the very thing 09-03 ships) while still
+# forbidding `detector->startTraining` (the v1.5 PatternTrainer/INoiseDetector
+# entry point that single-writer cutover deletes), we tighten the regex to
+# match the `detector->` member-call form for ALL four PatternTrainer/
+# INoiseDetector entry points. CMake regex has no negative lookbehind, so
+# the qualifier-based narrowing is the simplest way to differentiate the two
+# call surfaces. The intent of the lint is unchanged: client TUs must not
+# call into the v1.5 PatternTrainer/INoiseDetector training surface; they
+# must go through IDriverApi instead. The `detector` identifier is the
+# canonical handle for the INoiseDetector instance throughout
+# apps/micmap/main.cpp (the std::unique_ptr<INoiseDetector> member). Any
+# future TU that wants to access INoiseDetector via a different alias would
+# additionally have to dance around the v1.5 naming convention; that is an
+# acceptable trade-off because the alias-based bypass requires deliberate
+# refactor (caught at code review).
+#
 # Allowlist defense-in-depth (D-06): the canonical invocation passes only
 # `apps/micmap`, but if a future caller widens the scope by mistake, the
 # `apps/mic_test` directory match below still keeps the headless training
@@ -62,24 +82,18 @@ foreach(_root ${CLIENT_ROOTS})
 
         math(EXPR _files_scanned "${_files_scanned} + 1")
         file(READ "${_file}" _content)
-        # Four-condition disjunction: the v1.5 client training entry points.
-        # CMake regex (POSIX-like) does not support \b word-boundary; instead
-        # require a non-identifier char OR start-of-file before the token.
-        # Mirrors the cmake/lint_no_openvr_in_core.cmake "[^a-zA-Z0-9_]vr::"
-        # idiom — prevents matching these tokens as substrings of longer
-        # identifiers (e.g. a hypothetical "myAddTrainingSample" stays unflagged).
-        # Comments and string literals that name these tokens DO match — that
-        # is the intended behaviour: when 09-03 deletes the v1.5 training body
-        # the comments go too, and any future client TU that even mentions
-        # these entry points trips the lint and forces a re-review.
-        if(_content MATCHES "[^a-zA-Z0-9_]addTrainingSample"
-                OR _content MATCHES "[^a-zA-Z0-9_]finishTraining"
-                OR _content MATCHES "[^a-zA-Z0-9_]startTraining"
-                OR _content MATCHES "[^a-zA-Z0-9_]saveTrainingData"
-                OR _content MATCHES "^addTrainingSample"
-                OR _content MATCHES "^finishTraining"
-                OR _content MATCHES "^startTraining"
-                OR _content MATCHES "^saveTrainingData")
+        # Four-condition disjunction: the v1.5 client training entry points
+        # on the PatternTrainer / INoiseDetector surface. The qualifier
+        # `detector->` is the canonical std::unique_ptr<INoiseDetector>
+        # member name across apps/micmap; matching the qualifier-prefixed
+        # form distinguishes these v1.5 entry points from the IDriverApi
+        # endpoint-driven methods on driverClient (which include a method
+        # named startTraining whose call form is `driverClient->startTraining`).
+        # See header comment "09-03 Rule-3 narrowing" for the rationale.
+        if(_content MATCHES "detector->addTrainingSample"
+                OR _content MATCHES "detector->finishTraining"
+                OR _content MATCHES "detector->startTraining"
+                OR _content MATCHES "detector->saveTrainingData")
             list(APPEND _violations "${_file}")
         endif()
     endforeach()

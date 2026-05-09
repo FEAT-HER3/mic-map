@@ -162,11 +162,30 @@ struct MicMapApp {
     std::chrono::steady_clock::time_point lastStatePoll{};
     std::chrono::steady_clock::time_point lastLevelPoll{};
     std::chrono::steady_clock::time_point lastHealthPoll{};
+    // P9 09-03 — 5 Hz training progress poll (visible window only, paused when tray-minimized).
+    std::chrono::steady_clock::time_point lastTrainingPoll{};
 
     // P8 08-05 D-09 — ephemeral PUT /settings validation toast (3 s orange).
     std::string             validationToastField;
     std::string             validationToastReason;
     std::chrono::steady_clock::time_point validationToastUntil{};
+
+    // P9 09-03 — endpoint-driven training pane state (replaces deleted v1.5
+    // client-side training UI body per CONTEXT D-05 / D-23). Driver is sole
+    // trainer (TRAIN-AF-01); UI flows through IDriverApi::startTraining /
+    // getTrainingProgress / finalizeTraining / cancelTraining / recomputeTraining.
+    std::atomic<bool> driverAudioEnabled{false};       // /health.driver_audio_enabled — proactive disable contract
+    std::atomic<bool> driverTrainingActive{false};     // /health.driver_training_active — orphan-recovery
+    struct TrainingUiState {
+        bool active{false};                                            ///< local "client believes a session is in flight"
+        std::chrono::steady_clock::time_point lastPoll{};
+        steamvr::TrainingProgressView lastProgress;
+        std::string toastMessage;
+        std::chrono::steady_clock::time_point toastUntil{};
+        float pendingSensitivity{0.5f};
+        bool showDiscardConfirmModal{false};
+    };
+    TrainingUiState trainingUi_;
 
     bool initialize();
     void shutdown();
@@ -534,6 +553,8 @@ void MicMapApp::pollDriverHealth() {
                 MICMAP_LOG_DEBUG("pollDriverHealth: NotFound (ECONNREFUSED)");
                 driverLoadedIndicator.store(false);
                 steamvrRunningIndicator.store(false);
+                driverAudioEnabled.store(false);
+                driverTrainingActive.store(false);
                 break;
             case steamvr::ConnectResult::Timeout:
                 // Pitfall 6: driver may be alive but slow on /health Read/Write.
@@ -548,7 +569,23 @@ void MicMapApp::pollDriverHealth() {
                 MICMAP_LOG_DEBUG("pollDriverHealth: OtherError (treating as red)");
                 driverLoadedIndicator.store(false);
                 steamvrRunningIndicator.store(false);
+                driverAudioEnabled.store(false);
+                driverTrainingActive.store(false);
                 break;
+        }
+
+        // P9 09-03 — fetch /health full envelope to populate the new
+        // driver_audio_enabled / driver_training_active flags. The proactive
+        // Train-button gate (UI-SPEC §"Idle state") + orphan-recovery hook
+        // (UI-SPEC §"Poll cadences") both consume these atomics. Defensive
+        // nullopt handling: if the GET fails, leave the prior values intact
+        // (no flicker) — the next 1 Hz tick will re-poll.
+        if (driverLoadedIndicator.load()) {
+            auto h = driverClient->getHealth();
+            if (h.has_value()) {
+                driverAudioEnabled.store(h->driver_audio_enabled);
+                driverTrainingActive.store(h->driver_training_active);
+            }
         }
     }
 
@@ -578,6 +615,61 @@ void MicMapApp::pollDriverHealth() {
         if (lvl.has_value()) {
             driverLevelDbfs.store(lvl->dbfs);
             driverLevelRmsNormalized.store(lvl->rms_normalized);
+        }
+    }
+
+    // P9 09-03 — 5 Hz GET /training/progress poll (UI-SPEC §"Poll cadences"):
+    // visible window only (paused while tray-minimized — training requires user
+    // at desk per UI-SPEC). Stop conditions: state == finalized | cancelled,
+    // ECONNREFUSED, user clicks Cancel (which flips trainingUi_.active = false).
+    // The poll handler is also the canonical finalize-success path
+    // (UI-SPEC §"Confirm flow"): on state == finalized we trigger the
+    // optimistic profile reload (CONTEXT D-24) + 3 s "Profile saved" toast.
+    // Orphan recovery: if /health.driver_training_active is observed true
+    // while trainingUi_.active is still false (e.g. session opened by another
+    // client, or this client restarted mid-session), seed the UI from one
+    // synchronous /training/progress fetch.
+    if (!isTrayMode && trainingUi_.active
+            && (now - lastTrainingPoll) >= std::chrono::milliseconds(200)) {
+        lastTrainingPoll = now;
+        auto progress = driverClient->getTrainingProgress();
+        if (progress.has_value()) {
+            trainingUi_.lastProgress = *progress;
+            if (progress->state == "finalized") {
+                // Canonical finalize success path (≤200 ms latency = 1×5Hz interval).
+                trainingUi_.active = false;
+                // Optimistic profile reload (CONTEXT D-24): re-load the on-disk
+                // training_data.bin into the in-memory client-side detector so
+                // local detection picks up the new profile without a restart.
+                // WR-03 / WR-07: serialize with the WASAPI callback.
+                if (detector && configManager) {
+                    std::lock_guard<std::mutex> lock(audioMutex);
+                    detector->loadTrainingData(configManager->getTrainingDataPath());
+                }
+                hasProfile = true;
+                trainingUi_.toastMessage = "Profile saved";
+                trainingUi_.toastUntil = now + std::chrono::seconds(3);
+            } else if (progress->state == "cancelled") {
+                trainingUi_.active = false;
+                // last_error (e.g. training_timed_out_no_samples) is rendered
+                // by the UI block via trainingUi_.lastProgress.last_error.
+            }
+        } else {
+            // ECONNREFUSED / parse fail — drop to P8 1 Hz /health poll, no retry storm.
+            trainingUi_.active = false;
+        }
+    }
+
+    // P9 09-03 orphan recovery (UI-SPEC §"Poll cadences"): observe a driver
+    // training session opened by another client (or surviving a client crash)
+    // by comparing /health.driver_training_active to the local active flag.
+    if (!isTrayMode && !trainingUi_.active && driverTrainingActive.load()) {
+        auto progress = driverClient->getTrainingProgress();
+        if (progress.has_value() && progress->state != "idle"
+                && progress->state != "finalized" && progress->state != "cancelled") {
+            trainingUi_.active = true;
+            trainingUi_.lastProgress = *progress;
+            lastTrainingPoll = now;
         }
     }
 }
@@ -959,11 +1051,219 @@ void MicMapApp::renderUI() {
             validationToastReason.c_str());
     }
 
-    // P9 09-03: v1.5 client-side training body DELETED here per CONTEXT D-05/D-23
-    // (single-writer cutover — driver is sole trainer per IPC-06 / TRAIN-AF-01).
-    // The new endpoint-driven Training pane (Train Pattern / Cancel Training /
-    // Recompute Thresholds / Confirm & Save / Discard Preview / Discard Profile)
-    // is inserted by 09-03 Task 2 in this same slot.
+    // ---- P9 09-03 Training section (endpoint-driven; driver is sole trainer
+    //      per CONTEXT D-05 / D-23 / IPC-06 / TRAIN-AF-01) ----
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Text("Training");
+
+    // Proactive gating (warning fix): driver-loaded AND driver_audio_enabled
+    // (sourced from /health per 09-02 / 09-03 HealthView extension). The
+    // 503 audio_disabled response from POST /training/start is now defense-
+    // in-depth only — covers the race window between health-poll and click.
+    {
+        const bool drv_loaded   = driverLoadedIndicator.load();
+        const bool audio_on     = driverAudioEnabled.load();
+
+        if (!trainingUi_.active) {
+            // ---- IDLE STATE (UI-SPEC §"Idle state") ----
+            const bool can_train = drv_loaded && audio_on;
+
+            ImGui::BeginDisabled(!can_train);
+            if (ImGui::Button("Train Pattern", ImVec2(120, 30))) {
+                auto result = driverClient->startTraining();
+                switch (result.status) {
+                    case steamvr::TrainingResult::Ok:
+                        trainingUi_.active = true;
+                        trainingUi_.lastProgress = steamvr::TrainingProgressView{};
+                        trainingUi_.lastProgress.state = "collecting";
+                        // Force the next /training/progress poll to fire on the
+                        // next pollDriverHealth tick (no 200 ms delay) so the UI
+                        // updates promptly with real driver-side sample counts.
+                        lastTrainingPoll = std::chrono::steady_clock::now()
+                                           - std::chrono::milliseconds(200);
+                        break;
+                    case steamvr::TrainingResult::Conflict:
+                        // Orphan recovery — another session is already active.
+                        trainingUi_.active = true;
+                        trainingUi_.toastMessage = "Training already in progress";
+                        trainingUi_.toastUntil = std::chrono::steady_clock::now()
+                                                 + std::chrono::seconds(3);
+                        break;
+                    case steamvr::TrainingResult::OtherError:
+                        if (result.errorField.value_or("") == "audio_disabled") {
+                            // Defense-in-depth fallback — proactive gate above
+                            // SHOULD have prevented this click, but the race
+                            // window between health-poll and click can still
+                            // produce 503.
+                            trainingUi_.toastMessage =
+                                "Driver audio is disabled - enable in driver settings to train";
+                            trainingUi_.toastUntil = std::chrono::steady_clock::now()
+                                                     + std::chrono::seconds(3);
+                        }
+                        break;
+                    case steamvr::TrainingResult::ConnectionFailed:
+                    case steamvr::TrainingResult::ValidationFailed:
+                        break;
+                }
+            }
+            ImGui::EndDisabled();
+
+            // Hint copy under disabled button (UI-SPEC §"Idle state").
+            if (!drv_loaded) {
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Driver not loaded - settings cannot be changed");
+                }
+            } else if (!audio_on) {
+                ImGui::TextColored(ImVec4(1, 0.5f, 0, 1),
+                    "Driver audio is disabled - enable in driver settings to train");
+            }
+
+            if (hasProfile.load()) {
+                ImGui::SameLine();
+                if (ImGui::Button("Discard Profile", ImVec2(120, 24))) {
+                    trainingUi_.showDiscardConfirmModal = true;
+                }
+            }
+
+            // Status line (UI-SPEC §"Idle state").
+            if (hasProfile.load()) {
+                ImGui::TextColored(ImVec4(0, 1, 0, 1), "Status: Profile trained and ready");
+            } else {
+                ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "Status: No profile loaded");
+            }
+
+            // Discard Profile destructive modal (UI-SPEC §"Destructive Confirmations").
+            if (trainingUi_.showDiscardConfirmModal) {
+                ImGui::OpenPopup("Discard trained profile?");
+                trainingUi_.showDiscardConfirmModal = false;
+            }
+            if (ImGui::BeginPopupModal("Discard trained profile?", nullptr,
+                                       ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextWrapped(
+                    "Your client-side detection will stop using this profile until "
+                    "you train again or restart the driver. The on-disk profile "
+                    "(used by the driver) is unaffected.");
+                ImGui::Spacing();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.86f, 0.20f, 0.20f, 1));
+                if (ImGui::Button("Discard", ImVec2(120, 30))) {
+                    // Drop the in-memory profile by re-creating the detector.
+                    // WR-03 / WR-07: serialize with the WASAPI callback.
+                    if (detector && audioCapture) {
+                        auto dev = audioCapture->getCurrentDevice();
+                        if (dev.sampleRate > 0) {
+                            std::lock_guard<std::mutex> lock(audioMutex);
+                            detector = detection::createFFTDetector(dev.sampleRate);
+                            detector->setMinDetectionDuration(detectionTimeMs);
+                        }
+                    }
+                    hasProfile = false;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::PopStyleColor();
+                ImGui::SameLine();
+                if (ImGui::Button("Keep", ImVec2(120, 30))) {
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+        } else {
+            // ---- ACTIVE STATES (UI-SPEC §"Collecting / Computing / Ready") ----
+            const auto& progress = trainingUi_.lastProgress;
+            if (progress.state == "collecting") {
+                ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "Cover mic now!");
+                const float ratio = (progress.target > 0)
+                    ? static_cast<float>(progress.samples_collected)
+                      / static_cast<float>(progress.target)
+                    : 0.0f;
+                char overlay[64];
+                std::snprintf(overlay, sizeof(overlay), "%zu/%zu samples",
+                              progress.samples_collected, progress.target);
+                ImGui::ProgressBar(ratio, ImVec2(-1, 18), overlay);
+                if (ImGui::Button("Cancel Training", ImVec2(120, 30))) {
+                    driverClient->cancelTraining();
+                    trainingUi_.active = false;
+                }
+            } else if (progress.state == "computing") {
+                ImGui::Text("Computing thresholds...");
+                ImGui::ProgressBar(1.0f, ImVec2(-1, 18), "Computing");
+            } else if (progress.state == "ready") {
+                ImGui::TextWrapped(
+                    "Preview ready - confirm to save, or recompute with a "
+                    "different sensitivity");
+                ImGui::Spacing();
+                ImGui::Text("Preview thresholds");
+                if (progress.thresholds_preview.has_value()) {
+                    const auto& p = *progress.thresholds_preview;
+                    ImGui::Text("Sensitivity: %.2f", p.sensitivity);
+                    ImGui::Text("Energy threshold: %.4f", p.energy_threshold);
+                    ImGui::Text("Spectral profile: mean %.3f, stddev %.3f, %zu bins",
+                                p.spectral_profile_summary.mean,
+                                p.spectral_profile_summary.stddev,
+                                p.spectral_profile_summary.size);
+                }
+                ImGui::Spacing();
+                ImGui::Text("Recompute sensitivity:");
+                ImGui::SetNextItemWidth(-1);
+                ImGui::SliderFloat("##recompute_sensitivity",
+                                   &trainingUi_.pendingSensitivity, 0.0f, 1.0f, "%.2f");
+                if (ImGui::Button("Recompute Thresholds", ImVec2(140, 30))) {
+                    auto r = driverClient->recomputeTraining(trainingUi_.pendingSensitivity);
+                    if (r.status == steamvr::TrainingResult::ValidationFailed) {
+                        trainingUi_.toastMessage =
+                            "Invalid sensitivity: must be between 0.0 and 1.0";
+                        trainingUi_.toastUntil = std::chrono::steady_clock::now()
+                                                 + std::chrono::seconds(3);
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Confirm & Save", ImVec2(140, 30))) {
+                    // Canonical finalize flow (UI-SPEC §"Confirm flow"):
+                    // direct response is checked ONLY for error envelopes
+                    // (ValidationFailed / Conflict). The success transition
+                    // (200 OK -> state=="finalized") is observed by the next
+                    // /training/progress poll (<=200 ms latency = 1x5Hz
+                    // interval); the poll handler triggers the optimistic
+                    // profile reload + "Profile saved" toast.
+                    auto r = driverClient->finalizeTraining(/*confirm=*/true);
+                    if (r.status == steamvr::TrainingResult::ValidationFailed
+                            || r.status == steamvr::TrainingResult::Conflict) {
+                        trainingUi_.toastMessage =
+                            "Could not save profile - try training again";
+                        trainingUi_.toastUntil = std::chrono::steady_clock::now()
+                                                 + std::chrono::seconds(3);
+                        trainingUi_.active = false;
+                    }
+                    // On TrainingResult::Ok: do nothing here. The next
+                    // progress poll observes state=="finalized" within <=200 ms
+                    // and triggers the success toast + reload via the
+                    // canonical poll-driven path.
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Discard Preview", ImVec2(120, 24))) {
+                    driverClient->cancelTraining();
+                    trainingUi_.active = false;
+                }
+            }
+        }
+
+        // Toast rendering (UI-SPEC §"Error / failure copywriting").
+        if (!trainingUi_.toastMessage.empty()
+                && std::chrono::steady_clock::now() < trainingUi_.toastUntil) {
+            ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "%s",
+                               trainingUi_.toastMessage.c_str());
+        }
+
+        // Last-error rendering for training_timed_out_no_samples
+        // (UI-SPEC §"Error / failure copywriting" — destructive red).
+        if (trainingUi_.lastProgress.last_error.has_value()
+                && trainingUi_.lastProgress.last_error.value()
+                       == "training_timed_out_no_samples") {
+            ImGui::TextColored(ImVec4(0.86f, 0.20f, 0.20f, 1),
+                "Training timed out - no samples collected in 30 s");
+        }
+    }
+    // ---- end P9 09-03 Training section ----
 
     ImGui::Spacing();
     ImGui::Text("Audio Levels");
