@@ -10,10 +10,11 @@ set(MICMAP_SOURCES
 )
 
 # ---- app.vrmanifest generation (Plan 03-02 — D-19) -----------------------
-# Explicit set() for MICMAP_VERSION per RESEARCH §Pitfall 10 — guards against
-# stale substitutions when project() VERSION is bumped upstream. Use @ONLY so
-# only @TOKEN@ markers are substituted (prevents accidental ${...} expansion
-# inside JSON values).
+# Phase 10 / D-18: MICMAP_VERSION now flows from cmake/version.cmake (the SSoT
+# included at root level). The prior `set(MICMAP_VERSION ${PROJECT_VERSION})`
+# line is gone — MICMAP_VERSION is in cache scope here via the root include().
+# Use @ONLY so only @TOKEN@ markers are substituted (prevents accidental
+# ${...} expansion inside JSON values).
 #
 # configure_file() does not honor generator expressions in its OUTPUT path, so
 # we emit to ${CMAKE_CURRENT_BINARY_DIR} and copy into the per-config runtime
@@ -21,7 +22,6 @@ set(MICMAP_SOURCES
 # (test_vrmanifest_schema) reads from ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/
 # under multi-config generators (MSBuild), so the POST_BUILD copy is the
 # load-bearing step.
-set(MICMAP_VERSION ${PROJECT_VERSION})
 set(MICMAP_APP_KEY "bigscreen.micmap")
 
 configure_file(
@@ -36,6 +36,27 @@ configure_file(
 
 add_executable(micmap WIN32
     ${MICMAP_SOURCES}
+)
+
+# Phase 10 / D-18: VS_VERSION_INFO from the SSoT.
+# configure_file substitutes @MICMAP_VERSION@ + @MICMAP_VERSION_QUAD@ from
+# cmake/version.cmake into apps/micmap/micmap.rc.in -> build/.../micmap.rc;
+# target_sources adds the generated .rc to the link line so the resource
+# compiler embeds VS_VERSION_INFO into micmap.exe. The icon path token uses
+# an absolute source-tree path so the generated .rc (in build/) can find
+# installer/micmap.ico regardless of where the build dir lives.
+set(MICMAP_ICON_PATH "${CMAKE_SOURCE_DIR}/installer/micmap.ico")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/micmap.rc.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/micmap.rc"
+    @ONLY
+)
+target_sources(micmap PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/micmap.rc")
+
+# Phase 10 / D-18: SSoT version string compile define (used by main.cpp's
+# version-mismatch check landing in 10-06 via apps/micmap/src/version_mismatch.cpp).
+target_compile_definitions(micmap PRIVATE
+    MICMAP_VERSION_STRING="${MICMAP_VERSION}"
 )
 
 # Phase 5 D-09: micmap.exe links the new shared runtime aggregate AND keeps

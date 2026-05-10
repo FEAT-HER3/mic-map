@@ -61,8 +61,12 @@ static void driverLogSink(const char* msg) {
     DriverLog("%s", msg);
 }
 
-#ifndef MICMAP_DRIVER_VERSION
-#define MICMAP_DRIVER_VERSION "0.0.0"
+// Phase 10 / D-18: renamed from MICMAP_DRIVER_VERSION -> MICMAP_VERSION_STRING
+// (single canonical define across driver + client binaries; flows from
+// cmake/version.cmake's MICMAP_VERSION SSoT via target_compile_definitions
+// in driver/CMakeLists.txt).
+#ifndef MICMAP_VERSION_STRING
+#define MICMAP_VERSION_STRING "0.0.0"
 #endif
 
 namespace micmap::driver {
@@ -801,7 +805,7 @@ void DeviceProvider::RunFrame() {
     // 0. First-frame init log (SVR-10 / Pitfall 11).
     if (!initLogged_) {
         DriverLog("MicMap driver v%s built %s %s - RunFrame starting\n",
-                  MICMAP_DRIVER_VERSION, __DATE__, __TIME__);
+                  MICMAP_VERSION_STRING, __DATE__, __TIME__);
         initLogged_ = true;
     }
 

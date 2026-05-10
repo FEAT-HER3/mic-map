@@ -87,10 +87,26 @@ target_link_libraries(driver_micmap PRIVATE micmap::bindings)
 #   symbol is referenced. Phases 6/7 lift the link-only restriction.
 target_link_libraries(driver_micmap PRIVATE micmap::core_runtime)
 
-# Version string used in SVR-10 init log line
+# Phase 10 / D-18: SSoT version string compile define (renamed from
+# MICMAP_DRIVER_VERSION to MICMAP_VERSION_STRING — same canonical define
+# name across both driver_micmap and micmap binaries; consumed by
+# device_provider.cpp's RunFrame init log line at line 803-804).
+# MICMAP_VERSION flows from cmake/version.cmake (the SSoT included at root).
 target_compile_definitions(driver_micmap PRIVATE
-    MICMAP_DRIVER_VERSION="${PROJECT_VERSION}"
+    MICMAP_VERSION_STRING="${MICMAP_VERSION}"
 )
+
+# Phase 10 / D-18: VS_VERSION_INFO resource for driver_micmap.dll.
+# configure_file substitutes @MICMAP_VERSION@ + @MICMAP_VERSION_QUAD@ from
+# cmake/version.cmake into driver/driver_micmap.rc.in -> build/.../driver_micmap.rc;
+# target_sources adds the generated .rc so the resource compiler embeds
+# VS_VERSION_INFO into the DLL.
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/driver_micmap.rc.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/driver_micmap.rc"
+    @ONLY
+)
+target_sources(driver_micmap PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/driver_micmap.rc")
 
 # Warnings-as-errors -- enforces Pitfall 7 "unused code = dead code" check on the rip-out
 if(MSVC)

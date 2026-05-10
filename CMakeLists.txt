@@ -4,11 +4,18 @@
 
 cmake_minimum_required(VERSION 3.20)
 
-project(MicMap 
-    VERSION 0.1.0 
+project(MicMap
+    VERSION 1.6.0
     DESCRIPTION "SteamVR add-on for hands-free interaction via microphone pattern detection"
     LANGUAGES CXX
 )
+# Phase 10 / D-18 / Rule 3: PROJECT_VERSION bumped from 0.1.0 -> 1.6.0 to
+# co-version with cmake/version.cmake's MICMAP_VERSION="1.6.0" SSoT below.
+# The existing ISCC /DMICMAP_VERSION=${PROJECT_VERSION} pass at the bottom
+# of this file relies on the value matching the SSoT for Wave 1 (10-06
+# removes the /D pass entirely). Without this bump the /D pass would
+# stamp installer artifacts with 0.1.0 while VERSIONINFO + version.iss
+# read 1.6.0 — the drift the lint is meant to catch.
 
 # C++ Standard
 set(CMAKE_CXX_STANDARD 17)
@@ -35,6 +42,21 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # Add cmake module path
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+
+# ---------------------------------------------------------------------
+# Phase 10 / INST-09 / D-18: single-version source-of-truth.
+# cmake/version.cmake defines MICMAP_VERSION (semver) + MICMAP_VERSION_QUAD
+# (RC FILEVERSION/PRODUCTVERSION numeric quad). Driver, client, generated
+# installer/version.iss, and VS_VERSION_INFO RC resources all read from here.
+# AssertCoVersioning lint (cmake/AssertCoVersioning.cmake) enforces the
+# co-versioning invariant on every configure.
+# ---------------------------------------------------------------------
+include(cmake/version.cmake)
+configure_file(
+    "${CMAKE_SOURCE_DIR}/installer/version.iss.in"
+    "${CMAKE_SOURCE_DIR}/installer/version.iss"
+    @ONLY
+)
 
 # Platform-specific settings
 if(WIN32)
@@ -148,6 +170,12 @@ else()
             --config  $<CONFIG>
 
         # Step 3: compile the .iss -> MicMap-Setup-v${VERSION}.exe
+        # NOTE (P10 D-18 / Wave 1): the /DMICMAP_VERSION pass below duplicates
+        # the SSoT for one wave so the existing installer build keeps working
+        # while installer/version.iss.in is plumbed in. Plan 10-06 removes
+        # this /D pass after MicMap.iss adopts `#include "version.iss"`. Until
+        # then, AssertCoVersioning verifies PROJECT_VERSION == MICMAP_VERSION
+        # so the two values cannot drift undetected.
         COMMAND ${CMAKE_COMMAND} -E make_directory "${MICMAP_INSTALLER_DIR}"
         COMMAND "${ISCC_EXECUTABLE}"
                 "/DMICMAP_VERSION=${PROJECT_VERSION}"

@@ -36,3 +36,8 @@
 
 # ImGui runtime layout state
 imgui.ini
+
+# Phase 10 / INST-09 / D-18: configure_file() artifact (SSoT version bake).
+# Generated from installer/version.iss.in by root CMakeLists.txt; never
+# commit (the template is the source of truth, the .iss is the build product).
+installer/version.iss

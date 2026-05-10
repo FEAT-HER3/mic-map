@@ -1,0 +1,41 @@
+/**
+ * @file driver_micmap.rc.in
+ * @brief Resource file template for MicMap SteamVR driver DLL
+ *        (configure_file substitutes @MICMAP_VERSION@ + @MICMAP_VERSION_QUAD@
+ *        from cmake/version.cmake; output:
+ *        ${CMAKE_CURRENT_BINARY_DIR}/driver_micmap.rc).
+ * @note  DO NOT EDIT the generated driver_micmap.rc — change cmake/version.cmake
+ *        and the strings here, then reconfigure.
+ */
+
+#include <windows.h>
+
+// Version information — Phase 10 / INST-09 / D-18 SSoT.
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     @MICMAP_VERSION_QUAD@
+PRODUCTVERSION  @MICMAP_VERSION_QUAD@
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+FILEFLAGS       0
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_DLL
+FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "MicMap"
+            VALUE "FileDescription",  "MicMap SteamVR driver - sidecar-on-HMD trigger pipeline"
+            VALUE "FileVersion",      "@MICMAP_VERSION@.0"
+            VALUE "InternalName",     "driver_micmap"
+            VALUE "LegalCopyright",   "Copyright (C) 2026 FEATHER3 SOFTWORKS"
+            VALUE "OriginalFilename", "driver_micmap.dll"
+            VALUE "ProductName",      "MicMap Driver"
+            VALUE "ProductVersion",   "@MICMAP_VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
