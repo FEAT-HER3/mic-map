@@ -753,7 +753,7 @@ void MicMapApp::renderUI() {
         // Headline -- pill-red so it visually pops against the existing white "State:" /
         // green "Driver: Loaded" / orange "Driver: Not loaded" lines.
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.3f, 1.0f));
-        ImGui::TextWrapped("%s", pill.headlineText.c_str());
+        ImGui::TextWrapped("%s", pill.text.c_str());
         ImGui::PopStyleColor();
 
         // Action button -- ShellExecuteW the deep-link URI. ASCII-safe conversion is

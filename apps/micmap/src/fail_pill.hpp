@@ -36,7 +36,7 @@ enum class FailKind {
 
 struct FailPill {
     FailKind kind{FailKind::None};
-    std::string headlineText;     ///< e.g., "Mic access blocked"
+    std::string text;             ///< Headline/body text, e.g., "Mic access blocked" or "Version mismatch -- driver vX.Y.Z vs client vA.B.C". Field name "text" matches the Wave 0 RED scaffold tests/test_version_mismatch.cpp; 10-03's tests/test_fail_pill_priority.cpp does not reference this field by name (rename does not regress).
     std::string actionLabel;      ///< e.g., "Open Windows mic settings"; empty for no action button
     std::string deepLink;         ///< e.g., "ms-settings:privacy-microphone"; empty if no shell-launch (test scaffold names this field "deepLink"; render path passes it to ShellExecuteW)
     bool dismissable{false};      ///< true -> render Dismiss button that POSTs /state/clear-error (D-10)
