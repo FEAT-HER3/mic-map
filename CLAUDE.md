@@ -61,7 +61,13 @@ This dev machine **is** the Bigscreen Beyond + Win11 Pro UAT rig — `vrpathreg 
 - `build/driver/micmap/bin/win64/driver_micmap.dll` → `…/micmap/bin/win64/driver_micmap.dll`
 - `build/bin/Debug/micmap.exe` → `…/micmap/bin/micmap.exe`
 
-Always backup the installed file as `<name>.preuat.bak` before a UAT-flavored install; restore from `driver/resources/settings/default.vrsettings` (canonical pristine source) post-UAT — D-40 demands `enable_driver_audio=false` AND `enable_driver_detection=false` after sign-off.
+Always backup the installed file as `<name>.preuat.bak` before a UAT-flavored install; restore from `driver/resources/settings/default.vrsettings` (canonical pristine source) only when a FAIL needs investigation (no longer routine post-UAT cleanup — see Post-Phase-10 default state below).
+
+**Post-Phase-10 default state** (ships as TRUE):
+- `enable_driver_audio: true` AND `enable_driver_detection: true` are the new shipped defaults per Phase 10 D-25 (P10 OWNS the flip; supersedes the P6–P9 D-40 post-UAT-OFF discipline).
+- The driver runs detection end-to-end by default; client is settings + driver-health UI only post-cutover.
+- D-02 emergency override: a user CAN edit `default.vrsettings` to `false` for debugging, but installer upgrades will overwrite (Pitfall 9 acceptance — install-scoped, not a runtime config knob).
+- The on-rig install at `<Steam>/drivers/micmap/` is the shipped reference for the post-cutover defaults; restore from `driver/resources/settings/default.vrsettings` (canonical pristine source) for clean-state debugging.
 
 **Runtime HTTP port**: `27015` on `127.0.0.1` (per source `driver/resources/settings/default.vrsettings`). Older planning docs may reference `27115` — that was a draft value, never shipped.
 
