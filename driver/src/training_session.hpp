@@ -158,6 +158,18 @@ public:
     ///        Returns true iff a state transition occurred this call.
     bool tickTimeout(std::chrono::steady_clock::time_point now);
 
+    /// @brief Detection-thread. Called once per detection-runner ring
+    ///        drain after addSample(). If state == Collecting and
+    ///        samples_collected >= target, runs compute() inline to
+    ///        transition Collecting -> Ready (or Cancelled on
+    ///        insufficient_samples_or_invalid_data). Required because
+    ///        the UI-SPEC's "Cover mic -> Ready preview" flow assumes
+    ///        the driver auto-transitions when samples reach the
+    ///        configured target — neither addSample nor finalize alone
+    ///        provide that path. UAT D-39(1)/(3) gap fix.
+    ///        Returns true iff compute() succeeded (state moved to Ready).
+    bool maybeAutoCompute();
+
     /// @brief HTTP-thread. Explicit cancel (POST /training/cancel
     ///        handler). Idempotent — safe to call from any non-Finalized
     ///        state (D-13). On Finalized: no-op.

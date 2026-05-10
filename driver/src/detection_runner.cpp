@@ -541,6 +541,13 @@ void DetectionRunner::RunLoop() {
                 if (deviceProvider_ != nullptr) {
                     if (auto* session = deviceProvider_->trainingSession()) {
                         session->addSample(block.data(), block_count);
+                        // UAT D-39(1)/(3) gap fix: drive Collecting -> Ready
+                        // when samples_collected reaches target. Without this,
+                        // the UI-SPEC's "Cover mic -> Ready preview" flow is
+                        // unreachable from a fresh session — recompute requires
+                        // Ready, but no path transitioned out of Collecting
+                        // except finalize{confirm:true} which immediately saves.
+                        session->maybeAutoCompute();
                     }
                 }
             }

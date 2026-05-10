@@ -180,6 +180,19 @@ bool TrainingSession::tickTimeout(std::chrono::steady_clock::time_point now) {
     return true;
 }
 
+bool TrainingSession::maybeAutoCompute() {
+    // Probe state + sample count under mu_, then release before compute()
+    // (compute() re-acquires mu_; we cannot nest). The window between unlock
+    // and compute() can race with cancel() / finalize() — compute() handles
+    // the not-in-Collecting case via its own early-return so the race is safe.
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (state_ != SessionState::Collecting) return false;
+        if (samples_collected_.load(std::memory_order_acquire) < target_) return false;
+    }
+    return !compute().has_value();
+}
+
 void TrainingSession::cancel() {
     std::lock_guard<std::mutex> lock(mu_);
     if (state_ == SessionState::Finalized) return;   // idempotent (D-13)
