@@ -182,15 +182,15 @@ else()
             --config  $<CONFIG>
 
         # Step 3: compile the .iss -> MicMap-Setup-v${VERSION}.exe
-        # NOTE (P10 D-18 / Wave 1): the /DMICMAP_VERSION pass below duplicates
-        # the SSoT for one wave so the existing installer build keeps working
-        # while installer/version.iss.in is plumbed in. Plan 10-06 removes
-        # this /D pass after MicMap.iss adopts `#include "version.iss"`. Until
-        # then, AssertCoVersioning verifies PROJECT_VERSION == MICMAP_VERSION
-        # so the two values cannot drift undetected.
+        # P10 D-18 / Wave 6: redundant /DMICMAP_VERSION pass REMOVED -- the
+        # `#include "version.iss"` at the top of installer/MicMap.iss is now the
+        # sole authority for {#MICMAP_VERSION}, populated from cmake/version.cmake
+        # via configure_file(installer/version.iss.in -> installer/version.iss).
+        # AssertCoVersioning lint enforces the value-match between the cmake-side
+        # MICMAP_VERSION and the value baked into the generated version.iss on
+        # every configure.
         COMMAND ${CMAKE_COMMAND} -E make_directory "${MICMAP_INSTALLER_DIR}"
         COMMAND "${ISCC_EXECUTABLE}"
-                "/DMICMAP_VERSION=${PROJECT_VERSION}"
                 "/DSTAGE_DIR=${MICMAP_STAGE_DIR}"
                 "/DOUTPUT_DIR=${MICMAP_INSTALLER_DIR}"
                 "${MICMAP_ISS_FILE}"
