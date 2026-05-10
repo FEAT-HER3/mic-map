@@ -46,7 +46,8 @@ namespace micmap::client {
 
 struct HealthSnapshot {
     bool driverLoaded{false};                  ///< /health responded 200 OK (FAIL-02 surface)
-    std::string driverVersion;                 ///< populated by 10-03 D-19 wiring; empty in Wave 2
+    bool econnrefused{false};                  ///< 10-03 / FAIL-02 vs FAIL-03: last poll saw ECONNREFUSED (driver unreachable). Distinct from !driverLoaded so the FAIL pill can disambiguate "driver loaded but transient timeout" from "driver not loaded at all". Test scaffold tests/test_fail_pill_priority.cpp brace-inits this field positionally.
+    std::string driverVersion;                 ///< populated by 10-03 D-19 wiring (driver /health emits driver_version); empty when /health did not respond 200
     bool driverDetectionActive{false};         ///< /health.driver_detection_active (P7 D-09)
     bool driverTrainingActive{false};          ///< /health.driver_training_active (P9 D-07)
 };
