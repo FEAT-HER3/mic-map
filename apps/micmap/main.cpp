@@ -39,6 +39,7 @@
 #include "micmap/steamvr/manifest_registrar.hpp"
 #include "micmap/bindings/bindings_patcher.hpp"
 #include "first_launch_balloon.hpp"
+#include "src/tray_glyph.hpp"   // Phase 10 / HEALTH-08 D-04: tray-icon state glyphs
 #ifdef MICMAP_HAS_OPENVR
 #include <openvr.h>
 #endif
@@ -196,6 +197,12 @@ struct MicMapApp {
 
 static MicMapApp g_app;
 
+// Phase 10 / HEALTH-08 D-04..D-06: tray-icon state glyphs.
+// Persistent HICONs are loaded once at WinMain startup (Pitfall 2 — no per-swap
+// allocation); applyTrayGlyph() called from pollDriverHealth() each tick;
+// destroyTrayIcons() called at WinMain teardown.
+static micmap::client::TrayState g_tray;
+
 bool CreateDeviceD3D(HWND hWnd);
 void CleanupDeviceD3D();
 void CreateRenderTarget();
@@ -273,6 +280,16 @@ void SetupSystemTray(HWND hwnd) {
         MICMAP_LOG_WARNING("Shell_NotifyIconW(NIM_ADD) failed; tray icon may be missing (GetLastError=",
                            GetLastError(), ")");
     }
+
+    // Phase 10 / HEALTH-08 D-04: load 3 tray glyphs once (Pitfall 2 — no per-swap
+    // allocation). The boot-time icon (LoadIcon IDI_APPLICATION above) stays in
+    // place until pollDriverHealth() calls applyTrayGlyph() for the first time
+    // and swaps to tray_armed.ico (or tray_error.ico if the driver is down at
+    // startup). initTrayIcons logs WARNINGs on partial-load and is otherwise
+    // best-effort — applyTrayGlyph silently no-ops on null HICON, so a missing
+    // .ico file degrades to "no glyph swap", never to a crash.
+    HINSTANCE hInst = reinterpret_cast<HINSTANCE>(::GetModuleHandleW(nullptr));
+    micmap::client::initTrayIcons(hInst, g_tray);
 }
 
 bool MicMapApp::initialize() {
@@ -672,6 +689,36 @@ void MicMapApp::pollDriverHealth() {
             lastTrainingPoll = now;
         }
     }
+
+    // Phase 10 / HEALTH-08 D-04..D-06: derive + apply the tray glyph from the
+    // SAME poll envelope (no new poll, no new thread per D-06). Materialize the
+    // snapshot inputs from the atomics + healthMu-guarded fields populated above
+    // (P8 inlined the JSON parse; the dedicated HealthSnapshot/StateSnapshot
+    // structs live only on this poll-tick stack frame).
+    micmap::client::HealthSnapshot healthSnap;
+    healthSnap.driverLoaded            = driverLoadedIndicator.load();
+    healthSnap.driverDetectionActive   = false;   // populated by getHealth() if needed in 10-03
+    healthSnap.driverTrainingActive    = driverTrainingActive.load();
+
+    micmap::client::StateSnapshot stateSnap;
+    {
+        std::lock_guard<std::mutex> lk(healthMu);
+        stateSnap.detectionState   = detectionStateStr;
+        stateSnap.lastError        = lastError;
+        stateSnap.audioDeviceState = audioDeviceState;
+    }
+
+    // Start the 300ms pulse window when /state.detection_state == "triggered".
+    // The window is held in g_tray.lastTriggeredAt and consumed by the next
+    // deriveTrayGlyph call(s) until the elapsed delta exceeds 300ms — at which
+    // point the glyph naturally falls back to Armed (or Error if a fail-pill
+    // condition appeared in the meantime).
+    if (stateSnap.detectionState == "triggered") {
+        g_tray.lastTriggeredAt = now;
+    }
+    const auto desired = micmap::client::deriveTrayGlyph(
+        healthSnap, stateSnap, g_tray.lastTriggeredAt, now);
+    micmap::client::applyTrayGlyph(nid, g_tray, desired);
 }
 
 void MicMapApp::shutdown() {
@@ -740,6 +787,11 @@ void MicMapApp::shutdown() {
         }
         nid.cbSize = 0;  // mark removed so re-entry into shutdown is a no-op
     }
+    // Phase 10 / HEALTH-08: release the 3 persistent HICONs (Pitfall 2).
+    // destroyTrayIcons is idempotent — null pointers are skipped — so a
+    // second shutdown() call (already guarded by alreadyShutdown above) or
+    // a partial-load init at startup leaves nothing dangling.
+    micmap::client::destroyTrayIcons(g_tray);
     // Steps 7-8 (ImGui shutdown, D3D/window cleanup, UnregisterClassW) are
     // handled by WinMain's tail after shutdown() returns — preserves the
     // existing call-site topology.
@@ -1337,6 +1389,32 @@ void MicMapApp::renderUI() {
 
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam)) return true;
+
+    // Phase 10 Pitfall 1 mitigation: explorer.exe restart broadcasts the
+    // RegisterWindowMessageW(L"TaskbarCreated") message to all top-level
+    // windows. The static UINT is initialized once on first call (RegisterWindowMessage
+    // is idempotent); subsequent calls are integer comparisons. On receipt we
+    // re-NIM_ADD the icon (the explorer-side state was lost) and force the
+    // next pollDriverHealth() tick to re-apply the current glyph by inverting
+    // ts.current — applyTrayGlyph's idempotency check then sees a mismatch
+    // and runs Shell_NotifyIconW again.
+    static const UINT WM_TASKBAR_CREATED = ::RegisterWindowMessageW(L"TaskbarCreated");
+    if (WM_TASKBAR_CREATED != 0 && msg == WM_TASKBAR_CREATED) {
+        if (g_app.nid.cbSize != 0) {
+            if (!Shell_NotifyIconW(NIM_ADD, &g_app.nid)) {
+                MICMAP_LOG_WARNING("WM_TASKBAR_CREATED: NIM_ADD re-registration failed (GLE=",
+                                   GetLastError(), ")");
+            }
+            // Force next applyTrayGlyph() to re-issue NIM_MODIFY (idempotency
+            // check would otherwise skip the swap because g_tray.current still
+            // equals the desired glyph).
+            g_tray.current = (g_tray.current == micmap::client::TrayGlyph::Armed)
+                                 ? micmap::client::TrayGlyph::Error
+                                 : micmap::client::TrayGlyph::Armed;
+        }
+        return 0;
+    }
+
     switch (msg) {
         case WM_SIZE:
             if (g_pd3dDevice && wParam != SIZE_MINIMIZED) {
