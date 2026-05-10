@@ -190,6 +190,28 @@ void HttpServer::SetupRoutes() {
         }
     });
 
+#if MICMAP_DEBUG_BUILD
+    // Phase 10 / TEST-02 / D-11: debug-build-only synthetic-trigger endpoint.
+    // Same producer pattern as /button (10-05 deletes /button; this route
+    // remains the sole HTTP-thread producer of TapCommand on the queue in
+    // Debug builds). SVR-05 invariant preserved (no OpenVR API surface on the
+    // HTTP thread — RunFrame consumes the TapCommand and dispatches the
+    // actual trigger; AssertHttpServerNoVrApi lint stays GREEN).
+    // Only registered when MICMAP_DEBUG_BUILD == 1 — Release builds compile
+    // this block to nothing and the route is structurally absent (curl returns
+    // 404). The queue_ ref is non-null for the lifetime of HttpServer (set in
+    // the ctor's member-init list); the conditional below mirrors the v1.5
+    // /button shape so the same diagnostic envelope appears if a future
+    // refactor ever optionalizes the queue. POST-only — synthetic trigger is
+    // a state-mutating action; no body is consumed in v1.6 (Discretion §
+    // debug-trigger parameterization — defer parameterization).
+    server_->Post("/debug/trigger", [this](const httplib::Request&, httplib::Response& res) {
+        queue_.push(TapCommand{});
+        res.status = 200;
+        res.set_content(R"({"ok":true})", "application/json");
+    });
+#endif
+
     // GET /health — liveness + port-probe endpoint (used by DriverClient).
     // P7 D-09: emit `driver_detection_active` so the client can suppress its
     // own POST /button trigger when the driver owns the detection path. Field
