@@ -62,6 +62,70 @@
 
 using namespace micmap;
 
+#if MICMAP_DEBUG_BUILD
+#include <iostream>   // std::wcerr for --debug-trigger error reporting (Debug-build-only)
+
+namespace {
+
+// Phase 10 / TEST-02 / D-12: --debug-trigger CLI short-circuit.
+//
+// Mirror of apps/mic_test/main.cpp:150 tryRunReplayCli pattern (P9-04). When
+// `--debug-trigger` appears in argv, instantiate IDriverApi via the existing
+// factory, call debugTrigger() (which POSTs /debug/trigger on the driver),
+// and return an exit code per HTTP result:
+//   0 = HTTP 200 (TapCommand enqueued; HMD dashboard toggles)
+//   1 = HTTP non-200 (driver reachable but route refused — e.g. version skew)
+//   2 = ECONNREFUSED (driver not running; no port in 27015..27025 listens)
+//
+// Returns -1 if the flag is NOT present so WinMain falls through to the GUI
+// path. Caller convention matches tryRunReplayCli: `if (rc != -1) return rc;`.
+//
+// Placement requirement: this short-circuit MUST run AFTER the existing CLI
+// parses (--register-vrmanifest, --patch-bindings) BUT BEFORE the FAIL-04
+// named mutex (10-03). Otherwise a CI runner invoking --debug-trigger would
+// contend with a live GUI instance over the named mutex and exit with the
+// "second instance found" code instead of the trigger result.
+//
+// In Release builds the entire #if MICMAP_DEBUG_BUILD block (function +
+// WinMain call site below) is elided. The --debug-trigger argument falls
+// through to the GUI as a no-op; downstream parsers ignore unknown flags
+// (cli_flags.cpp behavior).
+static int tryRunDebugTriggerCli() {
+    int argc = 0;
+    LPWSTR* argv = ::CommandLineToArgvW(::GetCommandLineW(), &argc);
+    if (!argv) return -1;
+    bool found = false;
+    for (int i = 1; i < argc; ++i) {
+        if (wcscmp(argv[i], L"--debug-trigger") == 0) { found = true; break; }
+    }
+    LocalFree(argv);
+    if (!found) return -1;
+
+    // Construct the same IDriverApi the GUI uses. Default factory picks
+    // host=127.0.0.1, port-range 27015..27025 — matches the driver-side
+    // bind range in driver/src/http_server.cpp::kPortRangeStart..kPortRangeEnd.
+    auto driverApi = micmap::steamvr::createDriverApi();
+    if (!driverApi) {
+        std::wcerr << L"--debug-trigger: createDriverApi() returned null\n";
+        return 1;
+    }
+    auto r = driverApi->debugTrigger();
+    switch (r.status) {
+        case micmap::steamvr::DebugTriggerResult::Ok:
+            return 0;
+        case micmap::steamvr::DebugTriggerResult::HttpError:
+            std::wcerr << L"--debug-trigger: HTTP error (driver reachable but route refused)\n";
+            return 1;
+        case micmap::steamvr::DebugTriggerResult::ConnectionRefused:
+            std::wcerr << L"--debug-trigger: connection refused (driver not running?)\n";
+            return 2;
+    }
+    return 1;
+}
+
+} // anonymous namespace
+#endif // MICMAP_DEBUG_BUILD
+
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 static ID3D11Device* g_pd3dDevice = nullptr;
@@ -1599,6 +1663,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
         }
         return ok ? 0 : 1;
     }
+
+#if MICMAP_DEBUG_BUILD
+    // Phase 10 / TEST-02 / D-12: --debug-trigger short-circuit (Debug-build-only).
+    // Placement: AFTER existing CLI parses (so --register-vrmanifest etc keep
+    // priority on the rare overlapping invocation) but BEFORE the FAIL-04
+    // named mutex below (so a CI runner invoking --debug-trigger doesn't
+    // contend with a live GUI instance over the mutex and exit with the
+    // "second instance" code instead of the trigger result). In Release
+    // builds this block is elided — --debug-trigger is a no-op argument
+    // that falls through to the GUI.
+    {
+        const int rc = tryRunDebugTriggerCli();
+        if (rc != -1) {
+            return rc;
+        }
+    }
+#endif
 
     // Phase 10 / FAIL-04 / D-09 hardening (RESEARCH §Pattern 2):
     //  - Local\\ session-scoping prefix (explicit; matches default behavior but documented;
