@@ -7,6 +7,7 @@ set(MICMAP_SOURCES
     first_launch_balloon.cpp
     src/config_json.cpp           # P8 D-03: AppConfig to_json/from_json ADL hooks (client TU)
     src/config_manager_impl.cpp   # P8 D-02: ConfigManagerImpl relocated from src/core to keep micmap_core JSON-free
+    src/tray_glyph.cpp            # Phase 10 / HEALTH-08 D-04..D-06: tray-icon state glyphs (deriveTrayGlyph + Shell_NotifyIcon swap)
 )
 
 # ---- app.vrmanifest generation (Plan 03-02 — D-19) -----------------------
@@ -85,7 +86,11 @@ target_include_directories(micmap PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 # (PathCchRemoveFileSpec / PathCchCombineEx). Built into the Windows SDK
 # since Vista — naked target name resolves via MSVC default link search.
 if(WIN32)
-    target_link_libraries(micmap PRIVATE shell32 dwmapi Pathcch)
+    # Phase 10 / HEALTH-08 / Pitfall 8: Shlwapi for PathCombineW + PathRemoveFileSpecW
+    # used by tray_glyph.cpp::initTrayIcons to resolve resources\\tray_*.ico
+    # against the EXE directory (absolute-path resolution; SteamVR launches
+    # micmap.exe from arbitrary CWDs).
+    target_link_libraries(micmap PRIVATE shell32 dwmapi Pathcch Shlwapi)
 endif()
 
 # Set output directory
@@ -118,3 +123,33 @@ add_custom_command(TARGET micmap POST_BUILD
 # both files in {stage}/bin/ for Inno Setup's [Files] to consume.
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/app.vrmanifest"
         DESTINATION bin)
+
+# Phase 10 / HEALTH-08 / Pitfall 8: stage tray glyphs next to the built
+# micmap.exe so initTrayIcons()'s
+#   GetModuleFileNameW + PathRemoveFileSpecW + PathCombineW("resources\\tray_*.ico")
+# resolution finds them during dev builds (the installer-side wiring lands
+# in 10-06 / Inno Setup [Files]; this POST_BUILD covers the build/ dev
+# loop so applyTrayGlyph swaps the glyph in a developer's hand-launched
+# micmap.exe even before the .iss copy is wired up).
+add_custom_command(TARGET micmap POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:micmap>/resources"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/tray_armed.ico"
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/tray_triggered.ico"
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/tray_error.ico"
+        "$<TARGET_FILE_DIR:micmap>/resources/"
+    COMMENT "Staging tray_*.ico beside micmap.exe (HEALTH-08 dev-build resolution)"
+    VERBATIM
+)
+
+# Phase 10 / HEALTH-08 / Pitfall 8: install rule preview. The matching
+# Inno Setup [Files] entry lands in 10-06 (Wave 6); this populates the
+# cmake --install staging area so SteamVR-launched micmap.exe resolves
+# the tray glyphs via the absolute-path GetModuleFileNameW + PathCombineW
+# code in tray_glyph.cpp::initTrayIcons.
+install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/tray_armed.ico"
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/tray_triggered.ico"
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/tray_error.ico"
+    DESTINATION bin/resources)
