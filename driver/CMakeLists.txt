@@ -92,8 +92,16 @@ target_link_libraries(driver_micmap PRIVATE micmap::core_runtime)
 # name across both driver_micmap and micmap binaries; consumed by
 # device_provider.cpp's RunFrame init log line at line 803-804).
 # MICMAP_VERSION flows from cmake/version.cmake (the SSoT included at root).
+#
+# Phase 10 / D-11 / TEST-02 / Pitfall 4: MICMAP_DEBUG_BUILD per-build-config
+# define for the synthetic-trigger surface. Generator-expression form is
+# multi-config-safe (MSBuild / Xcode evaluate $<CONFIG:Debug> per build, while
+# the if(CMAKE_BUILD_TYPE STREQUAL "Debug") form is broken at configure time
+# under multi-config generators). The quoting "MICMAP_DEBUG_BUILD=$<...>" is
+# REQUIRED — without it CMake's list-element semicolons split the genex.
 target_compile_definitions(driver_micmap PRIVATE
     MICMAP_VERSION_STRING="${MICMAP_VERSION}"
+    "MICMAP_DEBUG_BUILD=$<IF:$<CONFIG:Debug>,1,0>"
 )
 
 # Phase 10 / D-18: VS_VERSION_INFO resource for driver_micmap.dll.

@@ -57,6 +57,18 @@ configure_file(
     "${CMAKE_SOURCE_DIR}/installer/version.iss"
     @ONLY
 )
+# ---------------------------------------------------------------------
+# Phase 10 / D-11 / TEST-02 / Pitfall 4: MICMAP_DEBUG_BUILD compile define.
+# Defined per-target via target_compile_definitions in driver/CMakeLists.txt,
+# apps/micmap/CMakeLists.txt, AND src/steamvr/CMakeLists.txt using the
+# generator expression "MICMAP_DEBUG_BUILD=$<IF:$<CONFIG:Debug>,1,0>"
+# (multi-config-safe; the if(CMAKE_BUILD_TYPE STREQUAL "Debug") form is
+# broken under MSBuild/Xcode because CMAKE_BUILD_TYPE is unset at
+# configure time on multi-config generators). If a 4th target ever needs
+# this define, refactor to a shared helper to prevent drift — Pitfall 4
+# is "the define lands on one target but not the other and Release
+# silently ships the synthetic-trigger surface."
+# ---------------------------------------------------------------------
 
 # Platform-specific settings
 if(WIN32)

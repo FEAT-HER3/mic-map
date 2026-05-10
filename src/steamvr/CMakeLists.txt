@@ -48,6 +48,19 @@ endif()
 
 target_compile_features(micmap_steamvr PUBLIC cxx_std_17)
 
+# Phase 10 / D-11 / TEST-02 / Pitfall 4: MICMAP_DEBUG_BUILD per-build-config
+# define so driver_api.{hpp,cpp}'s #if MICMAP_DEBUG_BUILD-guarded
+# DebugTriggerResult + virtual debugTrigger() declarations and impl are
+# visible inside this TU. PUBLIC propagation matters here because consumers
+# of micmap_steamvr (apps/micmap, apps/hmd_button_test, tests) include the
+# header — without PUBLIC the #if branch would silently elide the method
+# from the consumer's vtable view, ABI-mismatching across this lib boundary.
+# The quoting form "MICMAP_DEBUG_BUILD=$<IF:...>" is REQUIRED — see the
+# matching driver/CMakeLists.txt + apps/micmap/CMakeLists.txt blocks.
+target_compile_definitions(micmap_steamvr PUBLIC
+    "MICMAP_DEBUG_BUILD=$<IF:$<CONFIG:Debug>,1,0>"
+)
+
 # OpenVR SDK - Required for full SteamVR integration
 # If not found, the library will use a stub implementation
 #

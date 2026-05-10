@@ -58,8 +58,17 @@ target_sources(micmap PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/micmap.rc")
 
 # Phase 10 / D-18: SSoT version string compile define (used by main.cpp's
 # version-mismatch check landing in 10-06 via apps/micmap/src/version_mismatch.cpp).
+#
+# Phase 10 / D-11 / TEST-02 / Pitfall 4: MICMAP_DEBUG_BUILD per-build-config
+# define for the synthetic-trigger surface (driver-side POST /debug/trigger
+# route + client-side --debug-trigger CLI short-circuit). Must land on BOTH
+# driver_micmap and micmap targets in lockstep; see driver/CMakeLists.txt for
+# the matching block. Genex form is multi-config-safe (per RESEARCH §Pattern
+# 6 PITFALL); the quoting around the entire string is REQUIRED to keep the
+# inner $<IF:...,...,...> as a single CMake list element.
 target_compile_definitions(micmap PRIVATE
     MICMAP_VERSION_STRING="${MICMAP_VERSION}"
+    "MICMAP_DEBUG_BUILD=$<IF:$<CONFIG:Debug>,1,0>"
 )
 
 # Phase 5 D-09: micmap.exe links the new shared runtime aggregate AND keeps
