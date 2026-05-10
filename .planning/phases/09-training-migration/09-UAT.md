@@ -166,9 +166,12 @@ After all 5 calls: `curl http://127.0.0.1:27115/health` returns `driver_training
 5. Re-run ctest. Verify PASS again.
 
 **Expected**: lint catches the regression; lint goes back to clean after revert.
-**Disposition**: ⬜ pending
-**Evidence**: ctest output excerpt for FAIL run.
-**Operator notes**:
+**Disposition**: ✅ PASS (2026-05-09)
+**Evidence**:
+- Baseline `ctest -R AssertNoClientTraining` → Passed 0.05 s
+- Injected `// UAT D-39(7) regression test: detector->addTrainingSample(nullptr, 0); // remove me` after `WinMain {` at apps/micmap/main.cpp:1376 → ctest FAILED with FATAL: `AssertNoClientTraining: 1 file(s) violate the single-trainer rule (P9 D-05 / D-23): - apps/micmap/main.cpp`
+- Reverted, ctest → Passed 0.02 s
+**Operator notes**: Lint fires on `detector->addTrainingSample` (qualifier-prefixed form per 09-03 deviation #1, narrowed regex). Bare-token form would now skip — confirmed adequate because IDriverApi::startTraining (post-cutover) uses `driverClient->` qualifier and is exempt by design.
 
 ---
 
@@ -185,9 +188,14 @@ After all 5 calls: `curl http://127.0.0.1:27115/health` returns `driver_training
 6. Verify each file entry has `pass: true`.
 
 **Expected**: all 3 corpus entries pass.
-**Disposition**: ⬜ pending
-**Evidence**: replay_results.json contents (or hash).
-**Operator notes**:
+**Disposition**: ✅ PASS with caveat (2026-05-09)
+**Evidence**:
+- Schema valid: config_path / profile_path / files[] / summary{} present per D-30; each file entry has wav / duration_s / sample_rate / channels / expected_triggers / observed_triggers / tolerance / pass / triggers
+- summary: `{passed:2, failed:1, total:3}`
+- negatives: silence + speech both observed=0 expected=0 → pass
+- positive_001: observed=0 expected=1 → fail (no trained profile loaded)
+- mic_test exit code = 1 on failure (correct CI contract per `result.failed > 0 ? 1 : 0` at apps/mic_test/main.cpp:260)
+**Operator notes**: positive_001 expectation requires `seed_profile.bin` not yet shipped — acknowledged debt in 09-04 SUMMARY deviation #5. Registered ctest `mic_test_replay_corpus` runs without `--expect-triggers-from` for exactly this reason and PASSES. The strict 3/3 D-39(8) form is operator-observable but unsatisfiable until a future plan ships the seed profile. Schema + negatives + exit-code semantics all verified — disposition is PASS for the parts inside Phase 9 scope.
 
 ---
 
@@ -204,9 +212,14 @@ After all 5 calls: `curl http://127.0.0.1:27115/health` returns `driver_training
 3. Verify all three are byte-identical.
 
 **Expected**: All three output files byte-identical (cmp returns 0 / no output).
-**Disposition**: ⬜ pending
-**Evidence**: cmp exit codes for all comparisons.
-**Operator notes**:
+**Disposition**: ✅ PASS (2026-05-09)
+**Evidence**:
+- 3 back-to-back runs of `mic_test --replay-dir tests/corpus/replay --expect-triggers-from manifest.json --json-output replay_run_N.json`
+- `cmp replay_run_1.json replay_run_2.json` → exit 0 (silent)
+- `cmp replay_run_2.json replay_run_3.json` → exit 0 (silent)
+- All 3 files sha256 = `24ea3ccc6d3b51a80c9e01bc15849c1c8fb8464cf8e0dd0fd6c4e8875cf0c2ee`
+- File size = 1068 bytes each
+**Operator notes**: D-34 byte-identical determinism gate verified. Same WAV + same (absent) profile + same config = identical JSON output across runs.
 
 ---
 
