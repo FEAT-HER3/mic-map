@@ -266,6 +266,32 @@ struct HealthView {
     bool driver_audio_enabled{false};     ///< P9 09-02 / 09-03 T2 — proactive disable contract
 };
 
+#if MICMAP_DEBUG_BUILD
+/**
+ * @brief Phase 10 / TEST-02 / D-12: result envelope for the debug-build-only
+ *        synthetic-trigger surface.
+ *
+ * Status outcomes:
+ *   Ok                — POST /debug/trigger returned 200 (TapCommand enqueued).
+ *   HttpError         — driver responded with non-200 (rare; route always 200
+ *                       when MICMAP_DEBUG_BUILD is also set on the driver-side
+ *                       binary, so a non-200 here usually means version skew).
+ *   ConnectionRefused — httplib reported Error::Connection (driver not running
+ *                       or bound to a different port range).
+ *
+ * This struct is structurally absent in Release builds, so a call site that
+ * tries to reference it without #if guards will fail to compile in Release —
+ * a feature, not a bug (prevents accidental Release callers).
+ */
+struct DebugTriggerResult {
+    enum Status {
+        Ok,
+        HttpError,
+        ConnectionRefused
+    } status;
+};
+#endif
+
 /**
  * @brief P8 D-09 / IPC-04 — 4-state result of IDriverApi::putSettings().
  *
@@ -479,6 +505,18 @@ public:
     ///        migration-handshake fields (detection_active, training_active,
     ///        audio_enabled) so the UI can gate Train-button enablement.
     virtual std::optional<HealthView> getHealth() = 0;
+
+#if MICMAP_DEBUG_BUILD
+    /// @brief Phase 10 / TEST-02 / D-12: synthetic trigger via /debug/trigger
+    ///        (Debug-build-only). Mirrors the existing tap() shape — POST with
+    ///        a 250ms connection timeout (matches P8 D-09 client cadence) —
+    ///        but routes to /debug/trigger which is itself Debug-build-only
+    ///        on the driver side (driver/src/http_server.cpp #if guard). In
+    ///        Release builds this method is structurally absent from the
+    ///        interface; the apps/micmap --debug-trigger CLI short-circuit
+    ///        is also #if'd, so Release callers cannot reach it.
+    virtual DebugTriggerResult debugTrigger() = 0;
+#endif
 };
 
 /**

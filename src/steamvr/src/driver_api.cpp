@@ -922,6 +922,41 @@ public:
         }
     }
 
+#if MICMAP_DEBUG_BUILD
+    // Phase 10 / TEST-02 / D-12: synthetic-trigger client. Mirrors the tap()
+    // shape but routes to /debug/trigger (the Debug-build-only sibling). The
+    // 250ms connection timeout matches the P8 D-09 client cadence used by
+    // getHealth/getState/etc. Returns Ok on HTTP 200, ConnectionRefused on
+    // httplib::Error::Connection (driver not running), HttpError on any
+    // other transport/timeout/non-200. ensureConnected() is intentionally
+    // skipped: --debug-trigger is invoked from a fresh CLI process with no
+    // prior connection state (the WinMain short-circuit creates an
+    // IDriverApi via the factory, calls debugTrigger, and ExitProcess —
+    // there is no caller-side polling loop to honor connect-cache hits).
+    DebugTriggerResult debugTrigger() override {
+        // First port-scan if we haven't yet; otherwise reuse the cached port.
+        if (!connected_) {
+            const ConnectResult cr = connect();
+            if (cr == ConnectResult::NotFound || cr == ConnectResult::OtherError) {
+                return {DebugTriggerResult::ConnectionRefused};
+            }
+            // Timeout / Connected both fall through — the Post below will
+            // produce its own definitive result.
+        }
+        httplib::Client client(host_, port_);
+        client.set_connection_timeout(0, 250000);
+        client.set_read_timeout(0, 250000);
+        auto r = client.Post("/debug/trigger", "", "application/json");
+        if (!r) {
+            return {(r.error() == httplib::Error::Connection)
+                ? DebugTriggerResult::ConnectionRefused
+                : DebugTriggerResult::HttpError};
+        }
+        return {(r->status == 200) ? DebugTriggerResult::Ok
+                                   : DebugTriggerResult::HttpError};
+    }
+#endif
+
 private:
     bool ensureConnected() {
         if (connected_) {
