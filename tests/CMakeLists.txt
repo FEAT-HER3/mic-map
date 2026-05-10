@@ -949,3 +949,130 @@ add_test(NAME AssertNoClientTraining
         -P ${CMAKE_SOURCE_DIR}/cmake/AssertNoClientTraining.cmake)
 
 # ---- end Phase 9 Wave 3 ----
+
+# ---- Phase 10 Wave 0 (RED scaffold) ----
+# Wave 0 lands 3 new lint scripts under cmake/ (AssertNoClientDetection,
+# AssertNoButtonRoute, AssertCoVersioning) plus 4 plain-main test scaffolds.
+# Only ONE of the lints is wired to ctest at Wave 0 — AssertCoVersioning,
+# which is RED-tolerant via skip-on-NOT-EXISTS in the lint script
+# (cmake/version.cmake does not yet exist; 10-01 lands the SSoT). The
+# other two lints (AssertNoClientDetection + AssertNoButtonRoute) ship in
+# the repo but their ctest registrations are intentionally deferred to
+# 10-05 because they currently FATAL on existing v1.5/v1.6 client + driver
+# code (single-writer cutover protocol per CONTEXT D-23, mirror of P8 D-07
+# timing for AssertNoConfigWriteInClient and P9 D-23 for
+# AssertNoClientTraining).
+
+# P10 D-21 / INST-09: assert single-version source-of-truth across
+# cmake/version.cmake, generated installer/version.iss, and driver+client
+# target compile defines. Wave 0 RED-tolerant via skip-on-NOT-EXISTS in the
+# lint script (cmake/version.cmake does not yet exist; 10-01 lands the
+# SSoT). Full enforcement (installer wiring + driver-target define
+# matching) lands in 10-06.
+add_test(NAME AssertCoVersioning
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_SOURCE_DIR}/cmake/AssertCoVersioning.cmake)
+
+# NOTE: AssertNoClientDetection is intentionally NOT registered at Wave 0.
+# The lint script exists at cmake/AssertNoClientDetection.cmake but currently
+# FATALs on apps/micmap/main.cpp (v1.5 client-side audio/FFT/state-machine
+# body + 3x detector->loadTrainingData call sites at :326, :647, :970).
+# Single-writer cutover protocol per CONTEXT D-23: ctest registration goes
+# live in 10-05 alongside the client-side body deletion (~500 LoC). Mirror
+# of P8 D-07 timing for AssertNoConfigWriteInClient and P9 D-23 timing for
+# AssertNoClientTraining. (See "# ---- Phase 10 Wave 5" block added by 10-05
+# for the go-live.)
+
+# NOTE: AssertNoButtonRoute is also intentionally NOT registered at Wave 0.
+# The lint script exists at cmake/AssertNoButtonRoute.cmake but currently
+# FATALs on driver/src/http_server.cpp (POST /button route still registered)
+# and src/steamvr/src/driver_api.cpp (IDriverApi::tap impl still present —
+# the rollback path that 10-05 deletes). ctest registration goes live in
+# 10-05 alongside the route + method + callsite deletions (single atomic
+# commit).
+
+# Test executable registrations follow the EXISTS-gated source-list pattern
+# from the P7/P8/P9 RED scaffold blocks above. The tray_glyph / fail_pill /
+# version_mismatch test exes expect production source files that do not
+# yet exist; the EXISTS gate keeps the source list trivially the test TU
+# alone, and the missing #include in the test TU produces the build-time
+# RED diagnostic. test_log_rotation is the exception — it compiles + links
+# at Wave 0 against existing FileLogSink (post-P8 in src/common) but
+# RUN-FAILs until 10-01 lands rotate() in FileLogSink::log() (per CONTEXT
+# D-26 RUN-RED gate).
+#
+# NOTE on impl-file location: 10-02 / 10-03 / 10-06 may place the new
+# impls at apps/micmap/src/ (preferred — directory exists) or directly
+# under apps/micmap/ (legacy layout). The EXISTS gates below default to
+# apps/micmap/src/ paths; if an impl plan chooses the legacy layout, this
+# CMakeLists.txt block must be updated to match.
+
+# HEALTH-08 / D-04 / D-05 — deriveTrayGlyph state derivation. RED until
+# Plan 10-02 lands apps/micmap/src/tray_glyph.{hpp,cpp}. Pure headless
+# (chrono + optional + string only); no OpenVR transitive — no
+# if(OpenVR_FOUND) wrapper.
+set(_p10_tray_glyph_sources test_tray_glyph_state_machine.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/apps/micmap/src/tray_glyph.cpp")
+    list(APPEND _p10_tray_glyph_sources
+        "${CMAKE_SOURCE_DIR}/apps/micmap/src/tray_glyph.cpp")
+endif()
+add_executable(test_tray_glyph_state_machine ${_p10_tray_glyph_sources})
+target_compile_features(test_tray_glyph_state_machine PRIVATE cxx_std_17)
+target_include_directories(test_tray_glyph_state_machine PRIVATE
+    ${CMAKE_SOURCE_DIR}/apps/micmap/src)
+target_link_libraries(test_tray_glyph_state_machine PRIVATE
+    micmap::core_runtime)
+add_test(NAME TrayGlyphStateMachine
+    COMMAND test_tray_glyph_state_machine)
+
+# FAIL-01..05 / D-08 — pickActivePill priority stacking. RED until Plan
+# 10-03 lands apps/micmap/src/fail_pill.{hpp,cpp}. Pure headless; no
+# if(OpenVR_FOUND) wrapper.
+set(_p10_fail_pill_sources test_fail_pill_priority.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/apps/micmap/src/fail_pill.cpp")
+    list(APPEND _p10_fail_pill_sources
+        "${CMAKE_SOURCE_DIR}/apps/micmap/src/fail_pill.cpp")
+endif()
+add_executable(test_fail_pill_priority ${_p10_fail_pill_sources})
+target_compile_features(test_fail_pill_priority PRIVATE cxx_std_17)
+target_include_directories(test_fail_pill_priority PRIVATE
+    ${CMAKE_SOURCE_DIR}/apps/micmap/src)
+target_link_libraries(test_fail_pill_priority PRIVATE
+    micmap::core_runtime)
+add_test(NAME FailPillPriority
+    COMMAND test_fail_pill_priority)
+
+# TEST-03 / D-14..D-17 — FileLogSink rotation (5MB cap, 5 generations,
+# atomic MoveFileExW). Wave 0: this test compiles + links + RUNS but
+# RUN-FAILs until 10-01 lands rotation behavior in FileLogSink::log().
+# Per CONTEXT D-26 the test is the RUN-RED gate that 10-01 turns GREEN.
+# Different shape from tray_glyph / fail_pill / version_mismatch: no new
+# impl source needs gating because the file_log_sink.cpp extension in
+# 10-01 is in-place (already aggregated transitively via micmap::core_runtime).
+add_executable(test_log_rotation test_log_rotation.cpp)
+target_compile_features(test_log_rotation PRIVATE cxx_std_17)
+target_link_libraries(test_log_rotation PRIVATE
+    micmap::core_runtime)
+add_test(NAME LogRotation
+    COMMAND test_log_rotation)
+
+# INST-09 / D-20 — client startup version-mismatch (Match / Mismatch /
+# DriverVersionMissing; warn-only + dismissable). RED until Plan 10-06
+# lands apps/micmap/src/version_mismatch.{hpp,cpp}. Pure headless; no
+# if(OpenVR_FOUND) wrapper.
+set(_p10_version_mismatch_sources test_version_mismatch.cpp)
+if(EXISTS "${CMAKE_SOURCE_DIR}/apps/micmap/src/version_mismatch.cpp")
+    list(APPEND _p10_version_mismatch_sources
+        "${CMAKE_SOURCE_DIR}/apps/micmap/src/version_mismatch.cpp")
+endif()
+add_executable(test_version_mismatch ${_p10_version_mismatch_sources})
+target_compile_features(test_version_mismatch PRIVATE cxx_std_17)
+target_include_directories(test_version_mismatch PRIVATE
+    ${CMAKE_SOURCE_DIR}/apps/micmap/src)
+target_link_libraries(test_version_mismatch PRIVATE
+    micmap::core_runtime)
+add_test(NAME VersionMismatch
+    COMMAND test_version_mismatch)
+
+# ---- end Phase 10 Wave 0 ----
