@@ -45,3 +45,24 @@ Do not skip phase artifacts. They are the project's memory across context resets
 - `hmd_button_test.exe` — VR input testing without audio (the exit-criterion harness for Phase 1)
 
 Visual validation on a real HMD is mandatory for the "no laser beam" exit criterion of Phase 1 — type-checking and build-success do not substitute.
+
+## Hardware rig (this machine)
+
+This dev machine **is** the Bigscreen Beyond + Win11 Pro UAT rig — `vrpathreg show` lists `bigscreenbeyond` + `BeyondEyetracking` + `BeyondProximity` driver entries. SteamVR can be started/stopped as needed for phase verification and UAT — no separate test station to coordinate with.
+
+**Installed driver location** (where SteamVR loads from at runtime):
+- Driver root: `C:\Program Files (x86)\Steam\steamapps\common\SteamVR\drivers\micmap`
+- Driver DLL: `…\micmap\bin\win64\driver_micmap.dll`
+- Sidecar client: `…\micmap\bin\micmap.exe`
+- Driver vrsettings: `…\micmap\resources\settings\default.vrsettings`
+- Pre-existing rotation backups beside DLL: `driver_micmap.dll.{p5,v1.5}.bak`; `default.vrsettings.p5.bak`
+
+**Build → install copy paths** (forward-slash forms for Git Bash):
+- `build/driver/micmap/bin/win64/driver_micmap.dll` → `…/micmap/bin/win64/driver_micmap.dll`
+- `build/bin/Debug/micmap.exe` → `…/micmap/bin/micmap.exe`
+
+Always backup the installed file as `<name>.preuat.bak` before a UAT-flavored install; restore from `driver/resources/settings/default.vrsettings` (canonical pristine source) post-UAT — D-40 demands `enable_driver_audio=false` AND `enable_driver_detection=false` after sign-off.
+
+**Runtime HTTP port**: `27015` on `127.0.0.1` (per source `driver/resources/settings/default.vrsettings`). Older planning docs may reference `27115` — that was a draft value, never shipped.
+
+**User profile config dir**: `%APPDATA%\MicMap\` — `training_data.bin` lives here. Always backup to `training_data.bin.preuat` before stress / destructive UAT cases.

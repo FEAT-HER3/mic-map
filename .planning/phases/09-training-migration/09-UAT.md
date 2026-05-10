@@ -65,7 +65,7 @@ sha256sum %APPDATA%\MicMap\training_data.bin > training_data_pre_uat.sha256
 5. Verify UI returns to Idle (no toast — D-13 cancel is its own confirmation).
 6. Hash `%APPDATA%\MicMap\training_data.bin` (call it H_after).
 
-**Expected**: H_before == H_after (file unchanged); driver mode == Detecting (verify via `curl http://127.0.0.1:27115/health` showing `driver_training_active=false`).
+**Expected**: H_before == H_after (file unchanged); driver mode == Detecting (verify via `curl http://127.0.0.1:27015/health` showing `driver_training_active=false`).
 **Disposition**: ⬜ pending
 **Evidence**:
 **Operator notes**:
@@ -79,7 +79,7 @@ sha256sum %APPDATA%\MicMap\training_data.bin > training_data_pre_uat.sha256
 **Steps**:
 1. Click "Train Pattern" + cover mic to ready state.
 2. Note the preview's sensitivity (call it S0) and energy_threshold (E0).
-3. From a separate terminal: `curl -X POST -H "Content-Type: application/json" -d "{\"sensitivity\":0.3}" http://127.0.0.1:27115/training/recompute`.
+3. From a separate terminal: `curl -X POST -H "Content-Type: application/json" -d "{\"sensitivity\":0.3}" http://127.0.0.1:27015/training/recompute`.
 4. Verify HTTP 200 response body contains updated `thresholds_preview` with sensitivity=0.3 and a different energy_threshold (E1 ≠ E0).
 5. In the client UI, observe the next /training/progress poll picks up the new preview rows.
 6. Click "Confirm & Save".
@@ -100,13 +100,13 @@ sha256sum %APPDATA%\MicMap\training_data.bin > training_data_pre_uat.sha256
 
 | # | Curl invocation | Expected status | Expected body |
 |---|-----------------|-----------------|---------------|
-| 4a | `curl -X POST http://127.0.0.1:27115/training/start -H "Content-Type: application/json" -d '{"foo":"bar"}'` | 400 | `{"field":"foo","reason":"unknown field"}` (or "(structural)" depending on validator path) |
-| 4b | `curl -X POST http://127.0.0.1:27115/training/finalize -H "Content-Type: application/json" -d '{}'` | 400 | `{"field":"confirm","reason":"missing required field"}` |
-| 4c | `curl -X POST http://127.0.0.1:27115/training/recompute -H "Content-Type: application/json" -d '{"sensitivity":2.0}'` | 400 | `{"field":"sensitivity","reason":"must be in [0.0, 1.0]; got 2.000000"}` |
-| 4d | `curl -X POST http://127.0.0.1:27115/training/recompute -H "Content-Type: application/json" -d '{"sensitivity":-0.1}'` | 400 | `{"field":"sensitivity","reason":"must be in [0.0, 1.0]; got -0.100000"}` |
-| 4e | `curl -X POST http://127.0.0.1:27115/training/start -H "Content-Type: application/json" -d 'not json'` | 400 | `{"field":"(structural)","reason":"malformed JSON body"}` |
+| 4a | `curl -X POST http://127.0.0.1:27015/training/start -H "Content-Type: application/json" -d '{"foo":"bar"}'` | 400 | `{"field":"foo","reason":"unknown field"}` (or "(structural)" depending on validator path) |
+| 4b | `curl -X POST http://127.0.0.1:27015/training/finalize -H "Content-Type: application/json" -d '{}'` | 400 | `{"field":"confirm","reason":"missing required field"}` |
+| 4c | `curl -X POST http://127.0.0.1:27015/training/recompute -H "Content-Type: application/json" -d '{"sensitivity":2.0}'` | 400 | `{"field":"sensitivity","reason":"must be in [0.0, 1.0]; got 2.000000"}` |
+| 4d | `curl -X POST http://127.0.0.1:27015/training/recompute -H "Content-Type: application/json" -d '{"sensitivity":-0.1}'` | 400 | `{"field":"sensitivity","reason":"must be in [0.0, 1.0]; got -0.100000"}` |
+| 4e | `curl -X POST http://127.0.0.1:27015/training/start -H "Content-Type: application/json" -d 'not json'` | 400 | `{"field":"(structural)","reason":"malformed JSON body"}` |
 
-After all 5 calls: `curl http://127.0.0.1:27115/health` returns `driver_training_active=false`.
+After all 5 calls: `curl http://127.0.0.1:27015/health` returns `driver_training_active=false`.
 
 **Disposition**: ⬜ pending
 **Evidence**:
@@ -122,8 +122,8 @@ After all 5 calls: `curl http://127.0.0.1:27115/health` returns `driver_training
 1. Click "Train Pattern" — driver enters Training mode.
 2. Do NOT cover the mic. Wait 35 seconds (10 s margin past the 30 s timeout).
 3. Observe client UI: progress bar shows 0/100; eventually transitions back to Idle.
-4. Verify `curl http://127.0.0.1:27115/training/progress` (or check the last poll's payload) shows `state=cancelled` with `last_error=training_timed_out_no_samples`.
-5. Verify `curl http://127.0.0.1:27115/health` shows `driver_training_active=false`.
+4. Verify `curl http://127.0.0.1:27015/training/progress` (or check the last poll's payload) shows `state=cancelled` with `last_error=training_timed_out_no_samples`.
+5. Verify `curl http://127.0.0.1:27015/health` shows `driver_training_active=false`.
 6. Optional: verify the last_error string surfaces in the UI as "Training timed out — no samples collected in 30 s" (destructive color) per UI-SPEC §"Cancelled / finalized terminal states".
 
 **Expected**: Auto-cancel within 30-32 s of "Train Pattern" click; driver mode flips back to Detecting.
@@ -235,9 +235,9 @@ After all 5 calls: `curl http://127.0.0.1:27115/health` returns `driver_training
 3. Run a small bash/PowerShell loop:
     ```bash
     for i in {1..50}; do
-        curl -X POST http://127.0.0.1:27115/training/start
+        curl -X POST http://127.0.0.1:27015/training/start
         sleep 0.1
-        curl -X POST http://127.0.0.1:27115/training/cancel
+        curl -X POST http://127.0.0.1:27015/training/cancel
         sleep 0.1
     done
     ```
