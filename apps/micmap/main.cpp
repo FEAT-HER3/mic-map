@@ -40,6 +40,8 @@
 #include "micmap/bindings/bindings_patcher.hpp"
 #include "first_launch_balloon.hpp"
 #include "src/tray_glyph.hpp"   // Phase 10 / HEALTH-08 D-04: tray-icon state glyphs
+#include "src/fail_pill.hpp"    // Phase 10 / FAIL-01..05 D-07/D-08: priority-stacked failure pills
+#include "src/process_check.hpp" // Phase 10 / Pitfall 6: FAIL-02 vs FAIL-03 disambiguation
 #ifdef MICMAP_HAS_OPENVR
 #include <openvr.h>
 #endif
@@ -202,6 +204,14 @@ static MicMapApp g_app;
 // allocation); applyTrayGlyph() called from pollDriverHealth() each tick;
 // destroyTrayIcons() called at WinMain teardown.
 static micmap::client::TrayState g_tray;
+
+// Phase 10 / FAIL-01..05 / D-07/D-08: active FAIL pill state, populated by the
+// poll callback and consumed by the driver-health pane render. activePill is
+// std::nullopt when no fail condition is firing; pickActivePill enforces D-08
+// priority order so this is always the topmost-priority pill (or none).
+static struct FailUxState {
+    std::optional<micmap::client::FailPill> activePill;
+} g_failUx;
 
 bool CreateDeviceD3D(HWND hWnd);
 void CleanupDeviceD3D();
@@ -719,6 +729,18 @@ void MicMapApp::pollDriverHealth() {
     const auto desired = micmap::client::deriveTrayGlyph(
         healthSnap, stateSnap, g_tray.lastTriggeredAt, now);
     micmap::client::applyTrayGlyph(nid, g_tray, desired);
+
+    // Phase 10 / FAIL-01..05 / D-08: pick topmost-priority pill from the SAME poll envelope.
+    //   isProcessRunning(L"vrserver.exe") is called only when the driver is unreachable, so
+    //   FAIL-02 vs FAIL-03 disambiguation kicks in just when it's needed (Pitfall 6 -- the
+    //   2-second cache in process_check.cpp absorbs the 1Hz poll cadence). When the driver
+    //   IS reachable (driverLoaded=true), vrserverRunning is implicitly true (the endpoint
+    //   reached us, so vrserver.exe must be running) -- the pickActivePill code path doesn't
+    //   actually consume vrserverRunning in that branch, but we pass true for clarity.
+    const bool vrserverRunning = !healthSnap.driverLoaded
+        ? micmap::client::isProcessRunning(L"vrserver.exe")
+        : true;
+    g_failUx.activePill = micmap::client::pickActivePill(healthSnap, stateSnap, vrserverRunning);
 }
 
 void MicMapApp::shutdown() {
@@ -834,6 +856,48 @@ void MicMapApp::renderUI() {
     ImGui::Spacing();
     ImGui::Text("Driver Health");
     ImGui::Separator();
+
+    // Phase 10 / FAIL-01..05 / D-07: FAIL pill rendering (single topmost only per D-08).
+    //   Rendered at the TOP of the driver-health pane so the user sees the actionable
+    //   nudge before scrolling past the green/orange health indicators below. The pill
+    //   carries a deep-link button (ms-settings: for FAIL-01, steam:// for FAIL-02) and
+    //   an optional Dismiss button (FAIL-01 + FAIL-05 per D-10). All pills are non-blocking
+    //   per D-20 -- they warn but never gate detection.
+    if (g_failUx.activePill.has_value()) {
+        const auto& pill = *g_failUx.activePill;
+
+        // Headline -- pill-red so it visually pops against the existing white "State:" /
+        // green "Driver: Loaded" / orange "Driver: Not loaded" lines.
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.3f, 1.0f));
+        ImGui::TextWrapped("%s", pill.headlineText.c_str());
+        ImGui::PopStyleColor();
+
+        // Action button -- ShellExecuteW the deep-link URI. ASCII-safe conversion is
+        // sufficient because the URIs are string literals in fail_pill.cpp (no Unicode).
+        if (!pill.actionLabel.empty() && !pill.deepLink.empty()) {
+            if (ImGui::Button(pill.actionLabel.c_str())) {
+                std::wstring wuri(pill.deepLink.begin(), pill.deepLink.end());
+                ShellExecuteW(nullptr, L"open", wuri.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            }
+            ImGui::SameLine();
+        }
+
+        // Dismiss button -- FAIL-01 + FAIL-05 only per D-10. POST /state/clear-error via
+        // the existing IDriverApi::clearError() (P8 D-16). Optimistic local clear so the
+        // pill disappears immediately; the next /state poll confirms (or re-fires if the
+        // condition is still active driver-side).
+        if (pill.dismissable) {
+            if (ImGui::Button("Dismiss")) {
+                if (driverClient && driverClient->clearError()) {
+                    std::lock_guard<std::mutex> lk(healthMu);
+                    lastError = std::nullopt;
+                }
+                g_failUx.activePill.reset();   // optimistic local clear
+            }
+        }
+
+        ImGui::Separator();
+    }
 
     bool drvLoaded = driverLoadedIndicator.load();
 
@@ -1536,7 +1600,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
         return ok ? 0 : 1;
     }
 
-    HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"MicMapSingleInstance");
+    // Phase 10 / FAIL-04 / D-09 hardening (RESEARCH §Pattern 2):
+    //  - Local\\ session-scoping prefix (explicit; matches default behavior but documented;
+    //    keeps the mutex per-Windows-session so a fast-user-switch scenario doesn't share
+    //    the handle across user sessions on the same box).
+    //  - _v1 namespace suffix (lets future versions shed a stuck handle from a crashed v0
+    //    process; bumping to _v2 in a hypothetical migration is a one-line change).
+    //  - SW_RESTORE before SetForegroundWindow when surfacing a tray-minimized first
+    //    instance (the existing code only did SetForegroundWindow which silently fails
+    //    against a minimized window).
+    //  - Existing P3 D-08 minimized-skip carve-out preserved (SteamVR --minimized
+    //    auto-relaunch must not steal focus mid-VR-session).
+    HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"Local\\MicMap_Client_SingleInstance_v1");
     // IN-08: CreateMutexW can return NULL on failure (rare — security
     // descriptor errors, kernel object exhaustion). If it did, hMutex is
     // NULL, GetLastError() will not be ERROR_ALREADY_EXISTS (so the
@@ -1551,7 +1626,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR /*lpCmdLine-unused*/, i
         // first instance is already alive. Silent exit; do NOT steal focus.
         if (!flags.minimized) {
             HWND w = FindWindowW(L"MicMapMain", nullptr);
-            if (w) { PostMessageW(w, WM_COMMAND, IDM_SHOW, 0); SetForegroundWindow(w); }
+            if (w) {
+                PostMessageW(w, WM_COMMAND, IDM_SHOW, 0);
+                ShowWindow(w, SW_RESTORE);     // P10 D-09: surface a tray-minimized peer (was missing pre-P10)
+                SetForegroundWindow(w);
+            }
         }
         // WR-02: CreateMutexW returns a valid handle even on
         // ERROR_ALREADY_EXISTS; every other exit path in WinMain closes it,
