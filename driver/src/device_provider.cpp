@@ -486,6 +486,14 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
         return driverAudioEnabled_;
     };
 
+    // P10 D-19: /health.driver_version sources from MICMAP_VERSION_STRING (compile
+    // define landed by 10-01 from cmake/version.cmake's MICMAP_VERSION SSoT). The
+    // string literal is captured into a std::string at call time so the wire shape
+    // stays a JSON string field (mirror of P7 D-09 / P9 D-07 getter-callback pattern).
+    auto driverVersionGetter = []() -> std::string {
+        return std::string(MICMAP_VERSION_STRING);
+    };
+
     httpServer_ = std::make_unique<HttpServer>(
         *commandQueue_,
         /*port=*/27015,
@@ -504,7 +512,9 @@ EVRInitError DeviceProvider::Init(IVRDriverContext* pDriverContext) {
         std::move(trainingCancel),
         std::move(trainingRecompute),
         std::move(driverTrainingActiveGetter),
-        std::move(driverAudioEnabledGetter));
+        std::move(driverAudioEnabledGetter),
+        // P10 D-19 — /health.driver_version (MICMAP_VERSION_STRING from cmake/version.cmake SSoT).
+        std::move(driverVersionGetter));
     if (!httpServer_->Start()) {
         DriverLog("MicMap: failed to start HTTP server\n");
         return VRInitError_Driver_Failed;

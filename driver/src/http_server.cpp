@@ -46,7 +46,8 @@ HttpServer::HttpServer(CommandQueue& queue, int port, const std::string& host,
                        std::function<HttpResult()>                             trainingCancel,
                        std::function<HttpResult(float)>                        trainingRecompute,
                        std::function<bool()>                                   driverTrainingActiveGetter,
-                       std::function<bool()>                                   driverAudioEnabledGetter)
+                       std::function<bool()>                                   driverAudioEnabledGetter,
+                       std::function<std::string()>                            driverVersionGetter)
     : queue_(queue)
     , port_(port)
     , host_(host)
@@ -64,6 +65,7 @@ HttpServer::HttpServer(CommandQueue& queue, int port, const std::string& host,
     , trainingRecompute_(std::move(trainingRecompute))
     , driverTrainingActiveGetter_(std::move(driverTrainingActiveGetter))
     , driverAudioEnabledGetter_(std::move(driverAudioEnabledGetter))
+    , driverVersionGetter_(std::move(driverVersionGetter))
 {
     DriverLog("HttpServer created (host: %s, port: %d)\n", host_.c_str(), port_);
 }
@@ -214,6 +216,13 @@ void HttpServer::SetupRoutes() {
         // primary UX surface.
         body["driver_audio_enabled"] =
             driverAudioEnabledGetter_ ? driverAudioEnabledGetter_() : false;
+        // P10 D-19 — driver semver string from MICMAP_VERSION_STRING SSoT. Mirror
+        // of P7 D-09 / P9 D-07 getter shape. Empty string when no getter wired
+        // (test code / legacy callers). Field order kept stable: driver_loaded ->
+        // driver_detection_active -> driver_training_active -> driver_audio_enabled
+        // -> driver_version.
+        body["driver_version"] =
+            driverVersionGetter_ ? driverVersionGetter_() : std::string("");
         res.set_content(body.dump(), "application/json");
     });
 

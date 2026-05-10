@@ -181,7 +181,9 @@ public:
                         std::function<HttpResult()>                             trainingCancel = nullptr,
                         std::function<HttpResult(float)>                        trainingRecompute = nullptr,
                         std::function<bool()>                                   driverTrainingActiveGetter = nullptr,
-                        std::function<bool()>                                   driverAudioEnabledGetter = nullptr);
+                        std::function<bool()>                                   driverAudioEnabledGetter = nullptr,
+                        // P10 D-19 — /health.driver_version (semver string from MICMAP_VERSION_STRING SSoT).
+                        std::function<std::string()>                            driverVersionGetter = nullptr);
 
     ~HttpServer();
 
@@ -243,6 +245,13 @@ private:
     std::function<HttpResult(float)>                        trainingRecompute_;
     std::function<bool()>                                   driverTrainingActiveGetter_;
     std::function<bool()>                                   driverAudioEnabledGetter_;
+
+    // P10 D-19 — /health.driver_version. Mirror of P7 D-09 / P9 D-07 getter pattern.
+    // Lambda from device_provider.cpp returns MICMAP_VERSION_STRING (compile define
+    // landed by 10-01 from cmake/version.cmake). Read at REQUEST TIME so a future
+    // hot-reload could surface a different value without HttpServer reconstruction.
+    // Defaults to empty string when no getter wired (test code / legacy callers).
+    std::function<std::string()>                            driverVersionGetter_;
 };
 
 } // namespace micmap::driver
