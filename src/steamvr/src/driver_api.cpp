@@ -351,37 +351,11 @@ public:
         return connected_;
     }
 
-    bool tap() override {
-        if (!ensureConnected()) {
-            lastError_ = "Not connected to driver";
-            MICMAP_LOG_ERROR("DriverApi::tap() failed: ", lastError_);
-            return false;
-        }
-
-        MICMAP_LOG_DEBUG("Sending tap (POST /button {\"kind\":\"tap\"})");
-
-        httplib::Client client(host_, port_);
-        client.set_connection_timeout(2);
-        client.set_read_timeout(2);
-
-        auto res = client.Post("/button", R"({"kind":"tap"})", "application/json");
-
-        if (!res) {
-            lastError_ = "HTTP request failed";
-            MICMAP_LOG_ERROR("DriverApi::tap() failed: ", lastError_);
-            connected_ = false;  // Mark as disconnected to retry
-            return false;
-        }
-
-        if (res->status != 200) {
-            lastError_ = "Server returned status " + std::to_string(res->status);
-            MICMAP_LOG_ERROR("DriverApi::tap() failed: ", lastError_);
-            return false;
-        }
-
-        MICMAP_LOG_DEBUG("DriverApi::tap() successful");
-        return true;
-    }
+    // Phase 10 / MIG-05 / D-01: bool tap() impl DELETED in the Wave 5 atomic
+    // cutover. The matching virtual decl is removed from driver_api.hpp;
+    // POST /button registration is removed from driver/src/http_server.cpp.
+    // debugTrigger() (below, #if MICMAP_DEBUG_BUILD) is the surviving
+    // synthetic-trigger surface in Debug builds.
 
     bool getStatus() override {
         if (!ensureConnected()) {

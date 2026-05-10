@@ -974,23 +974,13 @@ add_test(NAME AssertCoVersioning
         -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_SOURCE_DIR}/cmake/AssertCoVersioning.cmake)
 
-# NOTE: AssertNoClientDetection is intentionally NOT registered at Wave 0.
-# The lint script exists at cmake/AssertNoClientDetection.cmake but currently
-# FATALs on apps/micmap/main.cpp (v1.5 client-side audio/FFT/state-machine
-# body + 3x detector->loadTrainingData call sites at :326, :647, :970).
-# Single-writer cutover protocol per CONTEXT D-23: ctest registration goes
-# live in 10-05 alongside the client-side body deletion (~500 LoC). Mirror
-# of P8 D-07 timing for AssertNoConfigWriteInClient and P9 D-23 timing for
-# AssertNoClientTraining. (See "# ---- Phase 10 Wave 5" block added by 10-05
-# for the go-live.)
-
-# NOTE: AssertNoButtonRoute is also intentionally NOT registered at Wave 0.
-# The lint script exists at cmake/AssertNoButtonRoute.cmake but currently
-# FATALs on driver/src/http_server.cpp (POST /button route still registered)
-# and src/steamvr/src/driver_api.cpp (IDriverApi::tap impl still present —
-# the rollback path that 10-05 deletes). ctest registration goes live in
-# 10-05 alongside the route + method + callsite deletions (single atomic
-# commit).
+# Phase 10 Wave 5 (10-05) — see "# ---- Phase 10 Wave 5" block at the end of
+# this file for the AssertNoClientDetection + AssertNoButtonRoute ctest
+# registrations. Both lints flipped from FATAL pre-cutover to STATUS clean
+# in the same atomic commit that deleted the v1.5 client-side detection
+# body + POST /button route + IDriverApi::tap() decl + impl. Mirror of P8
+# D-07 (AssertNoConfigWriteInClient) and P9 D-23 (AssertNoClientTraining)
+# single-writer cutover go-live timing.
 
 # Test executable registrations follow the EXISTS-gated source-list pattern
 # from the P7/P8/P9 RED scaffold blocks above. The tray_glyph / fail_pill /
@@ -1076,3 +1066,25 @@ add_test(NAME VersionMismatch
     COMMAND test_version_mismatch)
 
 # ---- end Phase 10 Wave 0 ----
+
+# ---- Phase 10 Wave 5 (CUTOVER lint go-live) ----
+
+# P10 / MIG-05 / D-01 / D-23: AssertNoClientDetection goes live alongside the
+# atomic cutover commit (10-05). Pre-cutover the lint FATALs on apps/micmap/main.cpp;
+# post-cutover (after the ~500 LoC deletion of the client-side audio/FFT/state-
+# machine body) it stays clean. CI catches future regression.
+add_test(NAME AssertNoClientDetection
+    COMMAND ${CMAKE_COMMAND}
+        -DCLIENT_ROOTS=${CMAKE_SOURCE_DIR}/apps/micmap
+        -P ${CMAKE_SOURCE_DIR}/cmake/AssertNoClientDetection.cmake)
+
+# P10 / MIG-05 / D-01 / D-23: AssertNoButtonRoute goes live in the same commit.
+# Pre-cutover FATALs on driver/src/http_server.cpp (POST /button) +
+# src/steamvr/src/driver_api.cpp (IDriverApi::tap impl); post-cutover stays clean.
+add_test(NAME AssertNoButtonRoute
+    COMMAND ${CMAKE_COMMAND}
+        -DBUTTON_ROUTE_ROOT=${CMAKE_SOURCE_DIR}/driver/src
+        -DSTEAMVR_ROOT=${CMAKE_SOURCE_DIR}/src/steamvr
+        -P ${CMAKE_SOURCE_DIR}/cmake/AssertNoButtonRoute.cmake)
+
+# ---- end Phase 10 Wave 5 ----

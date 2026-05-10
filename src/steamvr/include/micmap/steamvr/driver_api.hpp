@@ -363,17 +363,12 @@ public:
      */
     virtual bool isConnected() const = 0;
 
-    /**
-     * @brief Fire a single tap on the SteamVR HMD system button.
-     * @return true if the HTTP request returned 200 OK.
-     *
-     * Sends POST /button with body {"kind":"tap"}. The driver performs
-     * UpdateBooleanComponent(true), holds for ~150 ms (its own min-hold
-     * floor), then UpdateBooleanComponent(false). SteamVR's
-     * complex_button binding interprets the resulting press+release as a
-     * single-click -> ToggleDashboard action.
-     */
-    virtual bool tap() = 0;
+    // Phase 10 / MIG-05 / D-01: virtual bool tap() = 0 DELETED in the Wave 5
+    // atomic cutover. The v1.5 POST /button trigger surface is gone; in Debug
+    // builds, debugTrigger() (below) is the synthetic-trigger surface for
+    // dev/test harnesses (apps/hmd_button_test, --debug-trigger CLI); in
+    // Release builds, the only TapCommand producer is the driver-resident
+    // DetectionRunner (P7). AssertNoButtonRoute lint enforces.
 
     /**
      * @brief Get driver status

@@ -2,15 +2,26 @@
  * @file main.cpp
  * @brief MicMap HMD Button Test Application - Win32 GUI
  *
- * Test harness for the MicMap driver's POST /button API. Operator-facing
- * buttons:
- *   - "Tap"               -> driverClient->tap() (POST /button {"kind":"tap"})
+ * Test harness for the MicMap driver's synthetic-trigger surface (TEST-05).
+ * Operator-facing buttons:
+ *   - "Tap"               -> driverClient->debugTrigger() (POST /debug/trigger,
+ *                            Debug-build-only — Release shows a build-mode notice)
  *   - "Test Driver"       -> probes /health + /status for the driver
  *   - "Reconnect Driver"  -> disconnect + reconnect the HTTP client
  *
  * No dashboard-manager / virtual-controller wiring: the driver owns the
  * HMD /input/system/click component directly (Plan 01-03) and expands a
  * single tap command into press+release internally.
+ *
+ * Phase 10 / MIG-05 / D-01: the v1.5 POST /button surface used by the prior
+ * tap() method is gone post-cutover. This harness is rewired to the Debug-
+ * build-only debugTrigger() (POST /debug/trigger) — the surviving synthetic-
+ * trigger surface that exercises the same CommandQueue/RunFrame producer
+ * path. In Release builds the IDriverApi::debugTrigger() method is
+ * structurally absent (see #if MICMAP_DEBUG_BUILD in driver_api.hpp);
+ * pressing "Tap" reports a "Release build — use Debug to test trigger"
+ * message. This preserves D-13 (TEST-05 retains hmd_button_test as a
+ * developer tool) while honoring the cutover.
  */
 
 #ifdef _WIN32
@@ -140,7 +151,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     g_state.hwnd = CreateWindowExW(
         0,
         CLASS_NAME,
-        L"MicMap - HMD Button Test (POST /button)",
+        L"MicMap - HMD Button Test (POST /debug/trigger)",
         WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX & ~WS_THICKFRAME,
         windowX, windowY,
         WINDOW_WIDTH, WINDOW_HEIGHT,
@@ -155,7 +166,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     }
 
     // Initialize VR input (OpenVR for SteamVR-quit monitoring only; button
-    // presses flow exclusively through driverClient -> POST /button).
+    // presses flow exclusively through driverClient -> POST /debug/trigger).
     g_state.vrInput = std::shared_ptr<steamvr::IVRInput>(
         steamvr::createOpenVRInput().release()
     );
@@ -183,7 +194,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // depend on the driver being live; Press/Release/Tap will create it
     // on demand.
     AddLogEntry(L"Click 'Test Driver' to check driver HTTP connection");
-    AddLogEntry(L"Ready - Click 'Tap' to fire one POST /button {\"kind\":\"tap\"}");
+#if MICMAP_DEBUG_BUILD
+    AddLogEntry(L"Ready - Click 'Tap' to fire one POST /debug/trigger");
+#else
+    AddLogEntry(L"Release build - 'Tap' is a no-op (synthetic trigger requires Debug)");
+#endif
 
     ShowWindow(g_state.hwnd, nCmdShow);
     UpdateWindow(g_state.hwnd);
@@ -294,7 +309,7 @@ void CreateControls(HWND hwnd) {
 
     y += 10;
 
-    CreateWindowW(L"STATIC", L"POST /button actions:",
+    CreateWindowW(L"STATIC", L"POST /debug/trigger actions:",
         WS_VISIBLE | WS_CHILD | SS_LEFT,
         leftMargin, y, 200, 20,
         hwnd, nullptr, nullptr, nullptr);
@@ -444,7 +459,8 @@ void SetLastResult(const std::wstring& result, bool success) {
 }
 
 void OnSendTapClicked() {
-    AddLogEntry(L"Sending POST /button {\"kind\":\"tap\"}...");
+#if MICMAP_DEBUG_BUILD
+    AddLogEntry(L"Sending POST /debug/trigger (synthetic trigger)...");
 
     EnsureDriverClient();
     if (!g_state.driverClient) {
@@ -455,7 +471,7 @@ void OnSendTapClicked() {
     if (!g_state.driverClient->isConnected()) {
         AddLogEntry(L"Driver not connected, attempting to connect...");
         // P8 Pitfall 6: connect() returns ConnectResult; treat any non-Connected
-        // outcome as the legacy false for this UI flow.
+        // outcome as a connection failure for this UI flow.
         if (g_state.driverClient->connect() != steamvr::ConnectResult::Connected) {
             std::wstring err = Utf8ToWide(g_state.driverClient->getLastError());
             AddLogEntry(L"Connect failed: " + err);
@@ -467,16 +483,32 @@ void OnSendTapClicked() {
                     std::to_wstring(g_state.driverPort));
     }
 
-    if (g_state.driverClient->tap()) {
-        AddLogEntry(L"tap() OK");
-        SetLastResult(L"tap() OK (POST /button tap)", true);
-    } else {
-        std::wstring err = Utf8ToWide(g_state.driverClient->getLastError());
-        AddLogEntry(L"tap() FAILED: " + err);
-        SetLastResult(L"tap() FAILED: " + err, false);
+    auto r = g_state.driverClient->debugTrigger();
+    switch (r.status) {
+        case steamvr::DebugTriggerResult::Ok:
+            AddLogEntry(L"debugTrigger() OK");
+            SetLastResult(L"debugTrigger() OK (POST /debug/trigger)", true);
+            break;
+        case steamvr::DebugTriggerResult::HttpError:
+            AddLogEntry(L"debugTrigger() FAILED: HTTP error (driver reachable but route refused — version skew?)");
+            SetLastResult(L"debugTrigger() FAILED: HTTP error", false);
+            break;
+        case steamvr::DebugTriggerResult::ConnectionRefused:
+            AddLogEntry(L"debugTrigger() FAILED: connection refused (driver not running?)");
+            SetLastResult(L"debugTrigger() FAILED: connection refused", false);
+            break;
     }
 
     UpdateDriverStatus();
+#else
+    // Phase 10 / MIG-05 / D-01: in Release builds the synthetic-trigger
+    // surface is structurally absent (POST /debug/trigger not registered;
+    // IDriverApi::debugTrigger() not declared). The harness still builds
+    // and runs but the trigger button is a no-op with a build-mode notice.
+    AddLogEntry(L"Tap unavailable: this is a Release build. "
+                L"Synthetic trigger requires a Debug build (--debug-trigger / POST /debug/trigger).");
+    SetLastResult(L"Release build — use Debug to test trigger", false);
+#endif
 }
 
 void OnTestDriverClicked() {

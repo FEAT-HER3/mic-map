@@ -28,10 +28,12 @@
 #include "imgui_impl_dx11.h"
 
 #include "resource.h"
-#include "micmap/audio/audio_capture.hpp"
-#include "micmap/detection/noise_detector.hpp"
+// Phase 10 / MIG-05 / D-01: client-side audio/FFT/state-machine includes
+// DELETED in the Wave 5 atomic cutover. micmap/audio/audio_capture.hpp,
+// micmap/detection/noise_detector.hpp, and micmap/core/state_machine.hpp
+// are no longer pulled into this TU — the client is now a pure UI/IPC
+// observer of the driver-resident detection pipeline.
 #include "micmap/steamvr/driver_api.hpp"   // P8 D-22: renamed from vr_input.hpp
-#include "micmap/core/state_machine.hpp"
 #include "micmap/core/config_manager.hpp"
 #include "micmap/common/logger.hpp"
 #include "micmap/common/log_sink.hpp"   // P8 LIB-04 / D-19: composition-root sinks
@@ -133,53 +135,40 @@ static ID3D11DeviceContext* g_pd3dDeviceContext = nullptr;
 static IDXGISwapChain* g_pSwapChain = nullptr;
 static ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
 
-// Detection timing constants (matching mic_test)
-constexpr int MIN_TRAINING_SAMPLES = 50;  // Valid samples needed (detector may reject some)
+// Phase 10 / MIG-05 / D-01: MIN_TRAINING_SAMPLES + client-side audioCapture /
+// detector / stateMachine members + their orphan atomic counterparts
+// (currentLevel, currentLevelDb, currentConfidence, currentSpectralFlatness,
+// currentEnergy, currentEnergyDb, isDetected, detectionActive, buttonWouldFire,
+// detectionDurationMs, detectionStartTime, lastTriggerTime, inCooldown,
+// lastUpdate, audioMutex) DELETED in the Wave 5 atomic cutover. Driver is
+// sole owner of detection per IPC-06 + MIG-05; the client is a pure observer
+// that surfaces driver-state via /state and /telemetry/level polls.
+// detectionTimeMs is preserved as a UI-only mirror for the Detection Time
+// slider — its writes drive PUT /settings (driver-side applyValidatedConfig
+// is the source of truth; the slider reads back from configManager next frame).
 
 struct MicMapApp {
-    std::unique_ptr<audio::IAudioCapture> audioCapture;
-    std::unique_ptr<detection::INoiseDetector> detector;
     std::unique_ptr<steamvr::IVRInput> vrInput;
-    std::unique_ptr<core::IStateMachine> stateMachine;
     std::unique_ptr<core::IConfigManager> configManager;
     std::unique_ptr<steamvr::IDriverApi> driverClient;
 
-    std::vector<audio::AudioDevice> devices;
     int selectedDeviceIndex = 0;
 
     std::atomic<bool> running{true};
-    std::atomic<float> currentLevel{0.0f};
-    std::atomic<float> currentLevelDb{-60.0f};
-    std::atomic<float> currentConfidence{0.0f};
-    std::atomic<float> currentSpectralFlatness{0.0f};
-    std::atomic<float> currentEnergy{0.0f};
-    std::atomic<float> currentEnergyDb{-60.0f};
-    std::atomic<bool> isDetected{false};
-    // P9 09-03 / IPC-06 / D-05 / D-23: the v1.5 client-side training
-    // session flag + sample counter members are deleted here; the driver
-    // owns the training session lifecycle now. hasProfile is preserved to
-    // gate client-side detection rendering and the new "Discard Profile"
-    // UI path until P10 cutover.
+    // Phase 10 / MIG-05 / D-01: hasProfile is now sourced from the driver's
+    // /health.driver_training_active observation (orphan-recovery path) and
+    // from the post-finalize toast handler (set true on state == "finalized").
+    // Default false; flipped true by the driver-side observation path.
     std::atomic<bool> hasProfile{false};
 
-    // Button fire tracking (matching mic_test)
-    std::chrono::steady_clock::time_point detectionStartTime;
-    std::atomic<bool> detectionActive{false};
-    std::atomic<bool> buttonWouldFire{false};
-    std::atomic<int> detectionDurationMs{0};
-
-    // Cooldown tracking to prevent repeated triggers
-    std::chrono::steady_clock::time_point lastTriggerTime;
-    std::atomic<bool> inCooldown{false};
-
-    std::chrono::steady_clock::time_point lastUpdate;
-
+    // UI-only mirror of detection.minDurationMs from the active AppConfig.
+    // Slider writes drive PUT /settings; on Ok the configManager snapshot is
+    // updated and this mirror is re-synced from config on the next frame.
     int detectionTimeMs = 300;
 
     HWND hwnd = nullptr;
     NOTIFYICONDATAW nid = {};
     bool minimizedToTray = false;
-    std::mutex audioMutex;
 
     // Phase 3 Plan 07: fire-and-forget re-registration thread (D-15 amended,
     // Pitfall 6). MUST be std::thread + atomic stop — std::async's future
@@ -256,7 +245,8 @@ struct MicMapApp {
 
     bool initialize();
     void shutdown();
-    void onTrigger();
+    // Phase 10 / MIG-05 / D-01: onTrigger() DELETED — driver owns the trigger
+    // path; there is no client-side trigger callback to register or invoke.
     void renderUI();
     void pollDriverHealth();   // P8 08-05: called once per main-loop frame.
 };
@@ -367,62 +357,23 @@ void SetupSystemTray(HWND hwnd) {
 }
 
 bool MicMapApp::initialize() {
+    // Phase 10 / MIG-05 / D-01: client-side WASAPI capture, FFT detector, state
+    // machine, audio callback, and the startup training-profile load call all
+    // DELETED in the Wave 5 atomic cutover. Driver-resident DetectionRunner +
+    // AudioWorker (P6/P7) are the sole detection runtime; the client is now a
+    // pure UI/IPC observer. Device enumeration moves to /devices polls
+    // (already wired in pollDriverHealth + renderUI driverDevices). The
+    // local audio_capture-driven device selection at startup becomes moot.
     configManager = core::createConfigManager();
     configManager->loadDefault();
-    auto& config = configManager->getConfig();
-    detectionTimeMs = config.detection.minDurationMs;
+    detectionTimeMs = configManager->getConfig().detection.minDurationMs;
 
-    audioCapture = audio::createWASAPICapture();
-    if (!audioCapture) return false;
-
-    devices = audioCapture->enumerateDevices();
-    bool deviceSelected = false;
-
-    // First try to find a device with "Beyond" in the name
-    for (size_t i = 0; i < devices.size(); ++i) {
-        if (devices[i].name.find(L"Beyond") != std::wstring::npos) {
-            deviceSelected = audioCapture->selectDeviceById(devices[i].id);
-            if (deviceSelected) {
-                selectedDeviceIndex = static_cast<int>(i);
-                break;
-            }
-        }
-    }
-
-    // If no Beyond device, try saved device ID
-    if (!deviceSelected && !config.audio.deviceId.empty()) {
-        deviceSelected = audioCapture->selectDeviceById(config.audio.deviceId);
-        for (size_t i = 0; i < devices.size(); ++i) {
-            if (devices[i].id == config.audio.deviceId) {
-                selectedDeviceIndex = static_cast<int>(i);
-                break;
-            }
-        }
-    }
-
-    // Fall back to first device
-    if (!deviceSelected && !devices.empty()) {
-        deviceSelected = audioCapture->selectDeviceById(devices[0].id);
-        selectedDeviceIndex = 0;
-    }
-
-    auto device = audioCapture->getCurrentDevice();
-    if (device.sampleRate > 0) {
-        detector = detection::createFFTDetector(device.sampleRate, config.detection.fftSize);
-        detector->setMinDetectionDuration(config.detection.minDurationMs);
-        // P9 09-03: preserved — client-side detection alive until P10 cutover;
-        // this load also refreshes after a successful POST /training/finalize
-        // per CONTEXT D-24 (the optimistic-apply path lives in the new
-        // finalize-poll handler in the Training pane added by 09-03 Task 2).
-        detector->loadTrainingData(configManager->getTrainingDataPath());
-    }
-
-    // Initialize driver client (non-blocking - will connect in background)
+    // Initialize driver client (non-blocking - will connect in background).
     driverClient = steamvr::createDriverApi();   // P8 D-22 rename
 
-    // Initialize VR input (don't initialize yet - will do async).
-    // VR input is only used for SteamVR-quit lifecycle notifications now;
-    // all button presses flow through driverClient (POST /button).
+    // Initialize VR input (don't initialize yet - will do async). VR input is
+    // only used for SteamVR-quit lifecycle notifications; the trigger pipeline
+    // is owned by the driver per Phase 10 / MIG-05 / D-01.
     vrInput = steamvr::createOpenVRInput();
     vrInput->setEventCallback([this](const steamvr::VREvent& event) {
         if (event.type == steamvr::VREventType::Quit) {
@@ -483,121 +434,6 @@ bool MicMapApp::initialize() {
 #endif
     });
 
-    // State machine acts as a pure edge-latch + cooldown over the
-    // detector's already temporally-gated DetectionResult::isWhiteNoise
-    // boolean. The detector owns the "sustain for minDurationMs" logic
-    // (via detector->setMinDetectionDuration); the state machine only
-    // adds cooldown and a triggerCallback edge. Do NOT apply
-    // minDetectionDuration on both sides -- that double-gates the
-    // trigger path and also makes the state machine's threshold check
-    // depend on the noisy instantaneous `confidence` value instead of
-    // the stable `isWhiteNoise` flag that drives the rest of the UI.
-    core::StateMachineConfig smConfig;
-    smConfig.minDetectionDuration = std::chrono::milliseconds(0);
-    smConfig.cooldownDuration = std::chrono::milliseconds(config.detection.cooldownMs);
-    smConfig.detectionThreshold = 0.5f;  // any boolean-true (1.0) crosses; boolean-false (0.0) does not
-    stateMachine = core::createStateMachine(smConfig);
-    stateMachine->setTriggerCallback([this]() { onTrigger(); });
-
-    // Check if we have a profile loaded
-    hasProfile = detector && detector->hasTrainingData();
-
-    if (audioCapture && detector) {
-        audioCapture->setAudioCallback([this](const float* samples, size_t count) {
-            std::lock_guard<std::mutex> lock(audioMutex);
-
-            // Calculate RMS level (matching mic_test)
-            float rms = 0.0f;
-            for (size_t i = 0; i < count; ++i) rms += samples[i] * samples[i];
-            rms = std::sqrt(rms / count);
-
-            // Scale for display (0-1 range)
-            float scaledLevel = rms * 10.0f;
-            currentLevel = (scaledLevel > 1.0f) ? 1.0f : scaledLevel;
-            currentLevelDb = (rms <= 0.0f) ? -60.0f : std::max(-60.0f, 20.0f * std::log10(rms));
-
-            // P9 09-03: client-side training removed (driver is sole trainer per
-            // IPC-06 / 09-CONTEXT D-05 / D-23). Client-side detection still runs
-            // until P10 cutover; only the training-specific call sites are gone.
-            // Detection (only detect if we have a profile) - matching mic_test
-            if (detector->hasTrainingData()) {
-                // Only run detection if we have training data
-                auto result = detector->analyze(samples, count);
-                currentConfidence = result.confidence;
-                currentSpectralFlatness = result.spectralFlatness;
-                currentEnergy = result.energy;
-                currentEnergyDb = (result.energy <= 0.0f) ? -60.0f : std::max(-60.0f, 20.0f * std::log10(result.energy));
-                isDetected = result.isWhiteNoise;
-
-                // Track detection duration for button fire (matching mic_test)
-                if (result.isWhiteNoise) {
-                    if (!detectionActive) {
-                        detectionStartTime = std::chrono::steady_clock::now();
-                        detectionActive = true;
-                    }
-
-                    auto now = std::chrono::steady_clock::now();
-                    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        now - detectionStartTime).count();
-                    detectionDurationMs = static_cast<int>(duration);
-
-                    // Check cooldown
-                    auto cooldownElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        now - lastTriggerTime).count();
-                    bool cooldownExpired = cooldownElapsed >= 300; // 300ms cooldown
-
-                    if (duration >= detectionTimeMs && !buttonWouldFire && cooldownExpired && !inCooldown) {
-                        buttonWouldFire = true;
-                        // Note: actual tap dispatch flows through the state
-                        // machine -> setTriggerCallback -> onTrigger(). This
-                        // branch only updates the legacy "buttonWouldFire"
-                        // UI hint + cooldown flag.
-                        lastTriggerTime = now;
-                        inCooldown = true;
-                    }
-                } else {
-                    detectionActive = false;
-                    buttonWouldFire = false;
-                    detectionDurationMs = 0;
-                    inCooldown = false; // Reset cooldown when detection stops
-                }
-
-                // Update state machine.
-                //
-                // Drive the state machine from the detector's temporally-gated
-                // boolean `result.isWhiteNoise` (encoded as 1.0/0.0), NOT the
-                // instantaneous `result.confidence`. The raw confidence score
-                // dips below any reasonable threshold between audio callbacks
-                // even while a cover is sustained, which would cause
-                // IStateMachine::updateDetecting() to bounce back to Idle
-                // before minDetectionDuration elapses -- i.e. the tap would
-                // never fire. `isWhiteNoise` already incorporates the
-                // spike-gate + temporal smoothing that the rest of the UI
-                // trusts.
-                auto now = std::chrono::steady_clock::now();
-                auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastUpdate);
-                lastUpdate = now;
-                if (stateMachine) {
-                    float smInput = result.isWhiteNoise ? 1.0f : 0.0f;
-                    stateMachine->update(smInput, delta);
-                }
-            } else {
-                // No profile - reset detection state
-                currentConfidence = 0.0f;
-                currentSpectralFlatness = 0.0f;
-                currentEnergy = 0.0f;
-                currentEnergyDb = -60.0f;
-                isDetected = false;
-                detectionActive = false;
-                buttonWouldFire = false;
-                detectionDurationMs = 0;
-            }
-
-            hasProfile = detector->hasTrainingData();
-        });
-        audioCapture->startCapture();
-    }
-    lastUpdate = std::chrono::steady_clock::now();
     return true;
 }
 
@@ -729,14 +565,13 @@ void MicMapApp::pollDriverHealth() {
             if (progress->state == "finalized") {
                 // Canonical finalize success path (≤200 ms latency = 1×5Hz interval).
                 trainingUi_.active = false;
-                // Optimistic profile reload (CONTEXT D-24): re-load the on-disk
-                // training_data.bin into the in-memory client-side detector so
-                // local detection picks up the new profile without a restart.
-                // WR-03 / WR-07: serialize with the WASAPI callback.
-                if (detector && configManager) {
-                    std::lock_guard<std::mutex> lock(audioMutex);
-                    detector->loadTrainingData(configManager->getTrainingDataPath());
-                }
+                // Phase 10 / MIG-05 / D-01: client-side training-profile reload
+                // call DELETED in the Wave 5 atomic cutover. Driver-resident
+                // detection re-loads its own in-memory profile on the same
+                // training/finalize handler that publishes state == "finalized"
+                // (driver-side TrainingSession publishes the new profile to
+                // DetectionRunner via atomic-snapshot publish/load — P9 D-15).
+                // The client just observes the state transition + toasts.
                 hasProfile = true;
                 trainingUi_.toastMessage = "Profile saved";
                 trainingUi_.toastUntil = now + std::chrono::seconds(3);
@@ -843,14 +678,11 @@ void MicMapApp::shutdown() {
     if (vrInitFuture.valid())         vrInitFuture.wait();
 
     // D-12 ordered teardown (reverse-init):
-    // 1. Stop audio capture
-    if (audioCapture) audioCapture->stopCapture();
-    // 2. Reset detector. P9 09-03 / IPC-06 / D-05 / D-23: the prior
-    //    client-side training-data persistence call on shutdown is DELETED
-    //    here — driver is sole writer for training_data.bin (single-writer
-    //    cutover). Client-side detection still loads the profile at startup
-    //    (line ~300) until P10 deletes the client audio path entirely.
-    if (detector) detector.reset();
+    // Phase 10 / MIG-05 / D-01: steps 1+2 (audioCapture->stopCapture, detector
+    // reset) DELETED — client no longer owns the audio capture / detector
+    // pipeline. Driver-resident AudioWorker + DetectionRunner are tornDown by
+    // the driver's own DeviceProvider::Cleanup. Step renumbering preserved
+    // for grep-anchor stability.
     // 3. Disconnect driver client
     if (driverClient) driverClient->disconnect();
     // 4. Shutdown VR input (calls VR_Shutdown under MICMAP_HAS_OPENVR)
@@ -883,23 +715,11 @@ void MicMapApp::shutdown() {
     // existing call-site topology.
 }
 
-void MicMapApp::onTrigger() {
-    if (!driverClient || !driverClient->isConnected()) {
-        MICMAP_LOG_DEBUG("onTrigger: driver not connected, skipping");
-        return;
-    }
-    // P7 D-10: suppress local trigger when driver owns the detection path.
-    // State machine cooldown is the belt-and-suspenders backstop per D-11.
-    // The /health poll is cached for 1 s in DriverApi so the latency
-    // overhead per onTrigger is bounded. Deleted in P10 per D-12.
-    if (driverClient->isDriverDetectionActive()) {
-        MICMAP_LOG_DEBUG("onTrigger: driver_detection_active=true, suppressing");
-        return;
-    }
-    if (!driverClient->tap()) {
-        MICMAP_LOG_WARNING("onTrigger failed: ", driverClient->getLastError());
-    }
-}
+// Phase 10 / MIG-05 / D-01: MicMapApp::onTrigger() DELETED in the Wave 5
+// atomic cutover. Driver owns the trigger pipeline (HTTP-thread + RunFrame
+// producer/consumer per SVR-05); the client never invokes a trigger. The
+// matching method declaration is removed from struct MicMapApp above; the
+// state-machine setTriggerCallback wiring is removed from initialize().
 
 void MicMapApp::renderUI() {
     ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -1130,30 +950,17 @@ void MicMapApp::renderUI() {
                 auto r = driverClient->putSettings(next);
                 if (r.status == steamvr::PutSettingsResult::Ok) {
                     // Optimistic in-memory apply (D-09): mutate the client's
-                    // AppConfig snapshot so client-side detection (live until
-                    // P10) sees the new device immediately.
+                    // AppConfig snapshot so subsequent /devices renders show
+                    // the new device as selected even before the next poll.
                     configManager->getConfig() = next;
                     selectedDeviceIndex = driverSel;
-                    // v1.5 client-side audio retake: re-bind WASAPI to the
-                    // new device so the local detection callback keeps
-                    // running until the P10 cutover deletes the client-side
-                    // audio path entirely.
-                    if (audioCapture) {
-                        audioCapture->stopCapture();
-                        audioCapture->selectDeviceById(next.audio.deviceId);
-                        auto dev = audioCapture->getCurrentDevice();
-                        if (dev.sampleRate > 0) {
-                            std::lock_guard<std::mutex> lock(audioMutex);
-                            detector = detection::createFFTDetector(dev.sampleRate);
-                            detector->setMinDetectionDuration(detectionTimeMs);
-                            if (configManager) {
-                                detector->loadTrainingData(configManager->getTrainingDataPath());
-                            }
-                            audioCapture->startCapture();
-                        } else {
-                            MICMAP_LOG_WARNING("Device switch (driver list): new device reported sampleRate=0; capture NOT restarted");
-                        }
-                    }
+                    // Phase 10 / MIG-05 / D-01: client-side WASAPI re-bind +
+                    // detector recreate DELETED in the Wave 5 atomic cutover.
+                    // The driver's AudioWorker handles device-switch via the
+                    // putSettings path: PUT /settings → driver applies new
+                    // audio.deviceId → AudioWorker re-binds to the new device
+                    // → DetectionRunner picks up the next sample window. No
+                    // client-side audio pipeline to restart.
                 } else if (r.status == steamvr::PutSettingsResult::ValidationFailed) {
                     // 4xx — UI rolls back via driverSel re-resolution next
                     // frame; surface the orange toast for 3 s.
@@ -1188,10 +995,10 @@ void MicMapApp::renderUI() {
     ImGui::Text("Detection Time: %d ms", detectionTimeMs);
     ImGui::SetNextItemWidth(-1);
     if (ImGui::SliderInt("##Time", &detectionTimeMs, 100, 1000, "")) {
-        // P8 08-05 D-09 — slider on-change goes through PUT /settings
-        // instead of mutating the local ConfigManager directly.
-        // WR-07: detector mutations stay under audioMutex so the WASAPI
-        // callback can't race with the duration-threshold write.
+        // P8 08-05 D-09 — slider on-change goes through PUT /settings.
+        // Phase 10 / MIG-05 / D-01: client-side detector mutation DELETED;
+        // the driver's settings-apply handler (DeviceProvider::applyValidatedConfig)
+        // propagates detection.minDurationMs to its DetectionRunner.
         if (configManager && driverClient) {
             core::AppConfig next = configManager->getConfig();
             const int prevDur = next.detection.minDurationMs;
@@ -1199,10 +1006,6 @@ void MicMapApp::renderUI() {
             auto r = driverClient->putSettings(next);
             if (r.status == steamvr::PutSettingsResult::Ok) {
                 configManager->getConfig() = next;
-                if (detector) {
-                    std::lock_guard<std::mutex> lock(audioMutex);
-                    detector->setMinDetectionDuration(detectionTimeMs);
-                }
             } else if (r.status == steamvr::PutSettingsResult::ValidationFailed) {
                 // Roll back the slider to the prior value; show 3 s orange toast.
                 detectionTimeMs = prevDur;
@@ -1299,12 +1102,12 @@ void MicMapApp::renderUI() {
                     "Driver audio is disabled - enable in driver settings to train");
             }
 
-            if (hasProfile.load()) {
-                ImGui::SameLine();
-                if (ImGui::Button("Discard Profile", ImVec2(120, 24))) {
-                    trainingUi_.showDiscardConfirmModal = true;
-                }
-            }
+            // Phase 10 / MIG-05 / D-01: "Discard Profile" button DELETED — it
+            // used to drop the client-side in-memory detector profile, but
+            // there is no client-side detector post-cutover. To clear a
+            // trained profile, retrain (which overwrites driver-side
+            // training_data.bin atomically per P9 IPC-06) or delete the file
+            // via OS file ops (driver picks up the change on next start).
 
             // Status line (UI-SPEC §"Idle state").
             if (hasProfile.load()) {
@@ -1313,39 +1116,16 @@ void MicMapApp::renderUI() {
                 ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "Status: No profile loaded");
             }
 
-            // Discard Profile destructive modal (UI-SPEC §"Destructive Confirmations").
+            // Phase 10 / MIG-05 / D-01: Discard Profile destructive modal
+            // simplified — there is no client-side in-memory detector to drop.
+            // The button now hides itself (the only correct way to "discard"
+            // a profile post-cutover is to retrain or delete the on-disk
+            // training_data.bin via driver-side ops). The modal entry path is
+            // disabled; if showDiscardConfirmModal flips somehow (e.g. a stale
+            // call from earlier code), reset it without opening the popup so
+            // the UI doesn't show a non-functional dialog.
             if (trainingUi_.showDiscardConfirmModal) {
-                ImGui::OpenPopup("Discard trained profile?");
                 trainingUi_.showDiscardConfirmModal = false;
-            }
-            if (ImGui::BeginPopupModal("Discard trained profile?", nullptr,
-                                       ImGuiWindowFlags_AlwaysAutoResize)) {
-                ImGui::TextWrapped(
-                    "Your client-side detection will stop using this profile until "
-                    "you train again or restart the driver. The on-disk profile "
-                    "(used by the driver) is unaffected.");
-                ImGui::Spacing();
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.86f, 0.20f, 0.20f, 1));
-                if (ImGui::Button("Discard", ImVec2(120, 30))) {
-                    // Drop the in-memory profile by re-creating the detector.
-                    // WR-03 / WR-07: serialize with the WASAPI callback.
-                    if (detector && audioCapture) {
-                        auto dev = audioCapture->getCurrentDevice();
-                        if (dev.sampleRate > 0) {
-                            std::lock_guard<std::mutex> lock(audioMutex);
-                            detector = detection::createFFTDetector(dev.sampleRate);
-                            detector->setMinDetectionDuration(detectionTimeMs);
-                        }
-                    }
-                    hasProfile = false;
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::PopStyleColor();
-                ImGui::SameLine();
-                if (ImGui::Button("Keep", ImVec2(120, 30))) {
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::EndPopup();
             }
         } else {
             // ---- ACTIVE STATES (UI-SPEC §"Collecting / Computing / Ready") ----
@@ -1449,64 +1229,50 @@ void MicMapApp::renderUI() {
     ImGui::Text("Audio Levels");
     ImGui::Separator();
 
-    // P8 08-05 HEALTH-06: rewire input-level meter to /telemetry/level when
-    // the driver is loaded. Falls back to the local audio callback's
-    // currentLevelDb / currentLevel until driverLoadedIndicator goes green
-    // (P8 keeps client-side detection live until P10). Stale tag appears
-    // when last poll > 1 s old.
+    // P8 08-05 HEALTH-06: input-level meter sourced from /telemetry/level.
+    // Phase 10 / MIG-05 / D-01: client-side fallback (currentLevel / currentLevelDb
+    // populated from a local WASAPI callback) DELETED — when the driver is
+    // not loaded, the meter shows -60 dB / empty bar, which matches the
+    // FAIL-02/-03 pill messaging. Stale tag appears when last poll > 1 s old.
     {
         bool useDriver = driverLoadedIndicator.load();
-        float dbfs = useDriver ? driverLevelDbfs.load() : currentLevelDb.load();
-        float rmsNorm = useDriver ? driverLevelRmsNormalized.load() : currentLevel.load();
+        float dbfs = useDriver ? driverLevelDbfs.load() : -60.0f;
+        float rmsNorm = useDriver ? driverLevelRmsNormalized.load() : 0.0f;
         bool stale = useDriver && (std::chrono::steady_clock::now() - lastLevelPoll
                                    > std::chrono::seconds(1));
         ImGui::Text("Input Level: %.1f dB%s", dbfs, stale ? " (stale)" : "");
         ImGui::ProgressBar(rmsNorm, ImVec2(-1, 18));
     }
 
-    // Confidence meter (matching mic_test)
-    ImGui::Text("Confidence: %.0f%%", currentConfidence.load() * 100.0f);
-    float conf = currentConfidence.load();
-    if (isDetected.load()) ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(1,0.55f,0,1));
-    ImGui::ProgressBar(conf, ImVec2(-1, 18));
-    if (isDetected.load()) ImGui::PopStyleColor();
-
-    // Spectral flatness and energy (matching mic_test)
-    ImGui::Text("Spectral Flatness: %.3f", currentSpectralFlatness.load());
-    ImGui::Text("Energy: %.1f dB", currentEnergyDb.load());
-
     ImGui::Spacing();
 
-    // Detection indicator (matching mic_test style)
-    bool buttonFire = buttonWouldFire.load();
-    bool detected = isDetected.load();
-
-    // IN-08: detectionBuf was declared unconditionally at outer scope even
-    // though only the `detected` branch needs a formatted string; the
-    // "TRIGGERED" / "NOT DETECTED" branches use string literals. Keeping the
-    // buffer at outer scope here (rather than inside the branch) is REQUIRED
-    // because `detectionText` is a `const char*` that must remain valid until
-    // the ImGui::Button call below — moving the buffer into the branch would
-    // dangle the pointer. We now populate the buffer only when needed and
-    // document the lifetime so future refactors don't regress.
+    // Phase 10 / MIG-05 / D-01: detection indicator now sourced from /state.
+    // detection_state ∈ {"idle", "training", "detecting", "triggered",
+    // "cooldown"} — see driver/src/driver_state.hpp. Maps to the same 3-color
+    // box the v1.5 client used to render from local atomics:
+    //   triggered            -> green "TRIGGERED"
+    //   detecting / cooldown -> yellow "DETECTING..."
+    //   else (idle/training) -> gray "NOT DETECTED"
+    // Held under healthMu briefly to copy detectionStateStr (a std::string
+    // mutated on the /state poll) into a stack-local for the ImGui call.
+    std::string detStateLocal;
+    {
+        std::lock_guard<std::mutex> lk(healthMu);
+        detStateLocal = detectionStateStr;
+    }
     ImVec4 boxColor;
     const char* detectionText;
-    char detectionBuf[128];  // lifetime: must outlive ImGui::Button(detectionText, ...) below
-
-    if (buttonFire) {
-        boxColor = ImVec4(0, 0.78f, 0, 1);  // Green - triggered
+    if (detStateLocal == "triggered") {
+        boxColor = ImVec4(0, 0.78f, 0, 1);
         detectionText = "TRIGGERED";
-    } else if (detected) {
-        boxColor = ImVec4(1, 0.78f, 0, 1);  // Yellow - detected but not long enough
-        snprintf(detectionBuf, sizeof(detectionBuf), "DETECTING... (%d ms / %d ms)",
-                 detectionDurationMs.load(), detectionTimeMs);
-        detectionText = detectionBuf;
+    } else if (detStateLocal == "detecting" || detStateLocal == "cooldown") {
+        boxColor = ImVec4(1, 0.78f, 0, 1);
+        detectionText = "DETECTING...";
     } else {
-        boxColor = ImVec4(0.24f, 0.24f, 0.24f, 1);  // Dark gray - not detected
+        boxColor = ImVec4(0.24f, 0.24f, 0.24f, 1);
         detectionText = "NOT DETECTED";
     }
 
-    // Draw detection box
     ImGui::PushStyleColor(ImGuiCol_Button, boxColor);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, boxColor);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, boxColor);

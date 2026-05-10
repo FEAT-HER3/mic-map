@@ -161,34 +161,11 @@ void HttpServer::Stop() {
 }
 
 void HttpServer::SetupRoutes() {
-    // POST /button -- JSON body {"kind":"tap"} (SVR-05, D-06).
-    // Never touches OpenVR API; enqueues a TapCommand and returns. The
-    // driver expands the tap into press+release with its own min-hold so
-    // SteamVR's complex_button binding sees a clean single-click.
-    server_->Post("/button", [this](const httplib::Request& req, httplib::Response& res) {
-        try {
-            auto body = nlohmann::json::parse(req.body);
-            if (!body.contains("kind")) {
-                res.status = 400;
-                res.set_content(R"({"error":"missing \"kind\" field"})",
-                                "application/json");
-                return;
-            }
-            const auto kind = body.at("kind").get<std::string>();
-            if (kind != "tap") {
-                res.status = 400;
-                res.set_content(R"({"error":"kind must be \"tap\""})",
-                                "application/json");
-                return;
-            }
-            queue_.push(TapCommand{});  // never blocks; drop-oldest at depth 8 (SVR-05)
-            res.set_content(R"({"status":"ok"})", "application/json");
-        } catch (const nlohmann::json::exception&) {
-            res.status = 400;
-            res.set_content(R"({"error":"malformed JSON body"})",
-                            "application/json");
-        }
-    });
+    // Phase 10 / MIG-05 / D-01: POST /button route DELETED in the Wave 5
+    // atomic cutover. The v1.5 client-side trigger producer is gone; the
+    // sole remaining producers of TapCommand on the queue are
+    // DetectionRunner (driver-resident, P7) plus the debug-build-only
+    // POST /debug/trigger handler below. AssertNoButtonRoute lint enforces.
 
 #if MICMAP_DEBUG_BUILD
     // Phase 10 / TEST-02 / D-11: debug-build-only synthetic-trigger endpoint.
