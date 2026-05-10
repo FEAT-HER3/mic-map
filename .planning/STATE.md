@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Feature Migration
-status: executing
-stopped_at: Phase 9 Plan 03 (single-writer cutover — client UI training rewire + AssertNoClientTraining ctest go-live) complete
-last_updated: "2026-05-08T00:00:00.000Z"
-last_activity: 2026-05-08
+status: planning
+stopped_at: Phase 10 context gathered
+last_updated: "2026-05-10T08:53:07.054Z"
+last_activity: 2026-05-09
 progress:
   total_phases: 7
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 26
   completed_plans: 26
   percent: 100
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-30 with v1.6 Feature Migration milestone)
 
 **Core value:** Covering the microphone reliably toggles the SteamVR dashboard, invisibly to the rest of VR — no controller beam, no extra hardware, no focus loss.
-**Current focus:** Phase 09 — training-migration
+**Current focus:** Phase 10 — cutover-and-cleanup (next to plan)
 
 ## Current Position
 
-Phase: 09 (training-migration) — EXECUTING
-Next: `/gsd-execute-phase 9` (continue with plan 05 — UAT)
-Plan: 6 of 6 mapped to disk (00 + 01 + 02 + 03 + 04 done; 05 pending — visual UAT only)
-Status: Ready to execute
-Last activity: 2026-05-08
+Phase: 09 (training-migration) — COMPLETE (UAT signed Reavo 2026-05-09; verifier 9/9 PASS)
+Next: `/gsd-discuss-phase 10` — Cutover & Cleanup (flag flip + client rip-out + FAIL cluster + tray glyphs + INST-09)
+Plan: 6 of 6 done on Phase 9; Phase 10 not yet planned
+Status: Ready to plan Phase 10
+Last activity: 2026-05-09
 
 ## Roadmap Summary
 
@@ -106,12 +106,15 @@ Items carried forward from v1.5 that are NOT in v1.6 scope (see PROJECT.md and R
 
 ## Session Continuity
 
-Last session: 2026-05-08T00:00:00Z
-Stopped at: Phase 9 Plan 03 (single-writer cutover — client UI training rewire + AssertNoClientTraining ctest go-live) complete
-Resume file: .planning/phases/09-training-migration/09-03-SUMMARY.md
+Last session: 2026-05-10T08:53:07.045Z
+Stopped at: Phase 10 context gathered
+Resume file: .planning/phases/10-cutover-cleanup/10-CONTEXT.md
 
-**Next action:** `/gsd-discuss-phase 7` — gather context for Driver-Side Detection Thread (MIG-02, MIG-03, MIG-04, MIG-06).
+**Next action:** `/gsd-discuss-phase 10` — gather context for Cutover & Cleanup (MIG-05, FAIL-01..05, HEALTH-08, TEST-01..03/05, INST-09).
 
-**Phase 6 spike outcome:** GO. WASAPI capture inside `vrserver.exe` DLL host on Bigscreen Beyond + Win11 Pro is feasible. Phase 7 unblocked.
+**Phase 6 spike outcome:** GO. WASAPI capture inside `vrserver.exe` DLL host on Bigscreen Beyond + Win11 Pro is feasible.
+**Phase 7 outcome:** GO 2026-05-04 — in-process detection trigger path validated; HMD sleep/wake clean.
+**Phase 8 outcome:** Done 2026-05-08 — UAT D-27 + D-28 signed; new IPC surface live; driver is sole `config.json` writer.
+**Phase 9 outcome:** Done 2026-05-09 — driver is sole training writer; `mic_test --replay` corpus harness shipped.
 
-**Planned Phase:** 07 (Driver-Side Detection Thread) — 6 plans — 2026-05-03T07:53:18.904Z
+**Phase 10 open question:** confirm `hmd_button_test.exe` retention (TEST-05) vs `--debug-trigger` overlap (TEST-02) before cutover.
