@@ -44,6 +44,7 @@
 #include "src/tray_glyph.hpp"   // Phase 10 / HEALTH-08 D-04: tray-icon state glyphs
 #include "src/fail_pill.hpp"    // Phase 10 / FAIL-01..05 D-07/D-08: priority-stacked failure pills
 #include "src/process_check.hpp" // Phase 10 / Pitfall 6: FAIL-02 vs FAIL-03 disambiguation
+#include "src/version_mismatch.hpp" // Phase 10 / INST-09 / D-20: client-vs-driver version-mismatch warn-only pill
 #ifdef MICMAP_HAS_OPENVR
 #include <openvr.h>
 #endif
@@ -266,6 +267,19 @@ static micmap::client::TrayState g_tray;
 static struct FailUxState {
     std::optional<micmap::client::FailPill> activePill;
 } g_failUx;
+
+// Phase 10 / INST-09 / D-20: version-mismatch UX state. Fires ONCE per session
+// on the first successful /health response; pill renders BELOW any active FAIL
+// pill in the driver-health pane (Discretion: install hygiene is a separate
+// concern from FAIL reachability). Warn-only -- never blocks detection.
+//   firstHealthSuccessSeen: gate that ensures the comparison runs exactly once
+//                           per process lifetime (no log spam at 1Hz cadence).
+//   versionMismatchPill:    nullopt when versions match OR check has not fired;
+//                           populated otherwise (rendered + dismissable per D-20).
+static struct VersionUxState {
+    bool firstHealthSuccessSeen{false};
+    std::optional<micmap::client::FailPill> versionMismatchPill;
+} g_versionUx;
 
 bool CreateDeviceD3D(HWND hWnd);
 void CleanupDeviceD3D();
@@ -512,6 +526,28 @@ void MicMapApp::pollDriverHealth() {
             if (h.has_value()) {
                 driverAudioEnabled.store(h->driver_audio_enabled);
                 driverTrainingActive.store(h->driver_training_active);
+
+                // Phase 10 / INST-09 / D-20: client-vs-driver version-mismatch
+                // check fires ONCE per session on the FIRST successful /health
+                // response (no log spam at 1Hz cadence). Warn-only -- never
+                // blocks detection. Hard-block was rejected per CONTEXT D-20
+                // because in-progress upgrades briefly show driver/client
+                // version skew and a hard block would brick the user.
+                if (!g_versionUx.firstHealthSuccessSeen) {
+                    g_versionUx.firstHealthSuccessSeen = true;
+                    static const std::string kClientVersion = MICMAP_VERSION_STRING;
+                    g_versionUx.versionMismatchPill =
+                        micmap::client::buildVersionMismatchPill(
+                            kClientVersion, h->driver_version);
+                    if (g_versionUx.versionMismatchPill.has_value()) {
+                        // Single warning per session -- both versions in the
+                        // log line for post-mortem (D-20 + Phase 10 INST-09).
+                        MICMAP_LOG_WARNING("driver version '", h->driver_version,
+                                           "' does not match client '",
+                                           kClientVersion,
+                                           "' (Phase 10 / INST-09 / D-20 -- pill is warn-only)");
+                    }
+                }
             }
         }
     }
@@ -777,6 +813,31 @@ void MicMapApp::renderUI() {
                     lastError = std::nullopt;
                 }
                 g_failUx.activePill.reset();   // optimistic local clear
+            }
+        }
+
+        ImGui::Separator();
+    }
+
+    // Phase 10 / INST-09 / D-20: version-mismatch pill renders BELOW the FAIL
+    // pill (separate concern per Discretion -- FAIL pills are reachability
+    // hygiene, version-mismatch is install hygiene; they coexist visually). If
+    // no FAIL pill is active, the version-mismatch pill renders at the top of
+    // the driver-health pane in the same vertical slot. Amber color (lower
+    // priority than the FAIL red); dismissable per session per D-20.
+    if (g_versionUx.versionMismatchPill.has_value()) {
+        const auto& vpill = *g_versionUx.versionMismatchPill;
+
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.7f, 0.3f, 1.0f));   // amber
+        ImGui::TextWrapped("%s", vpill.text.c_str());
+        ImGui::PopStyleColor();
+
+        // Dismiss button -- session-scoped per D-20 (no persistent "don't show
+        // again" in v1.6). The ##version label suffix prevents collision with
+        // the FAIL pill's "Dismiss" button when both are active simultaneously.
+        if (vpill.dismissable) {
+            if (ImGui::Button("Dismiss##version")) {
+                g_versionUx.versionMismatchPill.reset();
             }
         }
 

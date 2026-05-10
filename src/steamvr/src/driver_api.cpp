@@ -889,6 +889,9 @@ public:
             v.driver_detection_active  = j.value("driver_detection_active", false);
             v.driver_training_active   = j.value("driver_training_active",  false);
             v.driver_audio_enabled     = j.value("driver_audio_enabled",    false);
+            // P10 / 10-03 D-19 / 10-06 D-20: driver-side MICMAP_VERSION_STRING
+            // (empty string default for older drivers that predate the field).
+            v.driver_version           = j.value("driver_version",          std::string{});
             return v;
         } catch (const nlohmann::json::exception& e) {
             lastError_ = std::string("GET /health parse: ") + e.what();

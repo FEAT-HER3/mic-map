@@ -10,6 +10,7 @@ set(MICMAP_SOURCES
     src/tray_glyph.cpp            # Phase 10 / HEALTH-08 D-04..D-06: tray-icon state glyphs (deriveTrayGlyph + Shell_NotifyIcon swap)
     src/fail_pill.cpp             # Phase 10 / FAIL-01..05 D-07/D-08: priority-stacked failure pills (pickActivePill)
     src/process_check.cpp         # Phase 10 / Pitfall 6: FAIL-02 vs FAIL-03 disambiguation (CreateToolhelp32Snapshot + 2s cache)
+    src/version_mismatch.cpp      # Phase 10 / INST-09 / D-20: client-vs-driver version-mismatch warn-only pill builder
 )
 
 # ---- app.vrmanifest generation (Plan 03-02 — D-19) -----------------------

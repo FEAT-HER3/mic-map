@@ -264,6 +264,7 @@ struct HealthView {
     bool driver_detection_active{false};  ///< P7 D-09
     bool driver_training_active{false};   ///< P9 D-07
     bool driver_audio_enabled{false};     ///< P9 09-02 / 09-03 T2 — proactive disable contract
+    std::string driver_version;           ///< P10 / 10-03 D-19 / 10-06 D-20: driver-side MICMAP_VERSION_STRING (empty when driver predates the field)
 };
 
 #if MICMAP_DEBUG_BUILD
