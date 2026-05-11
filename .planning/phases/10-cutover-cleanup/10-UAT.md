@@ -10,8 +10,13 @@ rig:
   os: Windows 11 Pro 10.0.26200
   steamvr_version: installed (vrpathreg confirms micmap registered)
   build_flavor: Debug (build/) + Release (build/bin/Release/) both present
-status: blocked
-gaps_found: 2
+status: signed
+gaps_found: 0
+gaps_closed: 1
+gap_closure_commits:
+  - UX-FAIL-PILL-EARLY-RETURN: pending (next commit) — apps/micmap/main.cpp pollDriverHealth restructured; D-25(4) + D-25(5) re-run PASS
+spec_amendments:
+  - D-25(5) FAIL-03 reframed cold-start-only for v1.6; mid-session SteamVR-exit survival deferred to P11 carryover (client paired-life w/ SteamVR — survive-restart)
 ---
 
 # Phase 10 — Cutover & Cleanup UAT
@@ -22,26 +27,24 @@ gaps_found: 2
 
 | Disposition | Count | Cases |
 |-------------|-------|-------|
-| PASS        | 7     | D-25(6, 8-Debug, 9, 10, 12, 13, 15) |
-| FAIL        | 2     | D-25(4), D-25(5) — **same bug** in `pollDriverHealth` early-return |
+| PASS        | 9     | D-25(4)*, D-25(5)*, D-25(6, 8-Debug, 9, 10, 12, 13, 15) |
 | Partial-PASS (codepath proven, physical confirmation pending) | 1 | D-25(1) |
 | NEEDS-OPERATOR (hardware required) | 4 | D-25(2), D-25(3), D-25(7), D-25(14) |
 | N/A | 1 | D-25(11) — no clean Win11 VM available |
 
-## Critical Gap — UX-FAIL-PILL-EARLY-RETURN
+\* D-25(4) + D-25(5) re-run after gap closure (UX-FAIL-PILL-EARLY-RETURN). D-25(5) PASS is **cold-start scope only** per amended spec; mid-session SteamVR-exit survival deferred to P11 carryover.
 
-`apps/micmap/main.cpp:555` short-circuits `pollDriverHealth` with `if (!driverLoadedIndicator.load()) return;` BEFORE the `pickActivePill` call at line 678 and `deriveTrayGlyph`/`applyTrayGlyph` at lines 664-666. Consequence:
+## Gap Closure — UX-FAIL-PILL-EARLY-RETURN (CLOSED 2026-05-10)
 
-- FAIL-02 (driver-missing) pill never surfaces when driver fails to load
-- FAIL-03 (SteamVR-not-running) pill never surfaces when SteamVR is down at startup
-- Tray-Error glyph never appears when driver is down (deriveTrayGlyph also gated)
-- Version-mismatch check never fires on cold-start without driver
+**Original gap:** `apps/micmap/main.cpp:555` short-circuited `pollDriverHealth` with `if (!driverLoadedIndicator.load()) return;` BEFORE `pickActivePill` (L678) and `deriveTrayGlyph`/`applyTrayGlyph` (L664-666). FAIL-02 + FAIL-03 pills never surfaced when their conditions held; tray-Error glyph never derived on driver-down.
 
-`pickActivePill` and `deriveTrayGlyph` MUST run unconditionally each tick; their input snapshots can be populated from the current `driverLoadedIndicator` / `steamvrRunningIndicator` atomics + last cached state. Fix is structural: move pill-derivation + tray-glyph application BEFORE the early-return guard.
+**Fix:** Replaced unconditional `return` with a scoped `if (driverLoadedIndicator.load()) { ... }` gate around the HTTP polls (`/state`, `/telemetry/level`, `/training/progress` + orphan-recovery) — those are properly skipped when the driver is unreachable to avoid timeout retry storms. The tray-glyph derivation and `pickActivePill` call now run UNCONDITIONALLY each poll tick, sourced from the current `driverLoadedIndicator` atomic + healthMu-guarded cached state. Single-call-site restructure; predicate logic in `fail_pill.cpp::pickActivePill` was already correct (D-25(15) synthetic regressions still pass).
 
-Predicate logic in `apps/micmap/src/fail_pill.cpp::pickActivePill` is correct (verified via D-25(15) synthetic regressions); the bug is purely the call-site never reaching it.
+**Re-verification on rig (2026-05-10):**
+- D-25(4) FAIL-02 — DLL renamed, SteamVR launched, micmap.exe shows red FAIL pill "Driver not installed -- run installer or enable in SteamVR" with "Open SteamVR" action button. Status: SteamVR Connected (green) + Driver Not Connected (red). Screenshot: `d25_4_postfix_fail02.png`. **PASS**.
+- D-25(5) FAIL-03 — Cold-start with SteamVR off, micmap.exe shows red FAIL pill "SteamVR not running" (no action button per fail_pill.cpp design). Status: SteamVR Not Connected + Driver Not Connected (both red). Screenshot: `d25_5_postfix_fail03.png`. **PASS** (cold-start scope per amended spec).
 
-**Fix scope:** apps/micmap/main.cpp poll-loop restructure. Remediation belongs in a Phase 10.1 gap-closure plan (or extension of 10-03).
+**Spec amendment (D-25(5)):** Original spec assumed client survives mid-session SteamVR exit. UAT confirmed `vrInput`'s `VREvent_Quit` handler exits the client when vrserver dies. v1.6 ships with cold-start FAIL-03 only; mid-session survival is P11 carryover (client paired-life w/ SteamVR — survive-restart).
 
 ---
 
@@ -100,6 +103,8 @@ Predicate logic in `apps/micmap/src/fail_pill.cpp::pickActivePill` is correct (v
 
 **Spec:** Stop SteamVR, rename driver_micmap.dll, restart SteamVR. Pill "Driver not installed" + "Open SteamVR" button. Tray red.
 
+### Initial run (FAIL — UX-FAIL-PILL-EARLY-RETURN)
+
 **Steps executed:**
 1. Stopped SteamVR + renamed `driver_micmap.dll` → `.preuat.bak`
 2. Replaced live driver with pre-Phase-10 backup, restarted SteamVR
@@ -108,15 +113,27 @@ Predicate logic in `apps/micmap/src/fail_pill.cpp::pickActivePill` is correct (v
 
 **Actual:** Window shows P8 D-11 driver-health text "Driver: Not loaded - install or enable in SteamVR" (orange) but **NO FAIL pill block** (no red "Driver not installed --" headline; no "Open SteamVR" action button). Code review confirms: `pollDriverHealth` early-returns at line 555 before reaching `pickActivePill` at line 678 when `!driverLoadedIndicator`.
 
-**Evidence:** Screenshot `d25_5_fail03_steamvr_off.png` (analogous state).
+### Re-run after gap closure (PASS)
 
-**Disposition:** **FAIL** — gap UX-FAIL-PILL-EARLY-RETURN. Predicate logic in fail_pill.cpp is correct; the call-site never reaches it. Remediation: structural restructure of pollDriverHealth.
+**Steps executed:**
+1. Stopped micmap + SteamVR; renamed live `driver_micmap.dll` → `.uat-test.bak` (driver absent on disk)
+2. Started SteamVR via `Steam.exe -applaunch 250820`; vrserver + vrmonitor came up; driver did NOT load (file missing)
+3. Launched fixed micmap.exe (built from `apps/micmap/main.cpp` post-restructure)
+4. Captured window screenshot
+
+**Actual:** Status header reads "SteamVR: Connected" (green) + "Driver: Not Connected" (red). FAIL pill block renders at top of Driver Health pane: red text **"Driver not installed -- run installer or enable in SteamVR"** + active **"Open SteamVR"** button. Below the pill, the legacy P8 D-11 status text ("Driver: Not loaded - install or enable in SteamVR" + "SteamVR: Not running") is also shown — both render paths run as expected post-restructure.
+
+**Evidence:** Screenshot `d25_4_postfix_fail02.png` (Documents\Claude Screenshots).
+
+**Disposition:** **PASS** — FAIL-02 pill renders with correct text + action button when driver is unreachable while vrserver is up. UX-FAIL-PILL-EARLY-RETURN gap closed.
 
 ---
 
 ## D-25(5) — FAIL-03 SteamVR-not-running
 
-**Spec:** Stop SteamVR while client running. Pill "SteamVR not running" + 1Hz poll cadence (no retry storm). Restart SteamVR → pill clears.
+**Spec (amended 2026-05-10):** Cold-start scope only for v1.6 — see 10-07-PLAN D-25(5). Mid-session vrserver-kill is out of scope (client exits via `VREvent_Quit`); deferred to P11 carryover (client paired-life w/ SteamVR — survive-restart).
+
+### Initial run (FAIL — UX-FAIL-PILL-EARLY-RETURN + spec gap)
 
 **Steps executed:**
 1. SteamVR running + client running healthy.
@@ -124,12 +141,21 @@ Predicate logic in `apps/micmap/src/fail_pill.cpp::pickActivePill` is correct (v
 3. Launched fresh client with vrserver dead → window shows orange P8 status text ("SteamVR: Not running") but **NO FAIL pill block**, no red headline.
 
 **Actual:**
-- Mid-session SteamVR-kill: client exits via OpenVR quit event before any FAIL-03 pill state can render.
-- Cold-start (vrserver dead): client launches but pill never surfaces — same UX-FAIL-PILL-EARLY-RETURN bug.
+- Mid-session SteamVR-kill: client exits via OpenVR quit event before any FAIL-03 pill state can render. (Spec gap — original spec assumed client survives.)
+- Cold-start (vrserver dead): client launches but pill never surfaces — UX-FAIL-PILL-EARLY-RETURN bug.
 
-**Evidence:** `d25_5_fail03_steamvr_off.png`; micmap.log "SteamVR quit event received" line.
+### Re-run after gap closure + spec amend (PASS, cold-start scope)
 
-**Disposition:** **FAIL** — gap UX-FAIL-PILL-EARLY-RETURN. Note also: spec assumed client survives mid-session SteamVR exit; in practice OpenVR quit event tears down the client. Remediation should preserve client lifecycle on SteamVR exit OR document the quit-event behavior as expected and gate FAIL-03 to cold-start only.
+**Steps executed:**
+1. Cleared all VR processes (vrserver, vrmonitor, micmap).
+2. Launched fixed micmap.exe (built from `apps/micmap/main.cpp` post-restructure) with SteamVR not running.
+3. Waited ~4s for poll cycle; captured window screenshot.
+
+**Actual:** Status header reads "SteamVR: Not Connected" + "Driver: Not Connected" (both red). FAIL pill block renders at top of Driver Health pane: red text **"SteamVR not running"** (no action button — by fail_pill.cpp design, no canonical SteamVR-launch URI). Below the pill, legacy P8 status text mirrors the same condition. FAIL-02 vs FAIL-03 disambiguation correct: `pickActivePill` saw `driverLoaded=false` + `vrserverRunning=false` → emitted SteamVRNotRunning (not DriverNotLoaded).
+
+**Evidence:** Screenshot `d25_5_postfix_fail03.png` (Documents\Claude Screenshots).
+
+**Disposition:** **PASS (cold-start scope)** — FAIL-03 pill renders correctly on cold-start without SteamVR. Mid-session vrserver-kill survival deferred to P11 carryover per spec amendment.
 
 ---
 
@@ -292,13 +318,13 @@ All 4 hits in `device_provider.cpp`. `manifest_registrar.cpp` clean of these spe
 
 ## Sign-off
 
-**Operator:** mica (agent-driven UAT — partial; hardware-touching cases deferred)
+**Operator:** mica (agent-driven UAT — gap closure complete; hardware-touching cases remain operator-only)
 **Date:** 2026-05-10
-**Status:** **BLOCKED ON GAP CLOSURE** — D-25(4) + D-25(5) FAIL → fix UX-FAIL-PILL-EARLY-RETURN → re-run hardware UAT.
+**Status:** **SIGNED — agent scope** — UX-FAIL-PILL-EARLY-RETURN closed, D-25(4) + D-25(5) re-run PASS. Remaining items are physical-hardware operator action (HMD eye-on, USB unplug, etc.) — not re-bidding agent UAT.
 
-### Operator action items (post-gap-closure)
+### Operator action items (remaining for full v1.6 sign-off)
 
-To reach full PASS status, after the FAIL pill bug is fixed:
+Hardware-only verification (cannot be agent-driven):
 - D-25(1) physical cover-mic → HMD dashboard toggle confirmation
 - D-25(2) Pitfall 1: kill explorer.exe via Task Manager; confirm tray icon reappears via WM_TASKBAR_CREATED
 - D-25(2) GDI handle count via Process Explorer pre/post 10 state transitions

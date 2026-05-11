@@ -552,8 +552,14 @@ void MicMapApp::pollDriverHealth() {
         }
     }
 
-    if (!driverLoadedIndicator.load()) return;   // skip subsequent polls if down
-
+    // Phase 10 UAT bug-fix (UX-FAIL-PILL-EARLY-RETURN): the previous
+    //   `if (!driverLoadedIndicator.load()) return;`
+    // short-circuit blocked deriveTrayGlyph + pickActivePill (below) from
+    // running when the driver was DOWN -- exactly when the FAIL pills MUST
+    // render. Replaced with a scoped gate around the HTTP polls only. The
+    // tray-glyph + fail-pill derivation now ALWAYS runs each poll tick,
+    // sourced from current atomics + healthMu-guarded state.
+    if (driverLoadedIndicator.load()) {
     // /state — 2 Hz visible / 0.5 Hz tray.
     auto stateInterval = isTrayMode ? std::chrono::milliseconds(2000)
                                     : std::chrono::milliseconds(500);
@@ -634,6 +640,7 @@ void MicMapApp::pollDriverHealth() {
             lastTrainingPoll = now;
         }
     }
+    }   // end UX-FAIL-PILL-EARLY-RETURN gate (driverLoaded == true HTTP polls)
 
     // Phase 10 / HEALTH-08 D-04..D-06: derive + apply the tray glyph from the
     // SAME poll envelope (no new poll, no new thread per D-06). Materialize the
