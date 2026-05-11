@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Feature Migration
-status: planning
-stopped_at: Phase 10 context gathered
-last_updated: "2026-05-10T08:53:07.054Z"
-last_activity: 2026-05-09
+status: executing
+stopped_at: Phase 10 complete (UAT signed agent scope; verifier 7/7 PASS); operator-only D-25 items remain for separate human pass
+last_updated: "2026-05-10T20:50:00.000Z"
+last_activity: 2026-05-10 -- Phase 10 Wave 7 sign-off + UX-FAIL-PILL-EARLY-RETURN gap closure (commits 08bab96, 1d380e8)
 progress:
   total_phases: 7
-  completed_phases: 5
-  total_plans: 26
-  completed_plans: 26
-  percent: 100
+  completed_phases: 6
+  total_plans: 34
+  completed_plans: 34
+  percent: 86
 ---
 
 # Project State
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-30 with v1.6 Feature Migration milestone)
 
 **Core value:** Covering the microphone reliably toggles the SteamVR dashboard, invisibly to the rest of VR — no controller beam, no extra hardware, no focus loss.
-**Current focus:** Phase 10 — cutover-and-cleanup (next to plan)
+**Current focus:** Phase 11 — Documentation (next to plan)
 
 ## Current Position
 
-Phase: 09 (training-migration) — COMPLETE (UAT signed Reavo 2026-05-09; verifier 9/9 PASS)
-Next: `/gsd-discuss-phase 10` — Cutover & Cleanup (flag flip + client rip-out + FAIL cluster + tray glyphs + INST-09)
-Plan: 6 of 6 done on Phase 9; Phase 10 not yet planned
-Status: Ready to plan Phase 10
-Last activity: 2026-05-09
+Phase: 10 (cutover-cleanup) — COMPLETE (UAT signed agent scope 2026-05-10; verifier 7/7 PASS; operator-only D-25(1 phys, 2, 3, 7, 11, 14) deferred to operator hardware pass)
+Next: `/gsd-discuss-phase 11` — Documentation (DOC-01, DOC-02)
+Plan: 8 of 8 done on Phase 10; Phase 11 not yet planned
+Status: Ready to plan Phase 11
+Last activity: 2026-05-10 -- Wave 7 sign-off + UX-FAIL-PILL-EARLY-RETURN gap closure
 
 ## Roadmap Summary
 

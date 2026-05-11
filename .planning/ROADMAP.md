@@ -34,9 +34,9 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
 - [x] **Phase 5: Shared Library Extraction** (3/3 plans) — completed 2026-05-02; `micmap_core_runtime` INTERFACE target landed; driver/client/mic_test linked; configure-time guard + CTest lints active; SC5 UAT signed off byte-identical on Bigscreen Beyond.
 - [x] **Phase 6: Driver-Side Audio Capture Spike** (4/4 plans) — completed 2026-05-03; WASAPI capture validated inside `driver_micmap.dll` on real Bigscreen Beyond + Win11 Pro (D-17(1)-(4) all PASS, spike GO); AudioWorker pattern (MTA worker thread, `weak_ptr<State>` UAF guard, 2s watchdog teardown) shipped behind `enable_driver_audio` flag default OFF.
 - [x] **Phase 7: Driver-Side Detection Thread** — Detection runs in-process inside the driver; trigger collapses to direct CommandQueue push; client-side detection still active behind feature flag. (UAT GO 2026-05-04)
-- [ ] **Phase 8: IPC Contract Reshape** — New endpoints (`/state`, `/settings`, `/devices`, `/telemetry/level`); driver becomes sole `config.json` writer; client UI surfaces driver health by polling.
+- [x] **Phase 8: IPC Contract Reshape** (7/7 plans) — completed 2026-05-08; new endpoints (`/state`, `/settings`, `/devices`, `/telemetry/level`) live; driver is sole `config.json` writer; client UI surfaces driver health by polling; UAT D-27 + D-28 signed on Beyond+Win11.
 - [x] **Phase 9: Training Migration** — Driver becomes sole microphone owner during training; client is observer-only; `training_data.bin` ownership transfers to driver; `mic_test.exe --replay` lands. (UAT 9 PASS + 1 N/A 2026-05-09; verifier 9/9 PASS)
-- [ ] **Phase 10: Cutover & Cleanup** — Flip the flag, delete `POST /button` and `IDriverClient::tap()`, ship FAIL cluster, tray-icon state glyphs, `--debug-trigger`, installer co-versioning bake.
+- [x] **Phase 10: Cutover & Cleanup** (8/8 plans) — completed 2026-05-10; flipped both `enable_driver_audio` + `enable_driver_detection` to TRUE; client-side audio/FFT/state-machine + `POST /button` + `IDriverApi::tap()` deleted; FAIL UX pills + tray-glyphs + `--debug-trigger` + installer co-versioning + version-mismatch pill all shipped; UAT signed agent scope (verifier 7/7 PASS); operator-only D-25(1 phys, 2, 3, 7, 11, 14) deferred to operator hardware pass.
 - [ ] **Phase 11: Documentation** — README sync (DOC-01) + `docs/architecture.md` (DOC-02) reflect post-migration architecture.
 
 ## Phase Details
@@ -146,7 +146,15 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
   4. Installer (`MicMap-Setup-vX.Y.Z.exe`) places driver, client, vrmanifest, and shared-lib artifacts in lock-step; installing then upgrading then uninstalling on a clean Win11 VM cleans the matched set; client logs a warning at startup if `GET /health` reports a driver version mismatch with the client's compiled-in version (INST-09).
   5. `mic_test.exe` continues to build and run against `micmap_core_runtime` with no SteamVR/driver dependency (TEST-01); `micmap.exe --debug-trigger` issues a synthetic trigger via a debug-build-gated endpoint without going through audio (TEST-02); driver writes `micmap-driver.log` with size-cap rotation at 5 MB and 5 retained generations (TEST-03); `hmd_button_test.exe` is preserved as a developer tool (TEST-05).
   6. v1.5 SVR-05 invariant survives: full grep audit confirms `VRDriverInput`/`VRProperties`/`VRServerDriverHost` calls only appear in `device_provider.cpp` and `manifest_registrar.cpp`; HMD sleep/wake stress test passes on Bigscreen Beyond.
-**Plans**: TBD
+**Plans**: 8 plans
+- [x] 10-00-PLAN.md — Wave 0: 3 new CMake source-grep lints (AssertNoClientDetection, AssertNoButtonRoute, AssertCoVersioning) + 4 RED-tolerant test scaffolds (test_tray_glyph_state_machine, test_fail_pill_priority, test_log_rotation, test_version_mismatch) + EXISTS-gated ctest registrations (AssertCoVersioning live; the 2 deletion-lints deferred to 10-05 single-writer cutover)
+- [x] 10-01-PLAN.md — Wave 1: log rotation in FileLogSink (TEST-03 / D-14..D-17) + single-version SSoT plumbing (cmake/version.cmake + installer/version.iss.in + 2 .rc.in templates + MICMAP_VERSION_STRING compile define on driver + client; INST-09 / D-18..D-21)
+- [x] 10-02-PLAN.md — Wave 2: tray-icon state glyphs (HEALTH-08 / D-04..D-06) — 3 .ico assets + apps/micmap/src/tray_glyph.{hpp,cpp} + main.cpp poll-callback hook + WM_TASKBAR_CREATED handler (Pitfalls 1/2/3/8)
+- [x] 10-03-PLAN.md — Wave 3: FAIL UX pills priority-stacked in driver-health pane (FAIL-01..05 / D-07/D-08/D-10) + FAIL-04 named-mutex hardening (D-09 — Local\\..._v1) + isProcessRunning via CreateToolhelp32Snapshot (Pitfall 6) + GET /health driver_version field via getter callback (D-19 / INST-09)
+- [x] 10-04-PLAN.md — Wave 4: POST /debug/trigger debug-build-only endpoint + IDriverApi::debugTrigger() debug-only + --debug-trigger CLI short-circuit at WinMain (TEST-02 / D-11/D-12; MICMAP_DEBUG_BUILD via $<CONFIG:Debug>)
+- [x] 10-05-PLAN.md — Wave 5 CUTOVER: atomic single commit — flip both enable_driver_audio + enable_driver_detection to true; delete POST /button route + IDriverApi::tap() decl + impl + ~500 LoC client-side audio/FFT/state-machine body + 3 detector->loadTrainingData call sites; flip AssertNoClientDetection + AssertNoButtonRoute lints to enforcing (MIG-05 / D-01..D-03 / D-23)
+- [x] 10-06-PLAN.md — Wave 6: INST-09 installer co-versioning — installer/MicMap.iss #include "version.iss" + [Files] entries for 3 .ico files + remove redundant /DMICMAP_VERSION ISCC pass + apps/micmap/src/version_mismatch.{hpp,cpp} + main.cpp first-poll-success check + low-priority pill render (D-20)
+- [x] 10-07-PLAN.md — Wave 7: 10-UAT.md scaffold + agent-driven D-25(1)..(15) UAT pass on Bigscreen Beyond + Win11 Pro + CLAUDE.md "Hardware rig" Post-Phase-10 default state subsection added; in-flight UX-FAIL-PILL-EARLY-RETURN gap closed (apps/micmap/main.cpp pollDriverHealth restructured); D-25(5) FAIL-03 spec amended cold-start-only for v1.6 (mid-session vrserver-kill survival deferred to P11 carryover item 3); UAT signed agent scope (verifier 7/7 PASS); operator-only D-25(1 phys, 2, 3, 7, 11, 14) remain for operator hardware pass
 **UI hint**: yes
 **Research flag**: STANDARD — deletion phase; v1.5 SVR-04 rip-out discipline (eliminate fallback paths, no dual-mode runtime) is the template.
 
@@ -171,10 +179,10 @@ Audit: [`milestones/v1.5-MILESTONE-AUDIT.md`](milestones/v1.5-MILESTONE-AUDIT.md
 | 4. Installer | v1.5 | 9/9 | Complete | 2026-04-24 |
 | 5. Shared Library Extraction | v1.6 | 3/3 | Complete | 2026-05-02 |
 | 6. Driver-Side Audio Capture Spike | v1.6 | 4/4 | Complete | 2026-05-03 |
-| 7. Driver-Side Detection Thread | v1.6 | 0/6 | Planned | — |
-| 8. IPC Contract Reshape | v1.6 | 0/7 | Planned | — |
-| 9. Training Migration | v1.6 | 4/6 | In Progress|  |
-| 10. Cutover & Cleanup | v1.6 | 0/0 | Not started | — |
+| 7. Driver-Side Detection Thread | v1.6 | 6/6 | Complete | 2026-05-04 |
+| 8. IPC Contract Reshape | v1.6 | 7/7 | Complete | 2026-05-08 |
+| 9. Training Migration | v1.6 | 6/6 | Complete | 2026-05-09 |
+| 10. Cutover & Cleanup | v1.6 | 8/8 | Complete | 2026-05-10 |
 | 11. Documentation | v1.6 | 0/0 | Not started | — |
 
 ## Phase Ordering Rationale
@@ -205,4 +213,4 @@ All 45 v1.6 requirements mapped to exactly one phase. No orphans, no duplicates.
 
 ---
 
-*Roadmap defined: 2026-04-30 — derived from REQUIREMENTS.md (45 v1.6 reqs) and `.planning/research/` (SUMMARY.md proposed 7-phase shape, refined here to align dependencies and pitfall mitigations from PITFALLS.md).*
+*Roadmap defined: 2026-04-30 — derived from REQUIREMENTS.md (45 v1.6 reqs) and `.planning/research/` (SUMMARY.md proposed 7-phase shape, refined here to align dependencies and pitfall mitigations from PITFALLS.md). Phase 10 plans authored 2026-05-10 (8 plans across waves 0-7).*
